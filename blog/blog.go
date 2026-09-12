@@ -320,28 +320,34 @@ func normalizeHost(host string) string {
 	return strings.TrimPrefix(host, "www.")
 }
 
-// isSelfHost reports whether refHost (from a Referer header) refers to this
-// site. Behind a reverse proxy c.Request.Host is often the upstream address
-// (e.g. localhost:7000) rather than the public hostname, so the referer is also
-// compared against X-Forwarded-Host and the configured site_url. IP literals and
-// localhost are always treated as self: an operator visiting their own server
-// by IP is far more likely than an external site linking from a bare IP.
-func (b *Blog) isSelfHost(c *gin.Context, refHost string) bool {
+// IsSelfHost reports whether refHost (from a Referer header) refers to this
+// site, i.e. it matches one of the given site hosts after normalization.
+// IP literals and localhost are always treated as self: an operator visiting
+// their own server by IP is far more likely than an external site linking from
+// a bare IP.
+func IsSelfHost(refHost string, siteHosts ...string) bool {
 	refHost = normalizeHost(refHost)
 	if refHost == "" || refHost == "localhost" || net.ParseIP(refHost) != nil {
 		return true
 	}
-
-	candidates := []string{c.Request.Host, c.GetHeader("X-Forwarded-Host")}
-	if siteURL, err := url.Parse(b.GetSettings()["site_url"].Value); err == nil {
-		candidates = append(candidates, siteURL.Host)
-	}
-	for _, candidate := range candidates {
-		if candidate != "" && normalizeHost(candidate) == refHost {
+	for _, host := range siteHosts {
+		if host != "" && normalizeHost(host) == refHost {
 			return true
 		}
 	}
 	return false
+}
+
+// isSelfHost applies IsSelfHost to the current request. Behind a reverse proxy
+// c.Request.Host is often the upstream address (e.g. localhost:7000) rather
+// than the public hostname, so the referer is also compared against
+// X-Forwarded-Host and the configured site_url.
+func (b *Blog) isSelfHost(c *gin.Context, refHost string) bool {
+	siteHosts := []string{c.Request.Host, c.GetHeader("X-Forwarded-Host")}
+	if siteURL, err := url.Parse(b.GetSettings()["site_url"].Value); err == nil {
+		siteHosts = append(siteHosts, siteURL.Host)
+	}
+	return IsSelfHost(refHost, siteHosts...)
 }
 
 // TrackReferer records external referers for a post.
