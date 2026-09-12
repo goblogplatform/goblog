@@ -23,26 +23,33 @@ import (
 	"gorm.io/gorm"
 )
 
-// ScholarPlugin displays Google Scholar publications.
+// ScholarPlugin displays an author's publications from Google Scholar or
+// Semantic Scholar.
 type ScholarPlugin struct {
 	gplugin.BasePlugin
 	sch         *scholarlib.Scholar
 	scholarOnce sync.Once
+	scholarErr  error // set when the source setting was invalid at init
+	// newScholar constructs the library; tests swap in one with a fake client.
+	newScholar func(profileCache, articleCache string) *scholarlib.Scholar
 }
 
 // New creates a new scholar plugin.
 func New() *ScholarPlugin {
-	return &ScholarPlugin{}
+	return &ScholarPlugin{newScholar: scholarlib.New}
 }
 
 func (p *ScholarPlugin) Name() string        { return "scholar" }
-func (p *ScholarPlugin) DisplayName() string { return "Google Scholar" }
+func (p *ScholarPlugin) DisplayName() string { return "Scholar Publications" }
 func (p *ScholarPlugin) Version() string     { return "1.0.0" }
 
 func (p *ScholarPlugin) Settings() []gplugin.SettingDefinition {
 	return []gplugin.SettingDefinition{
 		{Key: "enabled", Type: "text", DefaultValue: "false", Label: "Enabled", Description: "Set to 'true' to enable the research page"},
-		{Key: "scholar_id", Type: "text", DefaultValue: "", Label: "Google Scholar ID", Description: "Your Google Scholar profile ID (e.g. SbUmSEAAAAAJ)"},
+		{Key: "source", Type: "text", DefaultValue: string(scholarlib.SourceGoogleScholar), Label: "Source", Description: "Where publications come from: 'google_scholar' (scrapes scholar.google.com; blocked from most cloud IPs) or 'semantic_scholar' (API). Restart required after changing."},
+		{Key: "scholar_id", Type: "text", DefaultValue: "", Label: "Google Scholar ID", Description: "Your Google Scholar profile ID (e.g. SbUmSEAAAAAJ). Used when source is google_scholar."},
+		{Key: "semantic_scholar_id", Type: "text", DefaultValue: "", Label: "Semantic Scholar Author ID", Description: "The number at the end of your semanticscholar.org author URL (e.g. 1792904). Used when source is semantic_scholar."},
+		{Key: "semantic_scholar_api_key", Type: "text", DefaultValue: "", Label: "Semantic Scholar API Key", Description: "Optional; raises the API rate limit. Restart required after changing."},
 		{Key: "article_limit", Type: "text", DefaultValue: "50", Label: "Article Limit", Description: "Maximum number of articles to display"},
 		{Key: "profile_cache", Type: "text", DefaultValue: "profiles.json", Label: "Profile Cache File", Description: "File path for profile cache"},
 		{Key: "article_cache", Type: "text", DefaultValue: "articles.json", Label: "Article Cache File", Description: "File path for article cache"},
@@ -95,12 +102,16 @@ func (p *ScholarPlugin) Pages() []gplugin.PageDefinition {
 			Slug:        "research",
 			ShowInNav:   true,
 			NavOrder:    20,
-			Description: "Displays Google Scholar publications",
+			Description: "Displays publications from Google Scholar or Semantic Scholar",
 		},
 	}
 }
 
-func (p *ScholarPlugin) ensureScholar(settings map[string]string) {
+// ensureScholar builds the library once from the plugin settings: cache
+// paths, source and API key. Those are read at first use, so changing them
+// needs a restart; the author ids are read on every render. Returns the
+// error when the configured source is unknown.
+func (p *ScholarPlugin) ensureScholar(settings map[string]string) error {
 	p.scholarOnce.Do(func() {
 		profileCache := settings["profile_cache"]
 		articleCache := settings["article_cache"]
@@ -110,8 +121,22 @@ func (p *ScholarPlugin) ensureScholar(settings map[string]string) {
 		if articleCache == "" {
 			articleCache = "articles.json"
 		}
-		p.sch = scholarlib.New(profileCache, articleCache)
+		p.sch = p.newScholar(profileCache, articleCache)
+		p.sch.SetAPIKey(settings["semantic_scholar_api_key"])
+		if src := settings["source"]; src != "" {
+			p.scholarErr = p.sch.SetSource(scholarlib.SourceKind(src))
+		}
 	})
+	return p.scholarErr
+}
+
+// profileID returns the author id for the configured source, and the
+// human-readable name of the setting that holds it.
+func profileID(settings map[string]string) (id, settingName string) {
+	if settings["source"] == string(scholarlib.SourceSemanticScholar) {
+		return settings["semantic_scholar_id"], "Semantic Scholar Author ID"
+	}
+	return settings["scholar_id"], "Google Scholar ID"
 }
 
 // unavailableHTML is what visitors see when publications can't be fetched.
@@ -127,9 +152,9 @@ func (p *ScholarPlugin) RenderPage(ctx *gplugin.HookContext, pageType string) (s
 	data := gin.H{"has_plugin_content": true}
 
 	settings := ctx.Settings
-	scholarID := settings["scholar_id"]
+	scholarID, idSetting := profileID(settings)
 	if scholarID == "" {
-		data["plugin_content"] = `<div class="alert alert-warning" role="alert">Google Scholar ID not configured. Set it in the Scholar plugin settings.</div>`
+		data["plugin_content"] = `<div class="alert alert-warning" role="alert">` + idSetting + ` not configured. Set it in the Scholar plugin settings.</div>`
 		return "page_content.html", data
 	}
 
@@ -139,11 +164,20 @@ func (p *ScholarPlugin) RenderPage(ctx *gplugin.HookContext, pageType string) (s
 		fmt.Sscanf(limitStr, "%d", &limit)
 	}
 
-	p.ensureScholar(settings)
+	if err := p.ensureScholar(settings); err != nil {
+		// A misconfigured source is an operator error worth showing (only
+		// admins normally see this page before it works), not a transient one.
+		data["plugin_content"] = `<div class="alert alert-warning" role="alert">Scholar plugin: ` + html.EscapeString(err.Error()) + `</div>`
+		return "page_content.html", data
+	}
 
 	articles, err := p.sch.QueryProfileWithMemoryCache(scholarID, limit)
 	if err != nil {
-		log.Printf("Scholar query failed: %v", err)
+		if errors.Is(err, scholarlib.ErrBlocked) {
+			log.Printf("Scholar query failed: this server's IP is blocked by Google Scholar; consider source=semantic_scholar (%v)", err)
+		} else {
+			log.Printf("Scholar query failed: %v", err)
+		}
 		data["plugin_content"] = unavailableHTML
 		return "page_content.html", data
 	}
@@ -215,11 +249,13 @@ func (p *ScholarPlugin) ScheduledJobs() []gplugin.ScheduledJob {
 			Name:     "scholar-cache-refresh",
 			Interval: 24 * time.Hour,
 			Run: func(db *gorm.DB, settings map[string]string) error {
-				scholarID := settings["scholar_id"]
+				scholarID, _ := profileID(settings)
 				if scholarID == "" || settings["enabled"] != "true" {
 					return nil
 				}
-				p.ensureScholar(settings)
+				if err := p.ensureScholar(settings); err != nil {
+					return err
+				}
 				limit := 50
 				fmt.Sscanf(settings["article_limit"], "%d", &limit)
 				_, err := p.sch.QueryProfileWithMemoryCache(scholarID, limit)
