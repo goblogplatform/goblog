@@ -119,9 +119,19 @@ func (a *Auth) formatRequest(r *http.Request) string {
 	return strings.Join(request, "\n")
 }
 
-// todo: make these request functions generalized
+// githubUser is the subset of GitHub's /user response we keep.
+type githubUser struct {
+	ID        int    `json:"id"`
+	Login     string `json:"login"`
+	AvatarURL string `json:"avatar_url"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+}
+
+// RequestUser fetches the GitHub profile for accessToken and returns it as an
+// unstored BlogUser (ID is zero; the database assigns it on UpsertUser).
 func (a *Auth) RequestUser(accessToken string) (*BlogUser, error) {
-	data := &BlogUser{}
+	gh := &githubUser{}
 	//get the user info from Github
 	req, err := http.NewRequest("GET", "https://api.github.com/user", strings.NewReader(""))
 	if err != nil {
@@ -152,12 +162,50 @@ func (a *Auth) RequestUser(accessToken string) (*BlogUser, error) {
 		return nil, errors.New(bodyString)
 	}
 
-	json.Unmarshal(bodyBytes, &data)
-	data.AccessToken = accessToken
+	json.Unmarshal(bodyBytes, gh)
+	user := &BlogUser{
+		Provider:    ProviderGitHub,
+		ProviderID:  strconv.Itoa(gh.ID),
+		Login:       gh.Login,
+		AvatarURL:   gh.AvatarURL,
+		Name:        gh.Name,
+		Email:       gh.Email,
+		AccessToken: accessToken,
+	}
 
-	fmt.Println("Parsed user: ", data)
+	fmt.Println("Parsed user: ", user.Login, user.ProviderID)
 
-	return data, nil
+	return user, nil
+}
+
+// UpsertUser stores user, matching an existing row by (Provider, ProviderID).
+// On a miss the row is created and the database assigns ID. On a hit the
+// profile fields and AccessToken are refreshed. Either way the stored row is
+// returned.
+func (a *Auth) UpsertUser(user *BlogUser) (*BlogUser, error) {
+	var existing BlogUser
+	err := (*a.db).Where("provider = ? AND provider_id = ?", user.Provider, user.ProviderID).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		user.ID = 0
+		if err := (*a.db).Create(user).Error; err != nil {
+			return nil, err
+		}
+		return user, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	existing.Login = user.Login
+	existing.AvatarURL = user.AvatarURL
+	existing.Name = user.Name
+	existing.Email = user.Email
+	existing.AccessToken = user.AccessToken
+	// Save writes every column, so a field GitHub now hides (e.g. a private
+	// email) is cleared rather than left stale.
+	if err := (*a.db).Save(&existing).Error; err != nil {
+		return nil, err
+	}
+	return &existing, nil
 }
 
 // LoginPostHandler should be called with the code provided by github. After
@@ -180,14 +228,10 @@ func (a *Auth) LoginPostHandler(c *gin.Context) {
 		return
 	}
 
-	//check if user exists, if not add them, if they do update access token
-	var existingUser BlogUser
-	err = (*a.db).Where("ID = ?", user.ID).First(&existingUser).Error
+	stored, err := a.UpsertUser(user)
 	if err != nil {
-		(*a.db).Create(&user)
-	} else {
-		(*a.db).Model(&user).Where("ID = ?", user.ID).Updates(&user)
-		existingUser = *user
+		c.JSON(http.StatusInternalServerError, "Error storing user: "+err.Error())
+		return
 	}
 
 	// On a fresh install where the operator has pre-populated .env (e.g. via
@@ -196,8 +240,8 @@ func (a *Auth) LoginPostHandler(c *gin.Context) {
 	// to admin so the operator can administer the site without re-running the
 	// wizard. Same trust model as the wizard: whoever first completes OAuth
 	// against the server's client_secret becomes the admin.
-	if err := a.EnsureAdmin(user); errors.Is(err, ErrNotConfiguredAdmin) {
-		log.Printf("%s (id %d) logged in but is not the configured admin; not promoting", user.Login, user.ID)
+	if err := a.EnsureAdmin(stored); errors.Is(err, ErrNotConfiguredAdmin) {
+		log.Printf("%s (id %s) logged in but is not the configured admin; not promoting", stored.Login, stored.ProviderID)
 	} else if err != nil {
 		log.Println("Error ensuring admin user: " + err.Error())
 	}
@@ -207,7 +251,7 @@ func (a *Auth) LoginPostHandler(c *gin.Context) {
 	session.Set("token", data.AccessToken)
 	session.Save()
 
-	c.JSON(http.StatusOK, existingUser)
+	c.JSON(http.StatusOK, stored)
 }
 
 // ErrNotConfiguredAdmin is returned by EnsureAdmin when no admin exists yet
@@ -216,12 +260,16 @@ func (a *Auth) LoginPostHandler(c *gin.Context) {
 var ErrNotConfiguredAdmin = errors.New("user is not the configured admin")
 
 // isConfiguredAdmin reports whether user matches the admin identity pinned in
-// .env. If neither admin_login nor admin_github_id is set, any user matches
-// (first-to-login wins). If either is set, the user must match at least one:
-// admin_login case-insensitively against the GitHub login, admin_github_id
-// against the numeric GitHub id. A malformed admin_github_id is treated as set
-// but never matching, so a typo cannot silently reopen the gate.
+// .env. Only GitHub users can be admin. If neither admin_login nor
+// admin_github_id is set, any GitHub user matches (first-to-login wins). If
+// either is set, the user must match at least one: admin_login
+// case-insensitively against the GitHub login, admin_github_id numerically
+// against the GitHub id (ProviderID). A malformed admin_github_id is treated
+// as set but never matching, so a typo cannot silently reopen the gate.
 func isConfiguredAdmin(user *BlogUser) bool {
+	if user.Provider != ProviderGitHub {
+		return false
+	}
 	login := strings.TrimSpace(os.Getenv("admin_login"))
 	idStr := strings.TrimSpace(os.Getenv("admin_github_id"))
 	if login == "" && idStr == "" {
@@ -236,7 +284,7 @@ func isConfiguredAdmin(user *BlogUser) bool {
 			log.Printf("admin_github_id %q is not a number; no user can match it", idStr)
 			return false
 		}
-		if id == user.ID {
+		if githubID, err := strconv.Atoi(user.ProviderID); err == nil && githubID == id {
 			return true
 		}
 	}

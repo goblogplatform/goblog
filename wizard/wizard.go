@@ -29,12 +29,7 @@ func New(db *gorm.DB, version string) Wizard {
 }
 
 func (w *Wizard) IsDbNil() bool {
-	if (*w.db) == nil {
-		return true
-	}
-	user := auth.BlogUser{}
-	(*w.db).Create(&user)
-	return false
+	return (*w.db) == nil
 }
 
 func (w *Wizard) UpdateDb(db *gorm.DB) {
@@ -202,15 +197,17 @@ func (w *Wizard) updateAdminUser(accessToken string) error {
 
 // createAdminUser stores the GitHub user and promotes them to admin through
 // the same gate as the login path, so an admin_login / admin_github_id pin in
-// .env is honoured by the wizard too.
+// .env is honoured by the wizard too. A returning user is matched rather than
+// duplicated.
 func (w *Wizard) createAdminUser(user *auth.BlogUser) error {
-	if result := (*w.db).Create(user); result.Error != nil {
-		return errors.New("Error creating user: " + result.Error.Error())
-	}
 	_auth := auth.New(*w.db, w.Version)
-	err := _auth.EnsureAdmin(user)
+	stored, err := _auth.UpsertUser(user)
+	if err != nil {
+		return errors.New("Error creating user: " + err.Error())
+	}
+	err = _auth.EnsureAdmin(stored)
 	if errors.Is(err, auth.ErrNotConfiguredAdmin) {
-		return fmt.Errorf("GitHub user %q (id %d) is not the configured admin; check admin_login / admin_github_id in .env", user.Login, user.ID)
+		return fmt.Errorf("GitHub user %q (id %s) is not the configured admin; check admin_login / admin_github_id in .env", stored.Login, stored.ProviderID)
 	}
 	if err != nil {
 		return errors.New("Error creating admin user: " + err.Error())
