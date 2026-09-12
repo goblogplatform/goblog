@@ -251,16 +251,27 @@ func TestRenderPage_SemanticScholarMissingID(t *testing.T) {
 }
 
 func TestRenderPage_UnknownSourceIsVisible(t *testing.T) {
-	client := &recordingClient{status: 200, body: s2Page}
-	p := newPluginWithClient(t, client)
-	settings := map[string]string{"enabled": "true", "source": "semantic-scholar", "scholar_id": "SbUmSEAAAAAJ", "semantic_scholar_id": "1792904"}
-	_, data := p.RenderPage(&gplugin.HookContext{Settings: settings}, "research")
-	html, _ := data["plugin_content"].(string)
-	if !strings.Contains(html, "semantic-scholar") {
-		t.Errorf("expected the unknown source value to be reported, got %q", html)
-	}
-	if len(client.requests) != 0 {
-		t.Errorf("an unknown source must not fall back to fetching, got %d requests", len(client.requests))
+	// Whether or not the Google id happens to be set, a bad source value must
+	// be what the operator sees - not a misleading "ID not configured".
+	for name, scholarID := range map[string]string{"with google id": "SbUmSEAAAAAJ", "without google id": ""} {
+		t.Run(name, func(t *testing.T) {
+			client := &recordingClient{status: 200, body: s2Page}
+			p := newPluginWithClient(t, client)
+			settings := map[string]string{"enabled": "true", "source": "semantic-scholar", "scholar_id": scholarID, "semantic_scholar_id": "1792904"}
+			_, data := p.RenderPage(&gplugin.HookContext{Settings: settings}, "research")
+			html, _ := data["plugin_content"].(string)
+			if !strings.Contains(html, "semantic-scholar") || strings.Contains(html, "not configured") {
+				t.Errorf("expected the unknown source value to be reported, got %q", html)
+			}
+			if len(client.requests) != 0 {
+				t.Errorf("an unknown source must not fall back to fetching, got %d requests", len(client.requests))
+			}
+
+			// The refresh job reports the same misconfiguration instead of silently doing nothing.
+			if err := p.ScheduledJobs()[0].Run(nil, settings); err == nil || !strings.Contains(err.Error(), "semantic-scholar") {
+				t.Errorf("expected the refresh job to return the unknown-source error, got %v", err)
+			}
+		})
 	}
 }
 

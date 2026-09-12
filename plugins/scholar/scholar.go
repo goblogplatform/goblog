@@ -152,6 +152,16 @@ func (p *ScholarPlugin) RenderPage(ctx *gplugin.HookContext, pageType string) (s
 	data := gin.H{"has_plugin_content": true}
 
 	settings := ctx.Settings
+
+	// Validate the source before looking for an id, so a bad source value is
+	// what the operator sees rather than a misleading "ID not configured".
+	// A misconfigured source is an operator error worth showing (only admins
+	// normally see this page before it works), not a transient one.
+	if err := p.ensureScholar(settings); err != nil {
+		data["plugin_content"] = `<div class="alert alert-warning" role="alert">Scholar plugin: ` + html.EscapeString(err.Error()) + `</div>`
+		return "page_content.html", data
+	}
+
 	scholarID, idSetting := profileID(settings)
 	if scholarID == "" {
 		data["plugin_content"] = `<div class="alert alert-warning" role="alert">` + idSetting + ` not configured. Set it in the Scholar plugin settings.</div>`
@@ -162,13 +172,6 @@ func (p *ScholarPlugin) RenderPage(ctx *gplugin.HookContext, pageType string) (s
 	limit := 50
 	if limitStr != "" {
 		fmt.Sscanf(limitStr, "%d", &limit)
-	}
-
-	if err := p.ensureScholar(settings); err != nil {
-		// A misconfigured source is an operator error worth showing (only
-		// admins normally see this page before it works), not a transient one.
-		data["plugin_content"] = `<div class="alert alert-warning" role="alert">Scholar plugin: ` + html.EscapeString(err.Error()) + `</div>`
-		return "page_content.html", data
 	}
 
 	articles, err := p.sch.QueryProfileWithMemoryCache(scholarID, limit)
@@ -249,12 +252,15 @@ func (p *ScholarPlugin) ScheduledJobs() []gplugin.ScheduledJob {
 			Name:     "scholar-cache-refresh",
 			Interval: 24 * time.Hour,
 			Run: func(db *gorm.DB, settings map[string]string) error {
-				scholarID, _ := profileID(settings)
-				if scholarID == "" || settings["enabled"] != "true" {
+				if settings["enabled"] != "true" {
 					return nil
 				}
 				if err := p.ensureScholar(settings); err != nil {
 					return err
+				}
+				scholarID, _ := profileID(settings)
+				if scholarID == "" {
+					return nil
 				}
 				limit := 50
 				fmt.Sscanf(settings["article_limit"], "%d", &limit)
