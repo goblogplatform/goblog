@@ -1,0 +1,51 @@
+// Example dynamic goblog plugin.
+//
+// To try it:
+//   1. cp plugins/dynamic/hello.go.example plugins/dynamic/hello.go
+//   2. start goblog with ENABLE_DYNAMIC_PLUGINS=true
+//   3. every page now ends with a greeting; change the text under
+//      Admin -> Settings -> "Hello (example)".
+//
+// Dynamic plugins are ordinary Go source files interpreted at startup by
+// Yaegi. They must be `package main` and define `func NewPlugin() plugin.Plugin`.
+// The interpreter exposes the Go standard library and the goblog/plugin
+// package (Plugin, BasePlugin, HookContext, SettingDefinition, ScheduledJob);
+// third-party packages such as gin or gorm are not available, so keep to the
+// hooks below and embed plugin.BasePlugin for no-op defaults of the rest.
+package main
+
+import (
+	"goblog/plugin"
+	"html"
+)
+
+// HelloPlugin appends a configurable greeting to the footer of every page.
+type HelloPlugin struct {
+	plugin.BasePlugin
+}
+
+func NewPlugin() plugin.Plugin { return &HelloPlugin{} }
+
+func (p *HelloPlugin) Name() string        { return "hello" } // unique key, used for settings storage
+func (p *HelloPlugin) DisplayName() string { return "Hello (example)" }
+func (p *HelloPlugin) Version() string     { return "1.0.0" }
+
+// Settings declares what shows up under Admin -> Settings for this plugin.
+// Declare an "enabled" setting to get the on/off toggle; the registry calls
+// every plugin regardless, so honour it yourself in each hook.
+func (p *HelloPlugin) Settings() []plugin.SettingDefinition {
+	return []plugin.SettingDefinition{
+		{Key: "enabled", Type: "text", DefaultValue: "true", Label: "Enabled", Description: "Set to 'true' to show the greeting"},
+		{Key: "message", Type: "text", DefaultValue: "Hello from a dynamic plugin", Label: "Message", Description: "Text shown at the bottom of every page"},
+	}
+}
+
+// TemplateFooter returns HTML injected just before </body> on every page.
+// Always escape setting values: they are typed by whoever has admin access,
+// but the browser will trust whatever you return.
+func (p *HelloPlugin) TemplateFooter(ctx *plugin.HookContext) string {
+	if ctx.Settings["enabled"] != "true" {
+		return ""
+	}
+	return `<p class="text-center text-muted">` + html.EscapeString(ctx.Settings["message"]) + `</p>`
+}
