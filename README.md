@@ -65,6 +65,14 @@ Set `TRUSTED_PROXIES` so `X-Forwarded-For` headers are trusted for client IP res
 TRUSTED_PROXIES=172.16.0.0/12 ./goblog
 ```
 
+### Pinning the Admin Account
+On a fresh install the first GitHub account to complete login becomes the admin. If you pre-populate `.env` (e.g. from configuration management) and skip the wizard, anyone could win that race. Pin it to your own account by adding either or both of these to `.env`:
+```bash
+admin_login=your-github-username      # case-insensitive
+admin_github_id=12345                 # numeric id: https://api.github.com/users/your-github-username
+```
+Other accounts can still log in as regular users but are never promoted. Leave both unset to keep the first-to-login behaviour.
+
 ## Theming
 
 Themes live in `themes/{name}/` with this structure:
