@@ -34,10 +34,15 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 ### Admin
 - GitHub OAuth login
 - Install wizard for first-time setup
-- Admin dashboard with recent comments
+- Admin dashboard with recent comments, and a paginated comments page for moderation
 - Configurable settings (site title, subtitle, social URLs, favicon, etc.)
 - Post type management
 - Page management with hero images/videos
+
+### Plugins
+- Plugin system for injecting template data / HTML, scheduled jobs, settings, and whole pages
+- Built-in plugins: `analytics`, `socialicons`, `scholar` (research page)
+- Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
 
 ### Infrastructure
 - SQLite database (file-based, zero config)
@@ -91,6 +96,53 @@ To create a custom theme:
 2. Customize templates and CSS
 3. Set the `theme` setting to `my-theme` in admin settings
 
+## Plugins
+
+A plugin implements the `plugin.Plugin` interface (`plugin/plugin.go`). Embed `plugin.BasePlugin` to get no-op defaults and implement only the hooks you need:
+
+| Hook | What it does |
+|---|---|
+| `Name()`, `DisplayName()`, `Version()` | Identity. `Name()` is the unique key used to store the plugin's settings. |
+| `Settings()` | Declares settings (`text`, `textarea`, `file`, `bool`). They appear under **Admin → Settings** grouped by plugin, are stored in `plugin_settings`, and reach every hook via `ctx.Settings`. Declare an `enabled` setting to get the on/off toggle — the registry calls every plugin regardless, so honour `ctx.Settings["enabled"]` yourself. |
+| `TemplateHead(ctx)` / `TemplateFooter(ctx)` | Return raw HTML injected into `<head>` / before `</body>` on every rendered page. Escape anything that came from settings or the request. |
+| `TemplateData(ctx)` | Returns data made available to templates as `.plugins.<name>`. |
+| `ScheduledJobs()` | Periodic background jobs (`Name`, `Interval`, `Run(db, settings)`), started at boot. |
+| `Pages()` / `RenderPage(ctx, pageType)` | Own a page type: it gets a slug, an optional nav entry, and you choose the template and data when it is visited. `plugins/scholar` is the example. |
+| `OnInit(db)` | Runs once at startup, after settings are seeded. |
+
+`ctx` is a `*plugin.HookContext` carrying the Gin context, the DB, the plugin's own settings, the template being rendered, and the existing template data. `plugins/socialicons` is the smallest complete example.
+
+### Compiled-in plugins
+Live in `plugins/<name>/` as a normal Go package, and are registered in `main()`:
+```go
+registry.Register(myplugin.New())
+```
+They have full access to `gin`, `gorm`, and any module dependency, and are part of the release binary. Use this for anything that ships with goblog.
+
+### Dynamic plugins
+Loaded at startup from `plugins/dynamic/*.go` by the embedded [Yaegi](https://github.com/traefik/yaegi) Go interpreter — no rebuild, so they work with the Docker image. Enable with:
+```bash
+ENABLE_DYNAMIC_PLUGINS=true ./goblog
+```
+A dynamic plugin is a single `package main` file defining `func NewPlugin() plugin.Plugin`. Start from the shipped example:
+```bash
+cp plugins/dynamic/hello.go.example plugins/dynamic/hello.go
+ENABLE_DYNAMIC_PLUGINS=true ./goblog     # every page now ends with a greeting
+```
+then edit the message under **Admin → Settings → Hello (example)**.
+
+Limits of the interpreted environment:
+- Available imports are the Go standard library and `goblog/plugin` (`Plugin`, `BasePlugin`, `HookContext`, `SettingDefinition`, `ScheduledJob`, `PageDefinition`). `gin` and `gorm` are **not** available, so the hooks that name their types — `TemplateData`, `ScheduledJobs`, `OnInit`, `RenderPage` — can't be implemented dynamically; write a compiled-in plugin for those.
+- A file that fails to load is logged and skipped; the rest still load.
+- Dynamic plugins run as ordinary Go code inside the goblog process with stdlib access. Only load files you control; `plugins/dynamic/` should be writable by the operator alone.
+
+With Docker, bind-mount the directory and set the flag:
+```bash
+docker run -p 7000:7000 -e ENABLE_DYNAMIC_PLUGINS=true \
+  -v $PWD/plugins/dynamic:/go/src/github.com/compscidr/goblog/plugins/dynamic \
+  compscidr/goblog:latest
+```
+
 ## Testing
 ```bash
 go test ./...
@@ -103,9 +155,3 @@ go test ./...
 - **Showdown.js** + **DOMPurify** for client-side markdown rendering
 - **Bootstrap 5** for UI framework
 - Server-side rendered templates with JSON REST API at `/api/v1/`
-
-## Todo
-- PostgreSQL support (#14)
-- Plugin system (#480)
-- Cross-posting to other platforms (#12)
-- Research page citation counts (#513)
