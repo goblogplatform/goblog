@@ -114,6 +114,11 @@ func (p *ScholarPlugin) ensureScholar(settings map[string]string) {
 	})
 }
 
+// unavailableHTML is what visitors see when publications can't be fetched.
+// The underlying error goes to the server log only: it names the Google URL
+// and status, which is noise for a reader and useful for the operator.
+const unavailableHTML = `<div class="alert alert-warning" role="alert">Publications are temporarily unavailable. Please check back later.</div>`
+
 func (p *ScholarPlugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, gin.H) {
 	if pageType != "research" {
 		return "", nil
@@ -139,7 +144,7 @@ func (p *ScholarPlugin) RenderPage(ctx *gplugin.HookContext, pageType string) (s
 	articles, err := p.sch.QueryProfileWithMemoryCache(scholarID, limit)
 	if err != nil {
 		log.Printf("Scholar query failed: %v", err)
-		data["plugin_content"] = `<div class="alert alert-danger" role="alert">` + html.EscapeString(err.Error()) + `</div>`
+		data["plugin_content"] = unavailableHTML
 		return "page_content.html", data
 	}
 
