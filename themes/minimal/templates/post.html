@@ -78,22 +78,22 @@
         <h3>External Backlinks</h3>
         <p class="text-muted">External sites linking to this post</p>
         {{ if .external_backlinks }}
-        <table class="table table-sm">
+        <table class="table table-sm backlinks-table">
           <thead>
             <tr>
               <th>Referer</th>
-              <th>Hits</th>
-              <th>First Seen</th>
-              <th>Last Seen</th>
+              <th class="text-nowrap">Hits</th>
+              <th class="text-nowrap">First Seen</th>
+              <th class="text-nowrap">Last Seen</th>
             </tr>
           </thead>
           <tbody>
             {{ range .external_backlinks }}
             <tr>
-              <td><a href="{{ .Referer }}" target="_blank" rel="noopener">{{ .Referer }}</a></td>
-              <td>{{ .HitCount }}</td>
-              <td>{{ .FirstSeen.Format "Jan 02, 2006" }}</td>
-              <td>{{ .LastSeen.Format "Jan 02, 2006" }}</td>
+              <td class="backlinks-referer"><a href="{{ .Referer }}" title="{{ .Referer }}" target="_blank" rel="noopener">{{ .Referer }}</a></td>
+              <td class="text-nowrap">{{ .HitCount }}</td>
+              <td class="text-nowrap">{{ .FirstSeen.Format "Jan 02, 2006" }}</td>
+              <td class="text-nowrap">{{ .LastSeen.Format "Jan 02, 2006" }}</td>
             </tr>
             {{ end }}
           </tbody>

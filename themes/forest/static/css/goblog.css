@@ -90,3 +90,12 @@ video {
 .search-page-input { font-family: 'DM Sans', sans-serif; font-size: 14px; padding: 8px 14px; border: 1px solid #c8d6c8; border-radius: 8px; width: 300px; }
 .search-page-btn { font-family: 'DM Sans', sans-serif; font-size: 14px; padding: 8px 20px; border: none; border-radius: 8px; background: #2d5a27; color: #fff; cursor: pointer; }
 .search-page-btn:hover { background: #1e3d1a; }
+
+/* External backlinks table: keep every row to a single line, truncating long referer URLs */
+.backlinks-table .backlinks-referer {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -8,6 +8,7 @@ import (
 
 	"goblog/auth"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -309,6 +310,40 @@ func (b *Blog) GetExternalBacklinks(postID uint) []ExternalBacklink {
 	return backlinks
 }
 
+// normalizeHost lowercases a host, strips any port and a leading "www." so that
+// the different ways a site can be addressed compare equal.
+func normalizeHost(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	return strings.TrimPrefix(host, "www.")
+}
+
+// isSelfHost reports whether refHost (from a Referer header) refers to this
+// site. Behind a reverse proxy c.Request.Host is often the upstream address
+// (e.g. localhost:7000) rather than the public hostname, so the referer is also
+// compared against X-Forwarded-Host and the configured site_url. IP literals and
+// localhost are always treated as self: an operator visiting their own server
+// by IP is far more likely than an external site linking from a bare IP.
+func (b *Blog) isSelfHost(c *gin.Context, refHost string) bool {
+	refHost = normalizeHost(refHost)
+	if refHost == "" || refHost == "localhost" || net.ParseIP(refHost) != nil {
+		return true
+	}
+
+	candidates := []string{c.Request.Host, c.GetHeader("X-Forwarded-Host")}
+	if siteURL, err := url.Parse(b.GetSettings()["site_url"].Value); err == nil {
+		candidates = append(candidates, siteURL.Host)
+	}
+	for _, candidate := range candidates {
+		if candidate != "" && normalizeHost(candidate) == refHost {
+			return true
+		}
+	}
+	return false
+}
+
 // TrackReferer records external referers for a post.
 func (b *Blog) TrackReferer(c *gin.Context, postID uint) {
 	referer := c.Request.Referer()
@@ -321,12 +356,8 @@ func (b *Blog) TrackReferer(c *gin.Context, postID uint) {
 		return
 	}
 
-	// Skip self-referrals (compare hostnames without ports)
-	reqHost := c.Request.Host
-	if i := strings.LastIndex(reqHost, ":"); i != -1 {
-		reqHost = reqHost[:i]
-	}
-	if strings.EqualFold(parsed.Hostname(), reqHost) {
+	// Skip self-referrals
+	if b.isSelfHost(c, parsed.Hostname()) {
 		return
 	}
 
