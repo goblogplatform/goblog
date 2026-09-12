@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -290,6 +291,7 @@ func TestBlogWorkflow(t *testing.T) {
 	if !strings.Contains(w.Body.String(), testPost.Title) {
 		t.Errorf("Expected to see a post with title: %s but didn't", testPost.Title)
 	}
+	assertCommentFormProtected(t, w.Body.String())
 
 	//html post as admin (Post handler calls IsAdmin twice)
 	a.On("IsAdmin", mock.Anything).Return(true).Twice()
@@ -302,6 +304,7 @@ func TestBlogWorkflow(t *testing.T) {
 	if !strings.Contains(w.Body.String(), testPost.Title) {
 		t.Errorf("Expected to see a post with title: %s but didn't", testPost.Title)
 	}
+	assertCommentFormProtected(t, w.Body.String())
 
 	//html post not found
 	a.On("IsAdmin", mock.Anything).Return(false).Once()
@@ -420,8 +423,12 @@ func TestBlogWorkflow(t *testing.T) {
 
 	// Comment tests
 
+	// Token + script-derived check that a real browser would submit (see TestSubmitCommentSpamCheck)
+	commentToken := b.CommentTokenAt(post.ID, time.Now().Add(-10*time.Second))
+	spamCheck := "&comment_token=" + url.QueryEscape(commentToken) + "&comment_check=" + url.QueryEscape(reverseString(commentToken))
+
 	// Valid comment submission -> 303 redirect
-	formData := "post_id=" + strconv.Itoa(int(post.ID)) + "&name=TestUser&content=Great+post!&redirect=" + url.QueryEscape(post.Permalink())
+	formData := "post_id=" + strconv.Itoa(int(post.ID)) + "&name=TestUser&content=Great+post!&redirect=" + url.QueryEscape(post.Permalink()) + spamCheck
 	req, _ = http.NewRequest("POST", "/comments", strings.NewReader(formData))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -463,7 +470,7 @@ func TestBlogWorkflow(t *testing.T) {
 	}
 
 	// Rate limiting -> error redirect (already posted above from same IP)
-	formData = "post_id=" + strconv.Itoa(int(post.ID)) + "&name=TestUser2&content=Another+comment&redirect=" + url.QueryEscape(post.Permalink())
+	formData = "post_id=" + strconv.Itoa(int(post.ID)) + "&name=TestUser2&content=Another+comment&redirect=" + url.QueryEscape(post.Permalink()) + spamCheck
 	req, _ = http.NewRequest("POST", "/comments", strings.NewReader(formData))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
@@ -692,5 +699,111 @@ func TestExternalBacklinks(t *testing.T) {
 	backlinks = b.GetExternalBacklinks(post.ID)
 	if len(backlinks) != 1 {
 		t.Errorf("Expected empty referer to be skipped, got %d backlinks", len(backlinks))
+	}
+}
+
+// reverseString mirrors what the inline comment-form script does to fill comment_check.
+func reverseString(s string) string {
+	r := []rune(s)
+	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+		r[i], r[j] = r[j], r[i]
+	}
+	return string(r)
+}
+
+// TestSubmitCommentSpamCheck covers issue #542: comments must carry a signed,
+// server-issued token and a JS-derived check value, and must not be submitted
+// implausibly fast or with a stale token.
+func TestSubmitCommentSpamCheck(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{})
+	a := &Auth{}
+	b := blog.New(db, a, "test")
+
+	post := blog.Post{Title: "Test Post", Content: "Some content", Slug: "test-post"}
+	db.Create(&post)
+	other := blog.Post{Title: "Other Post", Content: "Other content", Slug: "other-post"}
+	db.Create(&other)
+
+	router := gin.Default()
+	router.POST("/comments", b.SubmitComment)
+
+	submit := func(name, token, check string) string {
+		form := url.Values{}
+		form.Set("post_id", strconv.Itoa(int(post.ID)))
+		form.Set("name", name)
+		form.Set("content", "Hello there")
+		form.Set("redirect", "/p")
+		form.Set("comment_token", token)
+		form.Set("comment_check", check)
+		req, _ := http.NewRequest("POST", "/comments", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = "10.0.0." + strconv.Itoa(len(name)) + ":1234" // distinct IP per case to dodge the rate limiter
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("%s: expected 303, got %d", name, w.Code)
+		}
+		return w.Header().Get("Location")
+	}
+	countComments := func() int64 {
+		var n int64
+		db.Model(&blog.Comment{}).Count(&n)
+		return n
+	}
+
+	now := time.Now()
+	valid := b.CommentTokenAt(post.ID, now.Add(-10*time.Second))
+
+	rejected := []struct {
+		name, token, check string
+	}{
+		{"a", "", ""},
+		{"ab", "not-a-token", reverseString("not-a-token")},
+		{"abc", valid + "x", reverseString(valid + "x")},
+		{"abcd", b.CommentTokenAt(other.ID, now.Add(-10*time.Second)), reverseString(b.CommentTokenAt(other.ID, now.Add(-10*time.Second)))},
+		{"abcde", b.CommentTokenAt(post.ID, now), reverseString(b.CommentTokenAt(post.ID, now))},
+		{"abcdef", b.CommentTokenAt(post.ID, now.Add(-25*time.Hour)), reverseString(b.CommentTokenAt(post.ID, now.Add(-25*time.Hour)))},
+		{"abcdefg", valid, ""},
+		{"abcdefgh", valid, valid},
+	}
+	labels := []string{"missing token", "garbage token", "tampered signature", "token for another post", "submitted too fast", "expired token", "missing check", "check not derived by script"}
+	for i, tc := range rejected {
+		loc := submit(tc.name, tc.token, tc.check)
+		if !strings.Contains(loc, "comment_error=spam_check") {
+			t.Errorf("%s: expected spam_check error redirect, got %s", labels[i], loc)
+		}
+	}
+	if n := countComments(); n != 0 {
+		t.Fatalf("expected no comments stored after rejected submissions, got %d", n)
+	}
+
+	loc := submit("abcdefghi", valid, reverseString(valid))
+	if !strings.Contains(loc, "#comment-") {
+		t.Errorf("valid token and check: expected success redirect, got %s", loc)
+	}
+	if n := countComments(); n != 1 {
+		t.Fatalf("expected 1 comment stored after valid submission, got %d", n)
+	}
+
+	// The token rendered into the page must verify the same way.
+	rendered := b.CommentToken(post.ID)
+	if rendered == "" || strings.Count(rendered, ".") != 1 {
+		t.Errorf("expected CommentToken to return a '<ts>.<sig>' token, got %q", rendered)
+	}
+}
+
+// assertCommentFormProtected checks a rendered post page carries the anti-spam
+// token, the empty check field, and the script that fills it (issue #542).
+func assertCommentFormProtected(t *testing.T, body string) {
+	t.Helper()
+	if !regexp.MustCompile(`name="comment_token" value="\d+\.[0-9a-f]{64}"`).MatchString(body) {
+		t.Errorf("expected rendered comment form to contain a signed comment_token, body: %.200s...", body)
+	}
+	if !strings.Contains(body, `name="comment_check" value=""`) {
+		t.Errorf("expected rendered comment form to contain an empty comment_check field")
+	}
+	if !strings.Contains(body, `getElementById("comment_check")`) {
+		t.Errorf("expected rendered comment form to include the script that fills comment_check")
 	}
 }

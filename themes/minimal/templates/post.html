@@ -136,6 +136,7 @@
           {{ else if eq .comment_error "rate_limit" }}Please wait a minute before posting another comment.
           {{ else if eq .comment_error "name_too_long" }}Name is too long (max 100 characters).
           {{ else if eq .comment_error "content_too_long" }}Comment is too long (max 5000 characters).
+          {{ else if eq .comment_error "spam_check" }}Your comment could not be verified. Please make sure JavaScript is enabled and try again.
           {{ else }}An error occurred. Please try again.
           {{ end }}
         </div>
@@ -175,6 +176,8 @@
         <form method="POST" action="/comments">
           <input type="hidden" name="post_id" value="{{ .post.ID }}">
           <input type="hidden" name="redirect" value="{{ .post.Permalink }}">
+          <input type="hidden" name="comment_token" value="{{ .comment_token }}">
+          <input type="hidden" id="comment_check" name="comment_check" value="">
           <div style="display:none;">
             <label for="website">Website</label>
             <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
@@ -195,6 +198,13 @@
           <button type="button" class="btn btn-secondary btn-sm" onclick="previewComment()">Preview</button>
           <button type="submit" class="btn btn-primary btn-sm">Submit Comment</button>
         </form>
+        <script type="text/javascript">
+          // Anti-spam: bots that do not run JS never fill comment_check and are rejected server-side.
+          (function() {
+            var token = document.querySelector('input[name="comment_token"]').value;
+            document.getElementById("comment_check").value = token.split("").reverse().join("");
+          })();
+        </script>
 
         <script type="text/javascript">
           function previewComment() {
