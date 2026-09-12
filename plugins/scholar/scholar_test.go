@@ -1,8 +1,13 @@
 package scholar
 
 import (
+	"io"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	gplugin "goblog/plugin"
 
 	scholarlib "github.com/compscidr/scholar"
 )
@@ -104,5 +109,57 @@ func TestSafeHref(t *testing.T) {
 		if !tt.safe && result != "" {
 			t.Errorf("expected %q to be blocked, got %q", tt.input, result)
 		}
+	}
+}
+
+// blockedClient mimics Google Scholar refusing a datacenter IP: every request
+// gets a 403 with the "automated queries" block page. It counts calls.
+type blockedClient struct{ calls int }
+
+func (c *blockedClient) Do(req *http.Request) (*http.Response, error) {
+	c.calls++
+	return &http.Response{
+		StatusCode: http.StatusForbidden,
+		Status:     "403 Forbidden",
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("<title>Sorry...</title>your computer or network may be sending automated queries")),
+	}, nil
+}
+
+func newBlockedPlugin(t *testing.T) (*ScholarPlugin, *blockedClient) {
+	t.Helper()
+	dir := t.TempDir()
+	p := New()
+	p.sch = scholarlib.New(filepath.Join(dir, "profiles.json"), filepath.Join(dir, "articles.json"))
+	p.sch.SetRequestDelay(0)
+	client := &blockedClient{}
+	p.sch.SetHTTPClient(client)
+	p.scholarOnce.Do(func() {}) // mark the library as initialised so ensureScholar keeps ours
+	return p, client
+}
+
+func renderResearch(p *ScholarPlugin) string {
+	settings := map[string]string{"enabled": "true", "scholar_id": "SbUmSEAAAAAJ", "article_limit": "50"}
+	_, data := p.RenderPage(&gplugin.HookContext{Settings: settings}, "research")
+	html, _ := data["plugin_content"].(string)
+	return html
+}
+
+// TestRenderPage_BlockedByScholar covers issue #547: when Google refuses the
+// request, visitors get a friendly message rather than the raw library error
+// (which names the Google URL and status). Not re-hitting Google after a
+// failure is the scholar library's job (its failure cooldown).
+func TestRenderPage_BlockedByScholar(t *testing.T) {
+	p, client := newBlockedPlugin(t)
+
+	html := renderResearch(p)
+	if client.calls != 1 {
+		t.Fatalf("expected exactly one request to Scholar, got %d", client.calls)
+	}
+	if !strings.Contains(html, "temporarily unavailable") {
+		t.Errorf("expected a friendly unavailable message, got %q", html)
+	}
+	if strings.Contains(html, "scholar.google.com") || strings.Contains(html, "403") {
+		t.Errorf("raw error details must not be shown to visitors, got %q", html)
 	}
 }
