@@ -163,3 +163,126 @@ func TestRenderPage_BlockedByScholar(t *testing.T) {
 		t.Errorf("raw error details must not be shown to visitors, got %q", html)
 	}
 }
+
+// recordingClient answers every request with the given body and status and
+// records the requests it saw.
+type recordingClient struct {
+	status   int
+	body     string
+	requests []*http.Request
+}
+
+func (c *recordingClient) Do(req *http.Request) (*http.Response, error) {
+	c.requests = append(c.requests, req)
+	return &http.Response{
+		StatusCode: c.status,
+		Status:     http.StatusText(c.status),
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(c.body)),
+	}, nil
+}
+
+// newPluginWithClient wires a plugin so that ensureScholar builds the library
+// around the given fake client, exercising the real settings-driven setup.
+func newPluginWithClient(t *testing.T, client *recordingClient) *ScholarPlugin {
+	t.Helper()
+	p := New()
+	p.newScholar = func(profileCache, articleCache string) *scholarlib.Scholar {
+		sch := scholarlib.New(profileCache, articleCache)
+		sch.SetRequestDelay(0)
+		sch.SetHTTPClient(client)
+		return sch
+	}
+	return p
+}
+
+const s2Page = `{"offset":0,"data":[{"paperId":"abc","url":"https://www.semanticscholar.org/paper/abc","title":"Paper From Semantic Scholar","authors":[{"name":"Jason B. Ernst"}],"year":2023,"publicationDate":"2023-06-01","venue":"IEEE Access","citationCount":7}]}`
+
+func TestRenderPage_SemanticScholarSource(t *testing.T) {
+	client := &recordingClient{status: 200, body: s2Page}
+	p := newPluginWithClient(t, client)
+	dir := t.TempDir()
+	settings := map[string]string{
+		"enabled": "true", "source": "semantic_scholar", "semantic_scholar_id": "1792904",
+		"scholar_id": "SbUmSEAAAAAJ", "article_limit": "50",
+		"profile_cache": filepath.Join(dir, "p.json"), "article_cache": filepath.Join(dir, "a.json"),
+	}
+	_, data := p.RenderPage(&gplugin.HookContext{Settings: settings}, "research")
+	html, _ := data["plugin_content"].(string)
+
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one request, got %d", len(client.requests))
+	}
+	req := client.requests[0]
+	if req.URL.Host != "api.semanticscholar.org" || !strings.Contains(req.URL.Path, "/author/1792904/") {
+		t.Errorf("expected a Semantic Scholar request for author 1792904, got %s", req.URL)
+	}
+	if !strings.Contains(html, "Paper From Semantic Scholar") || !strings.Contains(html, "IEEE Access") {
+		t.Errorf("expected the S2 paper to be rendered, got %q", html)
+	}
+}
+
+func TestRenderPage_SemanticScholarAPIKey(t *testing.T) {
+	client := &recordingClient{status: 200, body: s2Page}
+	p := newPluginWithClient(t, client)
+	dir := t.TempDir()
+	settings := map[string]string{
+		"enabled": "true", "source": "semantic_scholar", "semantic_scholar_id": "1792904", "semantic_scholar_api_key": "k3y",
+		"profile_cache": filepath.Join(dir, "p.json"), "article_cache": filepath.Join(dir, "a.json"),
+	}
+	p.RenderPage(&gplugin.HookContext{Settings: settings}, "research")
+	if got := client.requests[0].Header.Get("x-api-key"); got != "k3y" {
+		t.Errorf("expected the API key header, got %q", got)
+	}
+}
+
+func TestRenderPage_SemanticScholarMissingID(t *testing.T) {
+	client := &recordingClient{status: 200, body: s2Page}
+	p := newPluginWithClient(t, client)
+	settings := map[string]string{"enabled": "true", "source": "semantic_scholar", "scholar_id": "SbUmSEAAAAAJ"}
+	_, data := p.RenderPage(&gplugin.HookContext{Settings: settings}, "research")
+	html, _ := data["plugin_content"].(string)
+	if !strings.Contains(html, "Semantic Scholar") || !strings.Contains(html, "not configured") {
+		t.Errorf("expected a warning naming the Semantic Scholar id setting, got %q", html)
+	}
+	if len(client.requests) != 0 {
+		t.Errorf("no request should be made without an id, got %d", len(client.requests))
+	}
+}
+
+func TestRenderPage_UnknownSourceIsVisible(t *testing.T) {
+	// Whether or not the Google id happens to be set, a bad source value must
+	// be what the operator sees - not a misleading "ID not configured".
+	for name, scholarID := range map[string]string{"with google id": "SbUmSEAAAAAJ", "without google id": ""} {
+		t.Run(name, func(t *testing.T) {
+			client := &recordingClient{status: 200, body: s2Page}
+			p := newPluginWithClient(t, client)
+			settings := map[string]string{"enabled": "true", "source": "semantic-scholar", "scholar_id": scholarID, "semantic_scholar_id": "1792904"}
+			_, data := p.RenderPage(&gplugin.HookContext{Settings: settings}, "research")
+			html, _ := data["plugin_content"].(string)
+			if !strings.Contains(html, "semantic-scholar") || strings.Contains(html, "not configured") {
+				t.Errorf("expected the unknown source value to be reported, got %q", html)
+			}
+			if len(client.requests) != 0 {
+				t.Errorf("an unknown source must not fall back to fetching, got %d requests", len(client.requests))
+			}
+
+			// The refresh job reports the same misconfiguration instead of silently doing nothing.
+			if err := p.ScheduledJobs()[0].Run(nil, settings); err == nil || !strings.Contains(err.Error(), "semantic-scholar") {
+				t.Errorf("expected the refresh job to return the unknown-source error, got %v", err)
+			}
+		})
+	}
+}
+
+// The default source is still Google Scholar, keyed by scholar_id.
+func TestRenderPage_DefaultSourceIsGoogle(t *testing.T) {
+	client := &recordingClient{status: 404, body: ""}
+	p := newPluginWithClient(t, client)
+	dir := t.TempDir()
+	settings := map[string]string{"enabled": "true", "scholar_id": "SbUmSEAAAAAJ", "profile_cache": filepath.Join(dir, "p.json"), "article_cache": filepath.Join(dir, "a.json")}
+	p.RenderPage(&gplugin.HookContext{Settings: settings}, "research")
+	if len(client.requests) != 1 || client.requests[0].URL.Host != "scholar.google.com" || !strings.Contains(client.requests[0].URL.RawQuery, "SbUmSEAAAAAJ") {
+		t.Errorf("expected a Google Scholar request for scholar_id, got %v", client.requests)
+	}
+}

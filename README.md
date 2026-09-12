@@ -21,7 +21,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 
 ### Pages
 - Configurable dynamic pages (writing, research, archives, tags, about, custom)
-- Google Scholar integration for research pages (with caching and throttle resilience)
+- Research page fed by Google Scholar or the Semantic Scholar API (`scholar` plugin), with on-disk caching and throttle resilience
 - Archives sorted by year and month
 
 ### Theming
@@ -41,7 +41,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 
 ### Plugins
 - Plugin system for injecting template data / HTML, scheduled jobs, settings, and whole pages
-- Built-in plugins: `analytics`, `socialicons`, `scholar` (research page)
+- Built-in plugins: `analytics`, `socialicons`, `scholar` (research page; Google Scholar is blocked from most cloud IPs, so set its `source` setting to `semantic_scholar` when hosting in a datacenter)
 - Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
 
 ### Infrastructure
