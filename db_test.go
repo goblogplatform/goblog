@@ -138,3 +138,32 @@ func dbConfigFromDSNForTest(dsn string) dbConfig {
 	}
 	return cfg
 }
+
+// A wizard value containing line breaks must not be able to add lines to
+// .env (which would inject arbitrary settings); they are stripped.
+func TestDBConfig_EnvFileStripsLineBreaks(t *testing.T) {
+	cfg := dbConfig{Type: "postgres", Host: "h", Port: "5432", User: "u", Password: "p\nclient_secret=evil\r", Name: "d", SSLMode: "disable"}
+	out := cfg.envFile()
+	if strings.Count(out, "\n") != 7 {
+		t.Fatalf("expected exactly 7 lines, got:\n%s", out)
+	}
+	env, err := godotenv.Read(writeTempEnv(t, out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, injected := env["client_secret"]; injected {
+		t.Errorf("line break in a value injected a setting: %v", env)
+	}
+	if env["POSTGRES_PASSWORD"] != "pclient_secret=evil" {
+		t.Errorf("expected the value with line breaks removed, got %q", env["POSTGRES_PASSWORD"])
+	}
+}
+
+func writeTempEnv(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

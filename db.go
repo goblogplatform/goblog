@@ -109,10 +109,12 @@ func (cfg dbConfig) envFile() string {
 	return b.String()
 }
 
-// envQuote quotes a .env value when it contains characters godotenv would
-// otherwise misread (spaces, '#', quotes).
+// envQuote renders a .env value: line breaks are stripped so a value can
+// never add lines to the file, and values containing characters godotenv
+// would otherwise misread (spaces, '#', quotes) are double-quoted.
 func envQuote(v string) string {
-	if strings.ContainsAny(v, " #\"'\n") {
+	v = strings.NewReplacer("\r", "", "\n", "").Replace(v)
+	if strings.ContainsAny(v, " #\"'") {
 		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"`
 	}
 	return v
