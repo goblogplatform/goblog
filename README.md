@@ -45,7 +45,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 - Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
 
 ### Infrastructure
-- SQLite database (file-based, zero config)
+- SQLite (file-based, zero config), MySQL, or PostgreSQL
 - Docker support with tagged releases on Docker Hub
 - Configurable trusted proxies for reverse proxy deployments (`TRUSTED_PROXIES` env var)
 - GitHub Actions CI/CD
@@ -63,6 +63,19 @@ Visit http://localhost:7000 and follow the install wizard.
 ```bash
 docker run -p 7000:7000 compscidr/goblog:latest
 ```
+
+### Database
+SQLite is the default and needs no setup. To use MySQL or PostgreSQL instead, pick it in the install wizard or set the variables in `.env` (see `template.env`):
+```bash
+database=postgres
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432          # default
+POSTGRES_USER=goblog
+POSTGRES_PASSWORD=...
+POSTGRES_DATABASE=goblog
+POSTGRES_SSLMODE=disable    # default; or require / verify-ca / verify-full
+```
+The schema is created and migrated automatically on startup for all three. There is no built-in tool for moving an existing site between databases.
 
 ### Behind a Reverse Proxy
 Set `TRUSTED_PROXIES` so `X-Forwarded-For` headers are trusted for client IP resolution:
