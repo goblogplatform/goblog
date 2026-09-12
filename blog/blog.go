@@ -12,6 +12,7 @@ import (
 
 	"goblog/auth"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -320,6 +321,53 @@ func (b *Blog) GetExternalBacklinks(postID uint) []ExternalBacklink {
 	return backlinks
 }
 
+// normalizeHost lowercases a host, strips any port and a leading "www." so that
+// the different ways a site can be addressed compare equal.
+func normalizeHost(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	return strings.TrimPrefix(host, "www.")
+}
+
+// IsSelfHost reports whether refHost (from a Referer header) refers to this
+// site, i.e. it matches one of the given site hosts after normalization.
+// IP literals and localhost are always treated as self: an operator visiting
+// their own server by IP is far more likely than an external site linking from
+// a bare IP.
+func IsSelfHost(refHost string, siteHosts ...string) bool {
+	refHost = normalizeHost(refHost)
+	if refHost == "" || refHost == "localhost" || net.ParseIP(refHost) != nil {
+		return true
+	}
+	for _, host := range siteHosts {
+		if host != "" && normalizeHost(host) == refHost {
+			return true
+		}
+	}
+	return false
+}
+
+// isSelfHost applies IsSelfHost to the current request. Behind a reverse proxy
+// c.Request.Host is often the upstream address (e.g. localhost:7000) rather
+// than the public hostname, so the referer is also compared against
+// X-Forwarded-Host (which chained proxies may turn into a comma-separated
+// list) and the configured site_url.
+func (b *Blog) isSelfHost(c *gin.Context, refHost string) bool {
+	siteHosts := []string{c.Request.Host}
+	for _, h := range strings.Split(c.GetHeader("X-Forwarded-Host"), ",") {
+		siteHosts = append(siteHosts, strings.TrimSpace(h))
+	}
+	var siteURLSetting Setting
+	if err := (*b.db).Where("key = ?", "site_url").First(&siteURLSetting).Error; err == nil {
+		if siteURL, err := url.Parse(siteURLSetting.Value); err == nil {
+			siteHosts = append(siteHosts, siteURL.Host)
+		}
+	}
+	return IsSelfHost(refHost, siteHosts...)
+}
+
 // TrackReferer records external referers for a post.
 func (b *Blog) TrackReferer(c *gin.Context, postID uint) {
 	referer := c.Request.Referer()
@@ -332,12 +380,8 @@ func (b *Blog) TrackReferer(c *gin.Context, postID uint) {
 		return
 	}
 
-	// Skip self-referrals (compare hostnames without ports)
-	reqHost := c.Request.Host
-	if i := strings.LastIndex(reqHost, ":"); i != -1 {
-		reqHost = reqHost[:i]
-	}
-	if strings.EqualFold(parsed.Hostname(), reqHost) {
+	// Skip self-referrals
+	if b.isSelfHost(c, parsed.Hostname()) {
 		return
 	}
 
