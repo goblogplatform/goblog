@@ -9,9 +9,12 @@
 // Dynamic plugins are ordinary Go source files interpreted at startup by
 // Yaegi. They must be `package main` and define `func NewPlugin() plugin.Plugin`.
 // The interpreter exposes the Go standard library and the goblog/plugin
-// package (Plugin, BasePlugin, HookContext, SettingDefinition, ScheduledJob);
-// third-party packages such as gin or gorm are not available, so keep to the
-// hooks below and embed plugin.BasePlugin for no-op defaults of the rest.
+// package; third-party packages such as gin or gorm are not available. That
+// means a dynamic plugin can implement Name/DisplayName/Version, Settings,
+// TemplateHead and TemplateFooter (as below), but not the hooks whose
+// signatures name gin or gorm types (TemplateData, ScheduledJobs, OnInit,
+// RenderPage) - write a compiled-in plugin for those. Embed plugin.BasePlugin
+// for no-op defaults of everything you don't implement.
 package main
 
 import (

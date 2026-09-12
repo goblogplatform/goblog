@@ -17,7 +17,7 @@ import (
 // Settings are stored in the plugin_settings table keyed by plugin name and setting key.
 type SettingDefinition struct {
 	Key          string // short key, e.g. "tracking_id"
-	Type         string // "text", "textarea", "file", "bool"
+	Type         string // "text" or "textarea"; anything else renders as a text input in the admin UI
 	DefaultValue string
 	Label        string // human-readable label for admin UI
 	Description  string // help text

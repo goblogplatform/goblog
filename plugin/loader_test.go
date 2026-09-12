@@ -27,8 +27,12 @@ func TestLoadDynamicPlugins_LoadsShippedExample(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Files without a .go suffix and subdirectories must be ignored.
-	os.WriteFile(filepath.Join(dir, "notes.go.example"), src, 0644)
-	os.Mkdir(filepath.Join(dir, "sub"), 0755)
+	if err := os.WriteFile(filepath.Join(dir, "notes.go.example"), src, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	registry := plugin.NewRegistry(db)
@@ -75,10 +79,20 @@ func TestLoadDynamicPlugins_LoadsShippedExample(t *testing.T) {
 // the rest from loading, and a missing directory is not an error.
 func TestLoadDynamicPlugins_SkipsBrokenFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "broken.go"), []byte("package main\nfunc NewPlugin() int { return 1 }\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "syntax.go"), []byte("package main\nfunc NewPlugin( {\n"), 0644)
-	src, _ := os.ReadFile("../plugins/dynamic/hello.go.example")
-	os.WriteFile(filepath.Join(dir, "zz_hello.go"), src, 0644)
+	src, err := os.ReadFile("../plugins/dynamic/hello.go.example")
+	if err != nil {
+		t.Fatalf("read shipped example: %v", err)
+	}
+	files := map[string][]byte{
+		"broken.go":   []byte("package main\nfunc NewPlugin() int { return 1 }\n"),
+		"syntax.go":   []byte("package main\nfunc NewPlugin( {\n"),
+		"zz_hello.go": src,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), content, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	registry := plugin.NewRegistry(nil)
 	plugin.LoadDynamicPlugins(registry, dir)

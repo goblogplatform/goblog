@@ -103,7 +103,7 @@ A plugin implements the `plugin.Plugin` interface (`plugin/plugin.go`). Embed `p
 | Hook | What it does |
 |---|---|
 | `Name()`, `DisplayName()`, `Version()` | Identity. `Name()` is the unique key used to store the plugin's settings. |
-| `Settings()` | Declares settings (`text`, `textarea`, `file`, `bool`). They appear under **Admin → Settings** grouped by plugin, are stored in `plugin_settings`, and reach every hook via `ctx.Settings`. Declare an `enabled` setting to get the on/off toggle — the registry calls every plugin regardless, so honour `ctx.Settings["enabled"]` yourself. |
+| `Settings()` | Declares settings. They appear under **Admin → Settings** grouped by plugin, are stored in `plugin_settings`, and reach every hook as strings via `ctx.Settings`. The admin UI renders `Type: "textarea"` as a textarea and everything else as a single-line text input (there is no file or checkbox widget for plugin settings yet, so store booleans as `"true"`/`"false"`). Declare an `enabled` setting to get the on/off toggle — the registry calls every plugin regardless, so honour `ctx.Settings["enabled"]` yourself. |
 | `TemplateHead(ctx)` / `TemplateFooter(ctx)` | Return raw HTML injected into `<head>` / before `</body>` on every rendered page. Escape anything that came from settings or the request. |
 | `TemplateData(ctx)` | Returns data made available to templates as `.plugins.<name>`. |
 | `ScheduledJobs()` | Periodic background jobs (`Name`, `Interval`, `Run(db, settings)`), started at boot. |
