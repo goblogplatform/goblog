@@ -1,6 +1,10 @@
 package blog
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -38,6 +42,9 @@ type Blog struct {
 	PageFilter     PageFilter // optional filter set by plugin system
 	commentLimiter map[string]time.Time
 	limiterMu      sync.Mutex
+	// commentTokenKey signs the anti-spam tokens embedded in comment forms.
+	// Generated per process, so tokens do not survive a restart.
+	commentTokenKey []byte
 }
 
 // New constructs a Blog API
@@ -47,6 +54,10 @@ func New(db *gorm.DB, auth auth.IAuth, version string) Blog {
 		auth:           auth,
 		Version:        version,
 		commentLimiter: make(map[string]time.Time),
+	}
+	api.commentTokenKey = make([]byte, 32)
+	if _, err := rand.Read(api.commentTokenKey); err != nil {
+		log.Fatalf("failed to generate comment token key: %v", err)
 	}
 	return api
 }
@@ -646,6 +657,7 @@ func (b *Blog) renderPost(c *gin.Context, post *Post) {
 			"settings":           b.GetSettings(),
 			"comments":           b.getCommentsByPostID(post.ID),
 			"comment_error":      c.Query("comment_error"),
+			"comment_token":      b.CommentToken(post.ID),
 			"backlinks":          b.GetBacklinks(post.ID),
 			"outbound_links":     b.GetOutboundLinks(post.ID),
 			"external_backlinks": b.GetExternalBacklinks(post.ID),
@@ -662,6 +674,7 @@ func (b *Blog) renderPost(c *gin.Context, post *Post) {
 			"settings":      b.GetSettings(),
 			"comments":      b.getCommentsByPostID(post.ID),
 			"comment_error": c.Query("comment_error"),
+			"comment_token": b.CommentToken(post.ID),
 			"nav_pages":     b.GetNavPages(),
 		})
 	}
@@ -834,6 +847,7 @@ func (b *Blog) Post(c *gin.Context) {
 			"settings":      b.GetSettings(),
 			"comments":      b.getCommentsByPostID(post.ID),
 			"comment_error": c.Query("comment_error"),
+			"comment_token": b.CommentToken(post.ID),
 			"nav_pages":     b.GetNavPages(),
 		}
 		if b.auth.IsAdmin(c) {
@@ -1069,6 +1083,59 @@ func (b *Blog) Logout(c *gin.Context) {
 	c.Redirect(http.StatusTemporaryRedirect, "/")
 }
 
+// Comment anti-spam (issue #542). Each rendered comment form carries a signed
+// token "<unix-ts>.<hmac>" and an empty comment_check field that an inline
+// script fills with the token reversed. Submissions without a valid token, a
+// script-derived check value, or that arrive implausibly soon after the form
+// was issued are rejected. This stops form-filling bots that do not run JS.
+const (
+	commentTokenMinAge = 3 * time.Second
+	commentTokenMaxAge = 24 * time.Hour
+)
+
+func (b *Blog) commentTokenSig(ts string, postID uint) string {
+	mac := hmac.New(sha256.New, b.commentTokenKey)
+	mac.Write([]byte(ts + "|" + strconv.FormatUint(uint64(postID), 10)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// CommentTokenAt mints a comment-form token for postID issued at the given time.
+func (b *Blog) CommentTokenAt(postID uint, issued time.Time) string {
+	ts := strconv.FormatInt(issued.Unix(), 10)
+	return ts + "." + b.commentTokenSig(ts, postID)
+}
+
+// CommentToken mints a comment-form token for postID issued now.
+func (b *Blog) CommentToken(postID uint) string {
+	return b.CommentTokenAt(postID, time.Now())
+}
+
+// verifyCommentToken checks a submitted token and its script-derived check
+// value against postID at time now.
+func (b *Blog) verifyCommentToken(token, check string, postID uint, now time.Time) bool {
+	ts, sig, ok := strings.Cut(token, ".")
+	if !ok || !hmac.Equal([]byte(sig), []byte(b.commentTokenSig(ts, postID))) {
+		return false
+	}
+	issuedUnix, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(time.Unix(issuedUnix, 0))
+	if age < commentTokenMinAge || age > commentTokenMaxAge {
+		return false
+	}
+	return check == reverseString(token)
+}
+
+func reverseString(s string) string {
+	r := []rune(s)
+	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+		r[i], r[j] = r[j], r[i]
+	}
+	return string(r)
+}
+
 func (b *Blog) canComment(ip string) bool {
 	b.limiterMu.Lock()
 	defer b.limiterMu.Unlock()
@@ -1152,6 +1219,11 @@ func (b *Blog) SubmitComment(c *gin.Context) {
 	}
 	if len(content) > 5000 {
 		c.Redirect(http.StatusSeeOther, redirect+"?comment_error=content_too_long")
+		return
+	}
+
+	if !b.verifyCommentToken(c.PostForm("comment_token"), c.PostForm("comment_check"), uint(postID), time.Now()) {
+		c.Redirect(http.StatusSeeOther, redirect+"?comment_error=spam_check")
 		return
 	}
 
