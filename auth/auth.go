@@ -16,6 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
+
+	"goblog/mail"
 )
 
 // IAuth interface for auth so that it can be mocked easier
@@ -29,12 +31,23 @@ type IAuth interface {
 type Auth struct {
 	db      **gorm.DB // needs a double pointer to be able to update the db
 	version string
+	// Mailer delivers one-time login codes. nil means email login is not
+	// configured and the OTP endpoints respond 404.
+	Mailer mail.Sender
 }
 
 // New constructs an Auth API
 func New(db *gorm.DB, version string) Auth {
-	api := Auth{&db, version}
+	api := Auth{db: &db, version: version}
 	return api
+}
+
+// EmailLoginEnabled reports whether SMTP is configured in the environment
+// (smtp_host and smtp_from), i.e. whether the login page should offer email
+// login. main uses the same check to decide whether to set Mailer.
+func EmailLoginEnabled() bool {
+	_, ok := mail.NewSMTPSenderFromEnv()
+	return ok
 }
 
 // AccessTokenResponse comes from Github OAuth API when the user has successfully
