@@ -694,3 +694,71 @@ func TestExternalBacklinks(t *testing.T) {
 		t.Errorf("Expected empty referer to be skipped, got %d backlinks", len(backlinks))
 	}
 }
+
+// TestExternalBacklinksSelfReferralBehindProxy covers issue #539: behind a
+// reverse proxy c.Request.Host is the upstream address (e.g. localhost:7000),
+// so self-referrals must also be detected via X-Forwarded-Host, the configured
+// site_url, and IP-literal / localhost referers.
+func TestExternalBacklinksSelfReferralBehindProxy(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Backlink{}, &blog.ExternalBacklink{}, &blog.Setting{})
+	a := &Auth{}
+	b := blog.New(db, a, "test")
+
+	post := blog.Post{Title: "Test Post", Content: "Some content", Slug: "test-post"}
+	db.Create(&post)
+	db.Create(&blog.Setting{Key: "site_url", Type: "text", Value: "https://www.myblog.com"})
+
+	router := gin.Default()
+	router.GET("/track", func(c *gin.Context) {
+		b.TrackReferer(c, post.ID)
+		c.String(http.StatusOK, "ok")
+	})
+
+	send := func(referer, host, forwardedHost string) {
+		req, _ := http.NewRequest("GET", "/track", nil)
+		req.Header.Set("Referer", referer)
+		req.Host = host
+		if forwardedHost != "" {
+			req.Header.Set("X-Forwarded-Host", forwardedHost)
+		}
+		router.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	cases := []struct {
+		name, referer, host, forwardedHost string
+	}{
+		{"site_url host with proxy-rewritten Host", "https://www.myblog.com/other-page", "localhost:7000", ""},
+		{"site_url host without www", "https://myblog.com/other-page", "localhost:7000", ""},
+		{"X-Forwarded-Host match", "https://blog.example.org/other-page", "localhost:7000", "blog.example.org:443"},
+		{"X-Forwarded-Host match ignoring www", "https://www.blog.example.org/other-page", "localhost:7000", "blog.example.org"},
+		{"X-Forwarded-Host chained proxy list", "https://blog.example.org/other-page", "localhost:7000", "edge.internal, blog.example.org"},
+		{"Request.Host match ignoring www", "https://www.myblog.com/other-page", "myblog.com", ""},
+		{"IPv4 literal referer", "https://159.89.157.125/other-page", "localhost:7000", ""},
+		{"IPv6 literal referer", "http://[::1]:7000/other-page", "localhost:7000", ""},
+		{"localhost referer", "http://localhost:7000/other-page", "localhost:7000", ""},
+	}
+	for _, tc := range cases {
+		send(tc.referer, tc.host, tc.forwardedHost)
+		if got := b.GetExternalBacklinks(post.ID); len(got) != 0 {
+			t.Errorf("%s: expected self-referral %q to be skipped, got %d backlinks: %+v", tc.name, tc.referer, len(got), got)
+		}
+	}
+
+	// A genuinely external referer must still be recorded under the same proxy conditions.
+	send("https://example.com/some-page", "localhost:7000", "www.myblog.com")
+	got := b.GetExternalBacklinks(post.ID)
+	if len(got) != 1 || got[0].Referer != "https://example.com/some-page" {
+		t.Fatalf("expected external referer to be tracked, got %+v", got)
+	}
+
+	// With no site_url configured, tracking must still work (no panic) and fall
+	// back to the request headers for self detection.
+	db.Where("key = ?", "site_url").Delete(&blog.Setting{})
+	send("https://www.myblog.com/other-page", "localhost:7000", "")
+	send("https://other.example/page", "localhost:7000", "")
+	got = b.GetExternalBacklinks(post.ID)
+	if len(got) != 3 {
+		t.Fatalf("expected www.myblog.com to be tracked as external once site_url is unset (3 rows total), got %+v", got)
+	}
+}

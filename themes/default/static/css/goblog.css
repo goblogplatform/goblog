@@ -82,3 +82,12 @@ video {
 .search-page-input { font-family: 'Source Code Pro', monospace; font-size: 14px; padding: 6px 10px; border: 1px solid #ccc; border-radius: 3px; width: 300px; }
 .search-page-btn { font-family: 'Source Code Pro', monospace; font-size: 14px; padding: 6px 16px; border: 1px solid #333; border-radius: 3px; background: #333; color: #EEE; cursor: pointer; }
 .search-page-btn:hover { background: #555; }
+
+/* External backlinks table: keep every row to a single line, truncating long referer URLs */
+.backlinks-table .backlinks-referer {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

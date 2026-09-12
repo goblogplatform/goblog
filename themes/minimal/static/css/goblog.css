@@ -82,3 +82,12 @@ video {
 .search-page-input { font-family: 'Inter', sans-serif; font-size: 14px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; width: 300px; }
 .search-page-btn { font-family: 'Inter', sans-serif; font-size: 14px; padding: 6px 16px; border: none; border-radius: 6px; background: #2563eb; color: #fff; cursor: pointer; }
 .search-page-btn:hover { background: #1d4ed8; }
+
+/* External backlinks table: keep every row to a single line, truncating long referer URLs */
+.backlinks-table .backlinks-referer {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -9,6 +9,7 @@ import (
 	gplugin "goblog/plugin"
 	"gorm.io/gorm"
 	"log"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -372,6 +373,7 @@ func Migrate(db *gorm.DB) error {
 	seedDefaultPages(db)
 	linkWritingPagesToPostType(db)
 	cleanupEmptyTags(db)
+	cleanupSelfExternalBacklinks(db)
 	migrateSocialURLsToPlugin(db)
 	cleanupPluginSettingsFromMainTable(db)
 
@@ -434,6 +436,44 @@ func cleanupPluginSettingsFromMainTable(db *gorm.DB) {
 			log.Printf("Cleaned up %d %s entries from main settings table", result.RowsAffected, prefix)
 		}
 	}
+}
+
+// cleanupSelfExternalBacklinks removes external backlink rows whose referer is
+// this site itself. These were recorded before self-referral detection handled
+// reverse proxies and IP addresses (#539).
+func cleanupSelfExternalBacklinks(db *gorm.DB) {
+	var siteHosts []string
+	var siteURLSetting blog.Setting
+	if err := db.Where("key = ?", "site_url").First(&siteURLSetting).Error; err == nil {
+		if siteURL, err := url.Parse(siteURLSetting.Value); err == nil {
+			siteHosts = append(siteHosts, siteURL.Host)
+		}
+	}
+
+	var backlinks []blog.ExternalBacklink
+	if err := db.Find(&backlinks).Error; err != nil {
+		log.Printf("Warning: failed to load external backlinks for cleanup: %v", err)
+		return
+	}
+	var selfIDs []uint
+	for _, bl := range backlinks {
+		parsed, err := url.Parse(bl.Referer)
+		if err != nil {
+			continue
+		}
+		if blog.IsSelfHost(parsed.Hostname(), siteHosts...) {
+			selfIDs = append(selfIDs, bl.ID)
+		}
+	}
+	if len(selfIDs) == 0 {
+		return
+	}
+	result := db.Delete(&blog.ExternalBacklink{}, selfIDs)
+	if result.Error != nil {
+		log.Printf("Warning: failed to clean up self external backlinks: %v", result.Error)
+		return
+	}
+	log.Printf("Cleaned up %d self-referral external backlinks", result.RowsAffected)
 }
 
 // cleanupEmptyTags removes empty-name tag associations and the empty tag itself.

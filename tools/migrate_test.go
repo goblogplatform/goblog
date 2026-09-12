@@ -1,6 +1,7 @@
 package tools_test
 
 import (
+	"goblog/blog"
 	"goblog/tools"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -170,5 +171,49 @@ func TestMigrationFixesTagsWithoutPrimaryKey(t *testing.T) {
 	result := db.Exec(`INSERT INTO tags (name) VALUES ('android')`)
 	if result.Error == nil {
 		t.Fatal("expected duplicate insert to fail after PRIMARY KEY added")
+	}
+}
+
+// TestMigrationCleansUpSelfExternalBacklinks verifies that external backlink rows
+// recorded before the self-referral fix (#539) are removed on migration, while
+// genuine external referers are kept.
+func TestMigrationCleansUpSelfExternalBacklinks(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to open sqlite db: %v", err)
+	}
+	if err := tools.Migrate(db); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	db.Model(&blog.Setting{}).Where("key = ?", "site_url").Update("value", "https://www.myblog.com")
+
+	referers := []string{
+		"https://www.myblog.com/posts/2026/03/16/a-post",
+		"https://myblog.com/posts/2026/03/16/a-post",
+		"https://159.89.157.125/posts/2026/03/16/a-post",
+		"http://localhost:7000/posts/2026/03/16/a-post",
+		"https://www.google.com/",
+		"https://example.com/some-page",
+	}
+	for _, r := range referers {
+		db.Create(&blog.ExternalBacklink{PostID: 1, Referer: r, HitCount: 1})
+	}
+
+	if err := tools.Migrate(db); err != nil {
+		t.Fatalf("second migration failed: %v", err)
+	}
+
+	var remaining []blog.ExternalBacklink
+	db.Order("referer asc").Find(&remaining)
+	want := []string{"https://example.com/some-page", "https://www.google.com/"}
+	if len(remaining) != len(want) {
+		t.Fatalf("expected %d external backlinks to remain, got %d: %+v", len(want), len(remaining), remaining)
+	}
+	for i, r := range remaining {
+		if r.Referer != want[i] {
+			t.Errorf("expected remaining referer %q, got %q", want[i], r.Referer)
+		}
 	}
 }
