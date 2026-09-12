@@ -37,7 +37,7 @@ func TestCreateAdminUser_PromotesFirstUser(t *testing.T) {
 	t.Setenv("admin_github_id", "")
 	w, db := newWizard(t)
 
-	user := &auth.BlogUser{ID: 42, Login: "operator"}
+	user := &auth.BlogUser{ID: 42, Provider: auth.ProviderGitHub, ProviderID: "42", Login: "operator"}
 	if err := w.createAdminUser(user); err != nil {
 		t.Fatalf("createAdminUser: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestCreateAdminUser_RefusesUnconfiguredIdentity(t *testing.T) {
 	t.Setenv("admin_github_id", "")
 	w, db := newWizard(t)
 
-	err := w.createAdminUser(&auth.BlogUser{ID: 43, Login: "intruder"})
+	err := w.createAdminUser(&auth.BlogUser{ID: 43, Provider: auth.ProviderGitHub, ProviderID: "43", Login: "intruder"})
 	if err == nil {
 		t.Fatal("expected an error for a user that is not the configured admin")
 	}

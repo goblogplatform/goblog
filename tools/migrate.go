@@ -78,6 +78,31 @@ func fixBlogUsersTable(db *gorm.DB) error {
 	})
 }
 
+// backfillUserProvider tags rows created before BlogUser had a provider pair
+// (issue #523). Until then every user came from GitHub and the row id was
+// the GitHub id, so provider_id is the id rendered as a string. Idempotent:
+// rows that already have a provider are untouched.
+//
+// Postgres does not advance a sequence when rows are inserted with explicit
+// ids, which is how every GitHub user was created until now, so the sequence
+// is moved past MAX(id) or the first DB-assigned id would collide.
+func backfillUserProvider(db *gorm.DB) error {
+	cast := "CAST(id AS TEXT)"
+	if db.Dialector.Name() == "mysql" {
+		cast = "CAST(id AS CHAR)"
+	}
+	err := db.Exec("UPDATE blog_users SET provider = ?, provider_id = "+cast+
+		" WHERE provider = '' OR provider IS NULL", auth.ProviderGitHub).Error
+	if err != nil {
+		return err
+	}
+	if db.Dialector.Name() == "postgres" {
+		return db.Exec("SELECT setval(pg_get_serial_sequence('blog_users', 'id'), " +
+			"COALESCE((SELECT MAX(id) FROM blog_users), 0) + 1, false)").Error
+	}
+	return nil
+}
+
 // fixTagsTable checks if the tags table is missing a PRIMARY KEY on the name
 // column (created by an older GORM version) and rebuilds it with deduplication.
 func fixTagsTable(db *gorm.DB) error {
@@ -367,9 +392,14 @@ func Migrate(db *gorm.DB) error {
 		}
 	}
 
-	err := db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &auth.AdminUser{}, &blog.Setting{}, &blog.Comment{}, &blog.Backlink{}, &blog.ExternalBacklink{}, &blog.Page{}, &blog.PostRevision{})
+	err := db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &auth.AdminUser{}, &auth.LoginCode{}, &blog.Setting{}, &blog.Comment{}, &blog.Backlink{}, &blog.ExternalBacklink{}, &blog.Page{}, &blog.PostRevision{})
 	if err != nil {
 		log.Println("Error migrating tables: " + err.Error())
+		return err
+	}
+
+	if err := backfillUserProvider(db); err != nil {
+		log.Println("Error backfilling blog_users provider: " + err.Error())
 		return err
 	}
 

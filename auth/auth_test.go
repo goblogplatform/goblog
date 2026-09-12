@@ -38,7 +38,7 @@ func newAuth(t *testing.T) (*auth.Auth, *gorm.DB) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := db.AutoMigrate(&auth.BlogUser{}, &auth.AdminUser{}); err != nil {
+	if err := db.AutoMigrate(&auth.BlogUser{}, &auth.AdminUser{}, &auth.LoginCode{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	a := auth.New(db, "test")
@@ -61,7 +61,7 @@ func TestIsWizardMode_NoAdminUser_ReturnsTrue(t *testing.T) {
 
 func TestIsWizardMode_WithAdminUser_ReturnsFalse(t *testing.T) {
 	a, db := newAuth(t)
-	user := auth.BlogUser{ID: 1, Login: "admin"}
+	user := auth.BlogUser{ID: 1, Provider: auth.ProviderGitHub, ProviderID: "1", Login: "admin"}
 	db.Create(&user)
 	db.Create(&auth.AdminUser{BlogUserID: user.ID, BlogUser: user})
 	if a.IsWizardMode(newCtx()) {
@@ -71,7 +71,7 @@ func TestIsWizardMode_WithAdminUser_ReturnsFalse(t *testing.T) {
 
 func TestEnsureAdmin_NoAdmin_CreatesRow(t *testing.T) {
 	a, db := newAuth(t)
-	user := auth.BlogUser{ID: 42, Login: "operator"}
+	user := auth.BlogUser{ID: 42, Provider: auth.ProviderGitHub, ProviderID: "42", Login: "operator"}
 	db.Create(&user)
 
 	if err := a.EnsureAdmin(&user); err != nil {
@@ -92,8 +92,8 @@ func TestEnsureAdmin_NoAdmin_CreatesRow(t *testing.T) {
 
 func TestEnsureAdmin_AdminExists_NoOp(t *testing.T) {
 	a, db := newAuth(t)
-	first := auth.BlogUser{ID: 1, Login: "first"}
-	second := auth.BlogUser{ID: 2, Login: "second"}
+	first := auth.BlogUser{ID: 1, Provider: auth.ProviderGitHub, ProviderID: "1", Login: "first"}
+	second := auth.BlogUser{ID: 2, Provider: auth.ProviderGitHub, ProviderID: "2", Login: "second"}
 	db.Create(&first)
 	db.Create(&second)
 	db.Create(&auth.AdminUser{BlogUserID: first.ID, BlogUser: first})
@@ -133,16 +133,16 @@ func TestEnsureAdmin_PinnedIdentity(t *testing.T) {
 		user        auth.BlogUser
 		wantPromote bool
 	}{
-		{"neither set: first login promoted", "", "", auth.BlogUser{ID: 7, Login: "anyone"}, true},
-		{"login matches", "operator", "", auth.BlogUser{ID: 7, Login: "operator"}, true},
-		{"login matches case-insensitively", "Operator", "", auth.BlogUser{ID: 7, Login: "operator"}, true},
-		{"login mismatch", "operator", "", auth.BlogUser{ID: 7, Login: "intruder"}, false},
-		{"id matches", "", "7", auth.BlogUser{ID: 7, Login: "whatever"}, true},
-		{"id mismatch", "", "7", auth.BlogUser{ID: 8, Login: "operator"}, false},
-		{"both set, login matches", "operator", "999", auth.BlogUser{ID: 7, Login: "operator"}, true},
-		{"both set, id matches", "someone-else", "7", auth.BlogUser{ID: 7, Login: "operator"}, true},
-		{"both set, neither matches", "operator", "7", auth.BlogUser{ID: 8, Login: "intruder"}, false},
-		{"malformed id never matches", "", "not-a-number", auth.BlogUser{ID: 7, Login: "operator"}, false},
+		{"neither set: first login promoted", "", "", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "anyone"}, true},
+		{"login matches", "operator", "", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, true},
+		{"login matches case-insensitively", "Operator", "", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, true},
+		{"login mismatch", "operator", "", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "intruder"}, false},
+		{"id matches", "", "7", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "whatever"}, true},
+		{"id mismatch", "", "7", auth.BlogUser{ID: 8, Provider: auth.ProviderGitHub, ProviderID: "8", Login: "operator"}, false},
+		{"both set, login matches", "operator", "999", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, true},
+		{"both set, id matches", "someone-else", "7", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, true},
+		{"both set, neither matches", "operator", "7", auth.BlogUser{ID: 8, Provider: auth.ProviderGitHub, ProviderID: "8", Login: "intruder"}, false},
+		{"malformed id never matches", "", "not-a-number", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,8 +174,8 @@ func TestEnsureAdmin_PinnedIdentity(t *testing.T) {
 func TestEnsureAdmin_PinnedIdentity_AdminExists_NoOp(t *testing.T) {
 	a, db := newAuth(t)
 	t.Setenv("admin_login", "operator")
-	first := auth.BlogUser{ID: 1, Login: "operator"}
-	second := auth.BlogUser{ID: 2, Login: "operator"}
+	first := auth.BlogUser{ID: 1, Provider: auth.ProviderGitHub, ProviderID: "1", Login: "operator"}
+	second := auth.BlogUser{ID: 2, Provider: auth.ProviderGitHub, ProviderID: "2", Login: "operator"}
 	db.Create(&first)
 	db.Create(&second)
 	db.Create(&auth.AdminUser{BlogUserID: first.ID, BlogUser: first})
