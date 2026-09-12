@@ -875,3 +875,34 @@ func assertCommentFormProtected(t *testing.T, body string) {
 		t.Errorf("expected rendered comment form to include the script that fills comment_check")
 	}
 }
+
+// TestGetComments covers the paginated, newest-first comment listing used by
+// the admin comments page (issue #545).
+func TestGetComments(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Comment{})
+	b := blog.New(db, &Auth{}, "test")
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 1; i <= 5; i++ {
+		db.Create(&blog.Comment{PostID: 1, Name: "c" + strconv.Itoa(i), Content: "x", CreatedAt: base.Add(time.Duration(i) * time.Hour)})
+	}
+
+	comments, total := b.GetComments(0, 2)
+	if total != 5 {
+		t.Errorf("expected total 5, got %d", total)
+	}
+	if len(comments) != 2 || comments[0].Name != "c5" || comments[1].Name != "c4" {
+		t.Errorf("expected first page [c5 c4], got %+v", comments)
+	}
+
+	comments, _ = b.GetComments(4, 2)
+	if len(comments) != 1 || comments[0].Name != "c1" {
+		t.Errorf("expected last page [c1], got %+v", comments)
+	}
+
+	comments, total = b.GetComments(10, 2)
+	if len(comments) != 0 || total != 5 {
+		t.Errorf("expected empty page beyond the end with total 5, got %+v total %d", comments, total)
+	}
+}

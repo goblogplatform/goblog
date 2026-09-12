@@ -913,6 +913,47 @@ func (a *Admin) AdminPages(c *gin.Context) {
 	})
 }
 
+const adminCommentsPerPage = 50
+
+// AdminComments renders a paginated list of all comments, newest first
+func (a *Admin) AdminComments(c *gin.Context) {
+	if !a.auth.IsAdmin(c) {
+		c.JSON(http.StatusUnauthorized, "Not Authorized")
+		return
+	}
+
+	page, err := strconv.Atoi(c.Query("page"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+	comments, total := a.b.GetComments((page-1)*adminCommentsPerPage, adminCommentsPerPage)
+	totalPages := int((total + adminCommentsPerPage - 1) / adminCommentsPerPage)
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	var postIDs []uint
+	for _, comment := range comments {
+		postIDs = append(postIDs, comment.PostID)
+	}
+	c.HTML(http.StatusOK, "admin_comments.html", gin.H{
+		"comments":      comments,
+		"comment_posts": a.b.GetPostsByIDs(postIDs),
+		"total":         total,
+		"page":          page,
+		"total_pages":   totalPages,
+		"prev_page":     page - 1,
+		"next_page":     page + 1,
+		"logged_in":     a.auth.IsLoggedIn(c),
+		"is_admin":      a.auth.IsAdmin(c),
+		"version":       a.version,
+		"recent":        a.b.GetLatest(),
+		"admin_page":    true,
+		"settings":      a.b.GetSettings(),
+		"nav_pages":     a.b.GetNavPages(),
+	})
+}
+
 // AdminEditPage renders the form to edit a single page
 func (a *Admin) AdminEditPage(c *gin.Context) {
 	if !a.auth.IsAdmin(c) {
