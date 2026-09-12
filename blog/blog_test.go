@@ -732,6 +732,7 @@ func TestExternalBacklinksSelfReferralBehindProxy(t *testing.T) {
 		{"site_url host without www", "https://myblog.com/other-page", "localhost:7000", ""},
 		{"X-Forwarded-Host match", "https://blog.example.org/other-page", "localhost:7000", "blog.example.org:443"},
 		{"X-Forwarded-Host match ignoring www", "https://www.blog.example.org/other-page", "localhost:7000", "blog.example.org"},
+		{"X-Forwarded-Host chained proxy list", "https://blog.example.org/other-page", "localhost:7000", "edge.internal, blog.example.org"},
 		{"Request.Host match ignoring www", "https://www.myblog.com/other-page", "myblog.com", ""},
 		{"IPv4 literal referer", "https://159.89.157.125/other-page", "localhost:7000", ""},
 		{"IPv6 literal referer", "http://[::1]:7000/other-page", "localhost:7000", ""},
@@ -749,5 +750,15 @@ func TestExternalBacklinksSelfReferralBehindProxy(t *testing.T) {
 	got := b.GetExternalBacklinks(post.ID)
 	if len(got) != 1 || got[0].Referer != "https://example.com/some-page" {
 		t.Fatalf("expected external referer to be tracked, got %+v", got)
+	}
+
+	// With no site_url configured, tracking must still work (no panic) and fall
+	// back to the request headers for self detection.
+	db.Where("key = ?", "site_url").Delete(&blog.Setting{})
+	send("https://www.myblog.com/other-page", "localhost:7000", "")
+	send("https://other.example/page", "localhost:7000", "")
+	got = b.GetExternalBacklinks(post.ID)
+	if len(got) != 3 {
+		t.Fatalf("expected www.myblog.com to be tracked as external once site_url is unset (3 rows total), got %+v", got)
 	}
 }

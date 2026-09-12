@@ -341,11 +341,18 @@ func IsSelfHost(refHost string, siteHosts ...string) bool {
 // isSelfHost applies IsSelfHost to the current request. Behind a reverse proxy
 // c.Request.Host is often the upstream address (e.g. localhost:7000) rather
 // than the public hostname, so the referer is also compared against
-// X-Forwarded-Host and the configured site_url.
+// X-Forwarded-Host (which chained proxies may turn into a comma-separated
+// list) and the configured site_url.
 func (b *Blog) isSelfHost(c *gin.Context, refHost string) bool {
-	siteHosts := []string{c.Request.Host, c.GetHeader("X-Forwarded-Host")}
-	if siteURL, err := url.Parse(b.GetSettings()["site_url"].Value); err == nil {
-		siteHosts = append(siteHosts, siteURL.Host)
+	siteHosts := []string{c.Request.Host}
+	for _, h := range strings.Split(c.GetHeader("X-Forwarded-Host"), ",") {
+		siteHosts = append(siteHosts, strings.TrimSpace(h))
+	}
+	var siteURLSetting Setting
+	if err := (*b.db).Where("key = ?", "site_url").First(&siteURLSetting).Error; err == nil {
+		if siteURL, err := url.Parse(siteURLSetting.Value); err == nil {
+			siteHosts = append(siteHosts, siteURL.Host)
+		}
 	}
 	return IsSelfHost(refHost, siteHosts...)
 }
