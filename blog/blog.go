@@ -1166,6 +1166,16 @@ func (b *Blog) GetRecentComments(limit int) []Comment {
 	return comments
 }
 
+// GetComments returns a page of comments across all posts, newest first,
+// along with the total number of comments.
+func (b *Blog) GetComments(offset, limit int) ([]Comment, int64) {
+	var total int64
+	(*b.db).Model(&Comment{}).Count(&total)
+	var comments []Comment
+	(*b.db).Order("created_at desc").Offset(offset).Limit(limit).Find(&comments)
+	return comments, total
+}
+
 // GetPostsByIDs returns a map of post ID to Post for the given IDs
 func (b *Blog) GetPostsByIDs(ids []uint) map[uint]Post {
 	result := make(map[uint]Post)

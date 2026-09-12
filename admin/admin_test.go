@@ -684,3 +684,90 @@ func TestCreatePost(t *testing.T) {
 		t.Fatalf("Expected status %d for delete post type but got %d", http.StatusOK, w.Code)
 	}
 }
+
+// TestAdminComments covers the paginated admin comments page (issue #545).
+func TestAdminComments(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{})
+	a := &Auth{}
+	b := blog.New(db, a, "test")
+	ad := admin.New(db, a, &b, "test")
+
+	router := gin.Default()
+	store := cookie.NewStore([]byte("changelater"))
+	router.Use(sessions.Sessions("www.jasonernst.com", store))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/admin/comments", ad.AdminComments)
+
+	post := blog.Post{Title: "Commented Post", Content: "body", Slug: "commented-post"}
+	db.Create(&post)
+	for i := 1; i <= 51; i++ {
+		db.Create(&blog.Comment{PostID: post.ID, Name: "Commenter" + strconv.Itoa(i), Email: "c@example.com", Content: "Comment number " + strconv.Itoa(i)})
+	}
+
+	// Non-admin -> 401
+	a.On("IsAdmin", mock.Anything).Return(false).Once()
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/comments", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected %d for non-admin, got %d", http.StatusUnauthorized, w.Code)
+	}
+
+	get := func(path string) string {
+		a.On("IsAdmin", mock.Anything).Return(true).Twice()
+		a.On("IsLoggedIn", mock.Anything).Return(true).Once()
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+
+	// Page 1: 50 newest comments, link to the post, delete control, next link, no prev link
+	body := get("/admin/comments")
+	if strings.Count(body, `id="comment-row-`) != 50 {
+		t.Errorf("expected 50 comment rows on page 1, got %d", strings.Count(body, `id="comment-row-`))
+	}
+	if !strings.Contains(body, "Commenter51") || strings.Contains(body, "Commenter1<") {
+		t.Errorf("expected page 1 to contain the newest comment and not the oldest")
+	}
+	if !strings.Contains(body, post.Permalink()) || !strings.Contains(body, "Commented Post") {
+		t.Errorf("expected comment rows to link to the post")
+	}
+	if !strings.Contains(body, "deleteComment(") {
+		t.Errorf("expected delete controls on comment rows")
+	}
+	if !strings.Contains(body, "/admin/comments?page=2") {
+		t.Errorf("expected a link to page 2")
+	}
+	if strings.Contains(body, "/admin/comments?page=0") {
+		t.Errorf("did not expect a link to a previous page on page 1")
+	}
+	if !strings.Contains(body, "Page 1 of 2") || !strings.Contains(body, "51 comments") {
+		t.Errorf("expected pagination summary 'Page 1 of 2' and '51 comments'")
+	}
+
+	// Page 2: the one remaining (oldest) comment, prev link, no next link
+	body = get("/admin/comments?page=2")
+	if strings.Count(body, `id="comment-row-`) != 1 || !strings.Contains(body, "Commenter1<") {
+		t.Errorf("expected only the oldest comment on page 2")
+	}
+	if !strings.Contains(body, "/admin/comments?page=1") || strings.Contains(body, "/admin/comments?page=3") {
+		t.Errorf("expected a prev link and no next link on the last page")
+	}
+
+	// Invalid page values fall back to page 1
+	for _, p := range []string{"abc", "0", "-3"} {
+		body = get("/admin/comments?page=" + p)
+		if !strings.Contains(body, "Page 1 of 2") {
+			t.Errorf("page=%s: expected fallback to page 1", p)
+		}
+	}
+}
