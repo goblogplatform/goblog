@@ -32,6 +32,10 @@
                         <input class="form-check-input" type="radio" name="dbtype" id="mysql" value="mysql" data-toggle-value="mysql">
                         <label class="form-check-label" for="mysql">mysql</label>
                     </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="dbtype" id="postgres" value="postgres" data-toggle-value="postgres">
+                        <label class="form-check-label" for="postgres">postgres</label>
+                    </div>
                 </div>
 
                 <div data-toggle-group="sqlite">
@@ -62,6 +66,38 @@
                     <div class="mb-3">
                         <label for="mysql_db" class="form-label">Database:</label>
                         <input type="text" class="form-control" id="mysql_db" name="mysql_db" value="goblog">
+                    </div>
+                </div>
+                <div data-toggle-group="postgres" style="display: none;">
+                    <p>PostgreSQL requires a postgres server running on the host provided below</p>
+                    <div class="mb-3">
+                        <label for="postgres_host" class="form-label">Host:</label>
+                        <input type="text" class="form-control" id="postgres_host" name="postgres_host" value="localhost">
+                    </div>
+                    <div class="mb-3">
+                        <label for="postgres_port" class="form-label">Port:</label>
+                        <input type="text" class="form-control" id="postgres_port" name="postgres_port" value="5432">
+                    </div>
+                    <div class="mb-3">
+                        <label for="postgres_user" class="form-label">User:</label>
+                        <input type="text" class="form-control" id="postgres_user" name="postgres_user" value="goblog">
+                    </div>
+                    <div class="mb-3">
+                        <label for="postgres_pass" class="form-label">Password:</label>
+                        <input type="password" class="form-control" id="postgres_pass" name="postgres_pass" value="">
+                    </div>
+                    <div class="mb-3">
+                        <label for="postgres_db" class="form-label">Database:</label>
+                        <input type="text" class="form-control" id="postgres_db" name="postgres_db" value="goblog">
+                    </div>
+                    <div class="mb-3">
+                        <label for="postgres_sslmode" class="form-label">SSL Mode:</label>
+                        <select class="form-select" id="postgres_sslmode" name="postgres_sslmode">
+                            <option value="disable" selected>disable</option>
+                            <option value="require">require</option>
+                            <option value="verify-ca">verify-ca</option>
+                            <option value="verify-full">verify-full</option>
+                        </select>
                     </div>
                 </div>
 

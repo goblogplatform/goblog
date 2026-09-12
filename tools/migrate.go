@@ -344,20 +344,26 @@ func seedBacklinks(db *gorm.DB) {
 }
 
 func Migrate(db *gorm.DB) error {
-	// Fix blog_users table: convert old varchar(255) id to integer autoincrement
-	if err := fixBlogUsersTable(db); err != nil {
-		log.Printf("Warning: could not fix blog_users table: %v", err)
-	}
+	// The schema fix-ups below repair tables created by older GORM versions
+	// on SQLite (they read sqlite_master and rebuild tables with SQLite DDL).
+	// Databases on other engines were created by a current GORM and never
+	// had these problems, so only run them on SQLite.
+	if db.Dialector.Name() == "sqlite" {
+		// Fix blog_users table: convert old varchar(255) id to integer autoincrement
+		if err := fixBlogUsersTable(db); err != nil {
+			log.Printf("Warning: could not fix blog_users table: %v", err)
+		}
 
-	// Fix tags table: deduplicate and add missing primary key
-	if err := fixTagsTable(db); err != nil {
-		log.Printf("Warning: could not fix tags table: %v", err)
-	}
+		// Fix tags table: deduplicate and add missing primary key
+		if err := fixTagsTable(db); err != nil {
+			log.Printf("Warning: could not fix tags table: %v", err)
+		}
 
-	// Fix other tables that may have table-level PRIMARY KEY constraints
-	for _, table := range []string{"tags", "posts", "admin_users", "settings"} {
-		if err := fixTableLevelPrimaryKey(db, table); err != nil {
-			log.Printf("Warning: could not fix table %s: %v", table, err)
+		// Fix other tables that may have table-level PRIMARY KEY constraints
+		for _, table := range []string{"tags", "posts", "admin_users", "settings"} {
+			if err := fixTableLevelPrimaryKey(db, table); err != nil {
+				log.Printf("Warning: could not fix table %s: %v", table, err)
+			}
 		}
 	}
 

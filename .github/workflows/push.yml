@@ -10,6 +10,22 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    services:
+      # Lets the Postgres integration tests run (they skip when
+      # GOBLOG_TEST_POSTGRES_DSN is unset, e.g. locally).
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: goblog
+          POSTGRES_PASSWORD: goblog
+          POSTGRES_DB: goblog
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U goblog"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
 
       - name: Set up Go 1.22.2
@@ -33,4 +49,6 @@ jobs:
         run: go build -ldflags="-X 'main.Version=$(git rev-parse HEAD)'" -v .
 
       - name: Test
+        env:
+          GOBLOG_TEST_POSTGRES_DSN: host=localhost port=5432 user=goblog password=goblog dbname=goblog sslmode=disable
         run: go test -race -coverprofile=coverage.txt -covermode=atomic goblog/...

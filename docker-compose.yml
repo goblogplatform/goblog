@@ -9,6 +9,22 @@ services:
     ports:
       - "3306:3306"
 
+  # Alternative to the mysql service above: set database=postgres and the
+  # POSTGRES_* variables in template.env, then swap the goblog service's
+  # depends_on to db-postgres.
+  # db-postgres:
+  #   container_name: db-postgres
+  #   image: postgres:16-alpine
+  #   restart: always
+  #   environment:
+  #     POSTGRES_DB: goblog
+  #     POSTGRES_USER: goblog
+  #     POSTGRES_PASSWORD: somedbpass
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - ./pgdata:/var/lib/postgresql/data
+
   phpmyadmin:
     depends_on:
       - db

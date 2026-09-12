@@ -3,7 +3,6 @@ package main
 //this implements https://jsonapi.org/format/ as best as possible
 
 import (
-	"fmt"
 	"github.com/joho/godotenv"
 	"goblog/admin"
 	"goblog/auth"
@@ -14,8 +13,6 @@ import (
 	"goblog/plugins/socialicons"
 	"goblog/tools"
 	"goblog/wizard"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"html/template"
 	"log"
@@ -72,38 +69,18 @@ func attemptConnectDb() *gorm.DB {
 		log.Println("Couldn't read the .env file: " + err.Error())
 		return nil
 	}
-	database := envFile["database"]
-	if database != "mysql" && database != "sqlite" {
-		log.Println("Database type: " + database + " is not valid. Expecting `mysql` or `sqlite`")
+	cfg := dbConfigFromEnv(envFile)
+	if !validDatabaseType(cfg.Type) {
+		log.Println("Database type: " + cfg.Type + " is not valid. Expecting `sqlite`, `mysql` or `postgres`")
 		return nil
 	}
-
-	if database == "sqlite" {
-		db_file := envFile["sqlite_db"]
-		db, err := gorm.Open(sqlite.Open(db_file), &gorm.Config{
-			DisableForeignKeyConstraintWhenMigrating: true,
-		})
-		if err != nil {
-			log.Println("Error opening sqlite db: " + err.Error())
-			return nil
-		}
-		log.Println("opened sqlite db")
-		return db
-	} else {
-		host := envFile["MYSQL_HOST"]
-		port := envFile["MYSQL_PORT"]
-		user := envFile["MYSQL_USER"]
-		pass := envFile["MYSQL_PASSWORD"]
-		dbname := envFile["MYSQL_DATABASE"]
-		dsn := user + ":" + pass + "@tcp(" + host + ":" + port + ")/" + dbname + "?charset=utf8mb4&parseTime=True&loc=Local"
-		db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-		if err != nil {
-			log.Println("Error opening mysql db: " + err.Error())
-			return nil
-		}
-		log.Println("connected to mysql db")
-		return db
+	db, err := openDatabase(cfg)
+	if err != nil {
+		log.Println("Error opening " + cfg.Type + " db: " + err.Error())
+		return nil
 	}
+	log.Println("connected to " + cfg.Type + " db")
+	return db
 }
 
 // depending on if the env file is present or not, we will show the wizard or the main site
@@ -126,9 +103,8 @@ func (g *goblog) rootHandler(c *gin.Context) {
 			})
 			return
 		}
-		fmt.Println(envFile)
 		// detect if the database hasn't be configured yet
-		if (envFile["database"] != "mysql") && (envFile["database"] != "sqlite") {
+		if !validDatabaseType(envFile["database"]) {
 			log.Println("Root handler:  Database is not configured, redirecting to db wizard")
 			c.HTML(http.StatusOK, "wizard_db.html", gin.H{
 				"version": Version,
@@ -269,7 +245,7 @@ func main() {
 		}
 
 		// database is configured, lets try to connect now
-		if (envFile["database"] == "mysql") || (envFile["database"] == "sqlite") {
+		if validDatabaseType(envFile["database"]) {
 			log.Println("Database is configured, trying to connect")
 			db = attemptConnectDb()
 			if db == nil {
@@ -517,110 +493,25 @@ func CORS() gin.HandlerFunc {
 // parse the form which should have passed the db info
 // and then create the env file with it
 func updateDB(c *gin.Context) {
-	err := c.Request.ParseForm()
-	if err != nil {
+	fail := func(msg string) {
+		c.HTML(http.StatusOK, "wizard_db.html", gin.H{
+			"version": Version,
+			"title":   "GoBlog Install Wizard",
+			"errors":  msg,
+		})
+	}
+	if err := c.Request.ParseForm(); err != nil {
 		log.Println("Couldn't parse the form: " + err.Error())
 		return
 	}
-	f, err := os.Create(".env")
-	if err != nil {
-		c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-			"version": Version,
-			"title":   "GoBlog Install Wizard",
-			"errors":  "Couldn't create the .env file: " + err.Error(),
-		})
+	cfg := dbConfigFromForm(c)
+	if !validDatabaseType(cfg.Type) {
+		fail("Invalid database type")
 		return
 	}
-	defer f.Close()
-	db_type := c.PostForm("dbtype")
-	if (db_type != "mysql") && (db_type != "sqlite") {
-		c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-			"version": Version,
-			"title":   "GoBlog Install Wizard",
-			"errors":  "Invalid database type",
-		})
+	if err := os.WriteFile(".env", []byte(cfg.envFile()), 0600); err != nil {
+		fail("Couldn't write the .env file: " + err.Error())
 		return
-	}
-	if db_type == "mysql" {
-		host := c.PostForm("mysql_host")
-		port := c.PostForm("mysql_port")
-		user := c.PostForm("mysql_user")
-		pass := c.PostForm("mysql_pass")
-		dbname := c.PostForm("mysql_db")
-		_, err = f.WriteString("database=mysql\n")
-		if err != nil {
-			c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-				"version": Version,
-				"title":   "GoBlog Install Wizard",
-				"errors":  "Couldn't write to the .env file: " + err.Error(),
-			})
-			return
-		}
-		_, err = f.WriteString("MYSQL_HOST=" + host + "\n")
-		if err != nil {
-			c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-				"version": Version,
-				"title":   "GoBlog Install Wizard",
-				"errors":  "Couldn't write to the .env file: " + err.Error(),
-			})
-			return
-		}
-		_, err = f.WriteString("MYSQL_PORT=" + port + "\n")
-		if err != nil {
-			c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-				"version": Version,
-				"title":   "GoBlog Install Wizard",
-				"errors":  "Couldn't write to the .env file: " + err.Error(),
-			})
-			return
-		}
-		_, err = f.WriteString("MYSQL_USER=" + user + "\n")
-		if err != nil {
-			c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-				"version": Version,
-				"title":   "GoBlog Install Wizard",
-				"errors":  "Couldn't write to the .env file: " + err.Error(),
-			})
-			return
-		}
-		_, err = f.WriteString("MYSQL_PASSWORD=" + pass + "\n")
-		if err != nil {
-			c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-				"version": Version,
-				"title":   "GoBlog Install Wizard",
-				"errors":  "Couldn't write to the .env file: " + err.Error(),
-			})
-			return
-		}
-		_, err = f.WriteString("MYSQL_DATABASE=" + dbname + "\n")
-		if err != nil {
-			c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-				"version": Version,
-				"title":   "GoBlog Install Wizard",
-				"errors":  "Couldn't write to the .env file: " + err.Error(),
-			})
-			return
-		}
-	} else {
-		db_file := c.PostForm("sqlite_file")
-		_, err = f.WriteString("database=sqlite\n")
-		if err != nil {
-			c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-				"version": Version,
-				"title":   "GoBlog Install Wizard",
-				"errors":  "Couldn't write to the .env file: " + err.Error(),
-			})
-			return
-		}
-		_, err = f.WriteString("sqlite_db=" + db_file + "\n")
-		if err != nil {
-			c.HTML(http.StatusOK, "wizard_db.html", gin.H{
-				"version": Version,
-				"title":   "GoBlog Install Wizard",
-				"errors":  "Couldn't write to the .env file: " + err.Error(),
-			})
-			return
-		}
 	}
 
 	// if we make it this far, success, redirect to /
@@ -628,62 +519,22 @@ func updateDB(c *gin.Context) {
 }
 
 func testDB(c *gin.Context) {
-	err := c.Request.ParseForm()
-	if err != nil {
+	if err := c.Request.ParseForm(); err != nil {
 		log.Println("Couldn't parse the form: " + err.Error())
 		return
 	}
-	for key, value := range c.Request.PostForm {
-		log.Println("key: ", key, " value: ", value)
-	}
-
-	db_type := c.PostForm("dbtype")
-	if (db_type != "mysql") && (db_type != "sqlite") {
-		log.Println("Invalid database type: " + db_type)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid database type",
-		})
+	// Don't log the form: it carries the database password.
+	cfg := dbConfigFromForm(c)
+	if !validDatabaseType(cfg.Type) {
+		log.Println("Invalid database type: " + cfg.Type)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid database type"})
 		return
 	}
-	if db_type == "mysql" {
-		host := c.PostForm("mysql_host")
-		port := c.PostForm("mysql_port")
-		user := c.PostForm("mysql_user")
-		pass := c.PostForm("mysql_pass")
-		dbname := c.PostForm("mysql_db")
-		dsn := user + ":" + pass + "@tcp(" + host + ":" + port + ")/" + dbname + "?charset=utf8mb4&parseTime=True&loc=Local"
-		_, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-		if err != nil {
-			log.Println("Couldn't connect to the database: " + err.Error())
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Couldn't connect to the database: " + err.Error(),
-			})
-			return
-		} else {
-			log.Println("Connected to the database")
-			log.Println("Connected to the database")
-			c.JSON(http.StatusOK, gin.H{
-				"success": "Connected to the database",
-			})
-			return
-		}
-	} else {
-		db_file := c.PostForm("sqlite_db")
-		_, err := gorm.Open(sqlite.Open(db_file), &gorm.Config{
-			DisableForeignKeyConstraintWhenMigrating: true,
-		})
-		if err != nil {
-			log.Println("Couldn't connect to the database: " + err.Error())
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Couldn't connect to the database: " + err.Error(),
-			})
-			return
-		} else {
-			log.Println("Connected to the database")
-			c.JSON(http.StatusOK, gin.H{
-				"success": "Connected to the database",
-			})
-			return
-		}
+	if _, err := openDatabase(cfg); err != nil {
+		log.Println("Couldn't connect to the database: " + err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Couldn't connect to the database: " + err.Error()})
+		return
 	}
+	log.Println("Connected to the database")
+	c.JSON(http.StatusOK, gin.H{"success": "Connected to the database"})
 }

@@ -236,7 +236,9 @@ func (b *Blog) SearchPosts(query string) []Post {
 	escaped = strings.ReplaceAll(escaped, "%", "!%")
 	escaped = strings.ReplaceAll(escaped, "_", "!_")
 	q := "%" + escaped + "%"
-	(*b.db).Preload("Tags").Preload("PostType").Where("draft = ? AND (title LIKE ? ESCAPE '!' OR content LIKE ? ESCAPE '!')", false, q, q).Order("created_at desc").Find(&posts)
+	// LOWER() on both sides keeps the search case-insensitive on Postgres,
+	// where LIKE is case-sensitive (SQLite and MySQL fold case already).
+	(*b.db).Preload("Tags").Preload("PostType").Where("draft = ? AND (LOWER(title) LIKE LOWER(?) ESCAPE '!' OR LOWER(content) LIKE LOWER(?) ESCAPE '!')", false, q, q).Order("created_at desc").Find(&posts)
 	return posts
 }
 
