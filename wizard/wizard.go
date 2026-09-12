@@ -190,27 +190,30 @@ func (w *Wizard) updateAdminUser(accessToken string) error {
 	if w.IsDbNil() {
 		log.Println("DB is nil in update admin user")
 		return errors.New("db is nil")
-	} else {
-		log.Println("DB is not nil in update admin user")
 	}
 	_auth := auth.New(*w.db, w.Version)
 
 	user, err := _auth.RequestUser(accessToken)
 	if err != nil {
 		return errors.New("couldn't get user data from github")
-	} else {
-		fmt.Printf("GOT USER: %+v\n", user)
 	}
+	return w.createAdminUser(user)
+}
 
-	result := (*w.db).Create(user)
-	log.Println("CREATED USER")
-	adminUser := auth.AdminUser{BlogUserID: user.ID, BlogUser: *user}
-	log.Println("GOT HERE")
-	result = (*w.db).Create(&adminUser)
-
-	if result.Error != nil || result.RowsAffected == 0 {
-		return errors.New("Error creating admin user: " + result.Error.Error())
+// createAdminUser stores the GitHub user and promotes them to admin through
+// the same gate as the login path, so an admin_login / admin_github_id pin in
+// .env is honoured by the wizard too.
+func (w *Wizard) createAdminUser(user *auth.BlogUser) error {
+	if result := (*w.db).Create(user); result.Error != nil {
+		return errors.New("Error creating user: " + result.Error.Error())
 	}
-
+	_auth := auth.New(*w.db, w.Version)
+	err := _auth.EnsureAdmin(user)
+	if errors.Is(err, auth.ErrNotConfiguredAdmin) {
+		return fmt.Errorf("GitHub user %q (id %d) is not the configured admin; check admin_login / admin_github_id in .env", user.Login, user.ID)
+	}
+	if err != nil {
+		return errors.New("Error creating admin user: " + err.Error())
+	}
 	return nil
 }

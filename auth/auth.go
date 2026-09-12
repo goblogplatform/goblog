@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gin-contrib/sessions"
@@ -195,7 +196,9 @@ func (a *Auth) LoginPostHandler(c *gin.Context) {
 	// to admin so the operator can administer the site without re-running the
 	// wizard. Same trust model as the wizard: whoever first completes OAuth
 	// against the server's client_secret becomes the admin.
-	if err := a.EnsureAdmin(user.ID); err != nil {
+	if err := a.EnsureAdmin(user); errors.Is(err, ErrNotConfiguredAdmin) {
+		log.Printf("%s (id %d) logged in but is not the configured admin; not promoting", user.Login, user.ID)
+	} else if err != nil {
 		log.Println("Error ensuring admin user: " + err.Error())
 	}
 
@@ -207,14 +210,50 @@ func (a *Auth) LoginPostHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, existingUser)
 }
 
+// ErrNotConfiguredAdmin is returned by EnsureAdmin when no admin exists yet
+// but the logging-in user is not the identity pinned by admin_login /
+// admin_github_id in .env.
+var ErrNotConfiguredAdmin = errors.New("user is not the configured admin")
+
+// isConfiguredAdmin reports whether user matches the admin identity pinned in
+// .env. If neither admin_login nor admin_github_id is set, any user matches
+// (first-to-login wins). If either is set, the user must match at least one:
+// admin_login case-insensitively against the GitHub login, admin_github_id
+// against the numeric GitHub id. A malformed admin_github_id is treated as set
+// but never matching, so a typo cannot silently reopen the gate.
+func isConfiguredAdmin(user *BlogUser) bool {
+	login := strings.TrimSpace(os.Getenv("admin_login"))
+	idStr := strings.TrimSpace(os.Getenv("admin_github_id"))
+	if login == "" && idStr == "" {
+		return true
+	}
+	if login != "" && strings.EqualFold(login, user.Login) {
+		return true
+	}
+	if idStr != "" {
+		id, err := strconv.Atoi(idStr)
+		if err != nil {
+			log.Printf("admin_github_id %q is not a number; no user can match it", idStr)
+			return false
+		}
+		if id == user.ID {
+			return true
+		}
+	}
+	return false
+}
+
 // EnsureAdmin promotes the given BlogUser to admin if and only if no admin
-// user currently exists. Idempotent and safe to call on every login.
+// exists yet and the user matches the identity pinned in .env (if any, see
+// isConfiguredAdmin). Returns ErrNotConfiguredAdmin when promotion was refused
+// because of that pin; callers can treat that as "log in as a regular user".
+// Idempotent and safe to call on every login.
 //
 // The check-and-create runs inside a transaction so two concurrent first
 // logins can't both observe an empty admin_users table and both create a
 // row. Lookup errors other than "record not found" are surfaced rather
 // than swallowed as if no admin existed.
-func (a *Auth) EnsureAdmin(blogUserID int) error {
+func (a *Auth) EnsureAdmin(user *BlogUser) error {
 	return (*a.db).Transaction(func(tx *gorm.DB) error {
 		var existing AdminUser
 		err := tx.First(&existing).Error
@@ -224,7 +263,10 @@ func (a *Auth) EnsureAdmin(blogUserID int) error {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		return tx.Create(&AdminUser{BlogUserID: blogUserID}).Error
+		if !isConfiguredAdmin(user) {
+			return ErrNotConfiguredAdmin
+		}
+		return tx.Create(&AdminUser{BlogUserID: user.ID}).Error
 	})
 }
 
