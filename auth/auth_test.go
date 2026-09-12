@@ -26,7 +26,14 @@ func newCtx() *gin.Context {
 	return c
 }
 
+// newAuth returns an Auth on a fresh in-memory DB. It also clears the
+// admin_login / admin_github_id pin so tests are hermetic regardless of the
+// developer's or CI's environment; tests that exercise the pin set it after
+// calling newAuth.
 func newAuth(t *testing.T) (*auth.Auth, *gorm.DB) {
+	t.Helper()
+	t.Setenv("admin_login", "")
+	t.Setenv("admin_github_id", "")
 	db, err := gorm.Open(sqlite.Open(":memory:"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -139,9 +146,9 @@ func TestEnsureAdmin_PinnedIdentity(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			a, db := newAuth(t)
 			t.Setenv("admin_login", tc.adminLogin)
 			t.Setenv("admin_github_id", tc.adminID)
-			a, db := newAuth(t)
 			db.Create(&tc.user)
 
 			err := a.EnsureAdmin(&tc.user)
@@ -165,8 +172,8 @@ func TestEnsureAdmin_PinnedIdentity(t *testing.T) {
 }
 
 func TestEnsureAdmin_PinnedIdentity_AdminExists_NoOp(t *testing.T) {
-	t.Setenv("admin_login", "operator")
 	a, db := newAuth(t)
+	t.Setenv("admin_login", "operator")
 	first := auth.BlogUser{ID: 1, Login: "operator"}
 	second := auth.BlogUser{ID: 2, Login: "operator"}
 	db.Create(&first)
