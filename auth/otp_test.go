@@ -220,6 +220,183 @@ func TestSendLoginCode_MailFailure_500AndNoRow(t *testing.T) {
 	}
 }
 
+func verify(r *gin.Engine, email, code string) *httptest.ResponseRecorder {
+	return postForm(r, "/api/login/email/verify", url.Values{"email": {email}, "code": {code}}, nil)
+}
+
+func TestVerifyLoginCode_NotConfigured_404(t *testing.T) {
+	a, _ := newAuth(t)
+	if w := verify(newOTPRouter(a), "x@example.com", "123456"); w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestVerifyLoginCode_MalformedInput_400(t *testing.T) {
+	a, _, _ := newOTPAuth(t)
+	r := newOTPRouter(a)
+	for _, tc := range []struct{ email, code string }{
+		{"not-an-email", "123456"},
+		{"x@example.com", ""},
+		{"x@example.com", "12345"},
+		{"x@example.com", "1234567"},
+		{"x@example.com", "12a456"},
+		{"x@example.com", "１２３４５６"},
+	} {
+		if w := verify(r, tc.email, tc.code); w.Code != http.StatusBadRequest {
+			t.Errorf("%+v: expected 400, got %d %s", tc, w.Code, w.Body)
+		}
+	}
+}
+
+func TestVerifyLoginCode_UnknownEmail_401(t *testing.T) {
+	a, _, _ := newOTPAuth(t)
+	if w := verify(newOTPRouter(a), "nobody@example.com", "123456"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d %s", w.Code, w.Body)
+	}
+}
+
+func TestVerifyLoginCode_Success_LogsInAndCreatesUser(t *testing.T) {
+	a, db, m := newOTPAuth(t)
+	r := newOTPRouter(a)
+	sendCode(r, "Reader@Example.com")
+	code := lastCode(t, m)
+
+	w := verify(r, "reader@example.com", code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "access_token") {
+		t.Errorf("response must not include the session token: %s", w.Body)
+	}
+
+	var user auth.BlogUser
+	if err := db.First(&user, "provider = ? AND provider_id = ?", auth.ProviderEmail, "reader@example.com").Error; err != nil {
+		t.Fatalf("expected an email user row: %v", err)
+	}
+	if user.Login != "reader@example.com" || user.Email != "reader@example.com" {
+		t.Errorf("unexpected user %+v", user)
+	}
+	if len(user.AccessToken) != 64 {
+		t.Errorf("expected a 32-byte hex session token, got %q", user.AccessToken)
+	}
+	if codeCount(t, db) != 0 {
+		t.Error("expected the code row to be deleted after use")
+	}
+
+	// The session cookie from the verify response must make IsLoggedIn true.
+	req := httptest.NewRequest("GET", "/whoami", nil)
+	for _, c := range w.Result().Cookies() {
+		req.AddCookie(c)
+	}
+	who := httptest.NewRecorder()
+	r.ServeHTTP(who, req)
+	if who.Body.String() != "true" {
+		t.Fatalf("expected the session to be logged in, got %q", who.Body.String())
+	}
+}
+
+func TestVerifyLoginCode_ReplayFails(t *testing.T) {
+	a, _, m := newOTPAuth(t)
+	r := newOTPRouter(a)
+	sendCode(r, "reader@example.com")
+	code := lastCode(t, m)
+	if w := verify(r, "reader@example.com", code); w.Code != http.StatusOK {
+		t.Fatalf("first verify: %d %s", w.Code, w.Body)
+	}
+	if w := verify(r, "reader@example.com", code); w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected replay to fail with 401, got %d %s", w.Code, w.Body)
+	}
+}
+
+func TestVerifyLoginCode_SecondLogin_ReusesUserAndRotatesToken(t *testing.T) {
+	a, db, m := newOTPAuth(t)
+	r := newOTPRouter(a)
+
+	sendCode(r, "reader@example.com")
+	verify(r, "reader@example.com", lastCode(t, m))
+	var first auth.BlogUser
+	db.First(&first, "provider_id = ?", "reader@example.com")
+
+	db.Model(&auth.LoginCode{}).Where("email = ?", "reader@example.com").Update("created_at", time.Now().Add(-2*time.Minute))
+	sendCode(r, "reader@example.com")
+	if w := verify(r, "reader@example.com", lastCode(t, m)); w.Code != http.StatusOK {
+		t.Fatalf("second verify: %d %s", w.Code, w.Body)
+	}
+	var second auth.BlogUser
+	db.First(&second, "provider_id = ?", "reader@example.com")
+
+	var users int64
+	db.Model(&auth.BlogUser{}).Count(&users)
+	if users != 1 || second.ID != first.ID {
+		t.Fatalf("expected one user reused, got %d users, ids %d/%d", users, first.ID, second.ID)
+	}
+	if second.AccessToken == first.AccessToken {
+		t.Fatal("expected the session token to rotate on each login")
+	}
+}
+
+func TestVerifyLoginCode_WrongCode_401AndCountsAttempt(t *testing.T) {
+	a, db, m := newOTPAuth(t)
+	r := newOTPRouter(a)
+	sendCode(r, "reader@example.com")
+	code := lastCode(t, m)
+	wrong := "000000"
+	if wrong == code {
+		wrong = "000001"
+	}
+	if w := verify(r, "reader@example.com", wrong); w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d %s", w.Code, w.Body)
+	}
+	var row auth.LoginCode
+	db.First(&row, "email = ?", "reader@example.com")
+	if row.Attempts != 1 {
+		t.Fatalf("expected attempts=1, got %d", row.Attempts)
+	}
+	if w := verify(r, "reader@example.com", code); w.Code != http.StatusOK {
+		t.Fatalf("the right code should still work after one miss, got %d %s", w.Code, w.Body)
+	}
+}
+
+func TestVerifyLoginCode_TooManyAttempts_LocksCode(t *testing.T) {
+	a, _, m := newOTPAuth(t)
+	r := newOTPRouter(a)
+	sendCode(r, "reader@example.com")
+	code := lastCode(t, m)
+	wrong := "000000"
+	if wrong == code {
+		wrong = "000001"
+	}
+	for i := 0; i < 5; i++ {
+		verify(r, "reader@example.com", wrong)
+	}
+	if w := verify(r, "reader@example.com", code); w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected the right code to be refused after 5 misses, got %d %s", w.Code, w.Body)
+	}
+}
+
+func TestVerifyLoginCode_Expired_401(t *testing.T) {
+	a, db, m := newOTPAuth(t)
+	r := newOTPRouter(a)
+	sendCode(r, "reader@example.com")
+	code := lastCode(t, m)
+	db.Model(&auth.LoginCode{}).Where("email = ?", "reader@example.com").Update("expires_at", time.Now().Add(-time.Second))
+	if w := verify(r, "reader@example.com", code); w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for an expired code, got %d %s", w.Code, w.Body)
+	}
+}
+
+func TestVerifyLoginCode_NeverPromotesToAdmin(t *testing.T) {
+	a, db, m := newOTPAuth(t) // newAuth clears admin_login/admin_github_id: first-to-login would win for GitHub
+	r := newOTPRouter(a)
+	sendCode(r, "reader@example.com")
+	if w := verify(r, "reader@example.com", lastCode(t, m)); w.Code != http.StatusOK {
+		t.Fatalf("verify: %d %s", w.Code, w.Body)
+	}
+	if adminCount(t, db) != 0 {
+		t.Fatal("an email login must never create an admin")
+	}
+}
+
 func TestEmailLoginEnabled(t *testing.T) {
 	t.Setenv("smtp_host", "")
 	t.Setenv("smtp_from", "")

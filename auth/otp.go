@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -113,8 +115,82 @@ func (a *Auth) SendLoginCodeHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "sent"})
 }
 
-// VerifyLoginCodeHandler handles POST /api/login/email/verify. Implemented in
-// the next step of the plan.
+func isLoginCode(s string) bool {
+	if len(s) != loginCodeLength {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func newSessionToken() (string, error) {
+	b := make([]byte, sessionTokenBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// VerifyLoginCodeHandler handles POST /api/login/email/verify (form fields:
+// email, code). A missing, expired, locked or wrong code is a 401 with the
+// same body. Success deletes the code, creates or refreshes the email user
+// with a fresh random session token, and stores that token in the session
+// exactly as the GitHub flow does, so IsLoggedIn works unchanged. Admin
+// promotion is deliberately not attempted here.
 func (a *Auth) VerifyLoginCodeHandler(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
+	if a.Mailer == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "email login not configured"})
+		return
+	}
+	email, ok := normalizeEmail(c.PostForm("email"))
+	code := strings.TrimSpace(c.PostForm("code"))
+	if !ok || !isLoginCode(code) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid email or code"})
+		return
+	}
+
+	var row LoginCode
+	err := (*a.db).First(&row, "email = ?", email).Error
+	if err != nil || time.Now().After(row.ExpiresAt) || row.Attempts >= loginCodeMaxAttempts {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired code"})
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(hashLoginCode(code)), []byte(row.CodeHash)) != 1 {
+		(*a.db).Model(&row).Update("attempts", row.Attempts+1)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired code"})
+		return
+	}
+	(*a.db).Delete(&LoginCode{}, "email = ?", email)
+
+	token, err := newSessionToken()
+	if err != nil {
+		log.Printf("generating session token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not log in"})
+		return
+	}
+	user, err := a.UpsertUser(&BlogUser{
+		Provider:    ProviderEmail,
+		ProviderID:  email,
+		Login:       email,
+		Email:       email,
+		AccessToken: token,
+	})
+	if err != nil {
+		log.Printf("storing email user %s: %v", email, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not log in"})
+		return
+	}
+
+	session := sessions.Default(c)
+	session.Set("token", token)
+	if err := session.Save(); err != nil {
+		log.Printf("saving session: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not log in"})
+		return
+	}
+	c.JSON(http.StatusOK, user)
 }
