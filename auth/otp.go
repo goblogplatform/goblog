@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // One-time email login codes (issue #523). A visitor asks for a code, we
@@ -160,11 +161,17 @@ func (a *Auth) VerifyLoginCodeHandler(c *gin.Context) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(hashLoginCode(code)), []byte(row.CodeHash)) != 1 {
-		(*a.db).Model(&row).Update("attempts", row.Attempts+1)
+		if err := (*a.db).Model(&row).UpdateColumn("attempts", gorm.Expr("attempts + 1")).Error; err != nil {
+			log.Printf("recording a failed login attempt for %s: %v", email, err)
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired code"})
 		return
 	}
-	(*a.db).Delete(&LoginCode{}, "email = ?", email)
+	if err := (*a.db).Delete(&LoginCode{}, "email = ?", email).Error; err != nil {
+		log.Printf("deleting used login code for %s: %v", email, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not log in"})
+		return
+	}
 
 	token, err := newSessionToken()
 	if err != nil {

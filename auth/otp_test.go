@@ -352,8 +352,15 @@ func TestVerifyLoginCode_WrongCode_401AndCountsAttempt(t *testing.T) {
 	if row.Attempts != 1 {
 		t.Fatalf("expected attempts=1, got %d", row.Attempts)
 	}
+	if w := verify(r, "reader@example.com", wrong); w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d %s", w.Code, w.Body)
+	}
+	db.First(&row, "email = ?", "reader@example.com")
+	if row.Attempts != 2 {
+		t.Fatalf("expected the attempts counter to durably record each wrong guess: expected attempts=2, got %d", row.Attempts)
+	}
 	if w := verify(r, "reader@example.com", code); w.Code != http.StatusOK {
-		t.Fatalf("the right code should still work after one miss, got %d %s", w.Code, w.Body)
+		t.Fatalf("the right code should still work after two misses, got %d %s", w.Code, w.Body)
 	}
 }
 
