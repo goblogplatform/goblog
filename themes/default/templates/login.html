@@ -12,6 +12,37 @@
       window.location.href = '/';
     });
   }
+
+  $(function () {
+    var emailForm = $("#email-form"), codeForm = $("#code-form"),
+        status = $("#email-login-status"), change = $("#email-change");
+    if (!emailForm.length) { return; }
+    function showError(xhr, fallback) {
+      status.text((xhr.responseJSON && xhr.responseJSON.error) || fallback);
+    }
+    emailForm.on("submit", function (e) {
+      e.preventDefault();
+      status.text("");
+      $.post(host + "/api/login/email", {email: $("#email-input").val()})
+        .done(function () {
+          emailForm.hide(); codeForm.css("display", "flex"); change.show();
+          status.text("Check your inbox for a 6-digit code.");
+          $("#code-input").val("").focus();
+        })
+        .fail(function (xhr) { showError(xhr, "Could not send the code."); });
+    });
+    codeForm.on("submit", function (e) {
+      e.preventDefault();
+      status.text("");
+      $.post(host + "/api/login/email/verify", {email: $("#email-input").val(), code: $("#code-input").val()})
+        .done(function () { window.location.href = "/"; })
+        .fail(function (xhr) { showError(xhr, "Could not verify the code."); });
+    });
+    change.on("click", function (e) {
+      e.preventDefault();
+      codeForm.hide(); change.hide(); emailForm.show(); status.text("");
+    });
+  });
 </script>
 
 <div class="full-height row text-center">
@@ -33,6 +64,21 @@
       </a>
 
       <script>$("#github-button").prop("href", "https://github.com/login/oauth/authorize?client_id={{ .client_id }}&redirect_uri=" + window.location);</script>
+
+      {{ if .email_login_enabled }}
+      <div class="clear">&nbsp;</div>
+      <p class="text-muted">or sign in with email</p>
+      <form id="email-form" class="form-inline justify-content-center">
+        <input type="email" id="email-input" class="form-control mr-2" placeholder="you@example.com" autocomplete="email" required>
+        <button type="submit" class="btn btn-primary">Send code</button>
+      </form>
+      <form id="code-form" class="form-inline justify-content-center" style="display:none">
+        <input type="text" id="code-input" class="form-control mr-2" placeholder="6-digit code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+        <button type="submit" class="btn btn-primary">Verify</button>
+      </form>
+      <p id="email-login-status" class="mt-2"></p>
+      <a href="#" id="email-change" style="display:none">use a different email</a>
+      {{ end }}
 
       <div class="clear">
         &nbsp;
