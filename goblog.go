@@ -7,6 +7,7 @@ import (
 	"goblog/admin"
 	"goblog/auth"
 	"goblog/blog"
+	"goblog/mail"
 	gplugin "goblog/plugin"
 	"goblog/plugins/analytics"
 	scholarplugin "goblog/plugins/scholar"
@@ -262,7 +263,17 @@ func main() {
 		}
 	}
 
+	// The wizard and admin pin read settings lazily via os.Getenv after a
+	// godotenv.Load; SMTP is needed at startup, so load once here too.
+	if err := godotenv.Load(".env"); err != nil {
+		log.Println("Couldn't load .env into the environment: " + err.Error())
+	}
+
 	_auth := auth.New(db, Version)
+	if sender, ok := mail.NewSMTPSenderFromEnv(); ok {
+		log.Println("SMTP configured; email login enabled")
+		_auth.Mailer = sender
+	}
 	_blog := blog.New(db, &_auth, Version)
 	_admin := admin.New(db, &_auth, &_blog, Version)
 	_wizard := wizard.New(db, Version)
@@ -415,6 +426,8 @@ func (g *goblog) addRoutesInner() {
 	//all of this is the json api
 	g.router.MaxMultipartMemory = 50 << 20
 	g.router.POST("/api/login", g._auth.LoginPostHandler)
+	g.router.POST("/api/login/email", g._auth.SendLoginCodeHandler)
+	g.router.POST("/api/login/email/verify", g._auth.VerifyLoginCodeHandler)
 	g.router.POST("/api/v1/posts", g._admin.CreatePost)
 	g.router.PATCH("/api/v1/posts", g._admin.UpdatePost)
 	g.router.PATCH("/api/v1/publish/:id", g._admin.PublishPost)
