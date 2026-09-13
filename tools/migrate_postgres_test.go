@@ -19,6 +19,7 @@ type Auth struct{}
 func (Auth) IsAdmin(*gin.Context) bool      { return false }
 func (Auth) IsLoggedIn(*gin.Context) bool   { return false }
 func (Auth) IsWizardMode(*gin.Context) bool { return false }
+func (Auth) EmailLoginEnabled() bool        { return false }
 
 // openTestPostgres connects to the Postgres instance named by
 // GOBLOG_TEST_POSTGRES_DSN (CI provides one) and returns an empty schema,

@@ -1070,7 +1070,7 @@ func (b *Blog) Login(c *gin.Context) {
 		"client_id":           clientID,
 		"version":             b.Version,
 		"title":               "Login",
-		"email_login_enabled": auth.EmailLoginEnabled(),
+		"email_login_enabled": b.auth.EmailLoginEnabled(),
 		"recent":              b.GetLatest(),
 		"admin_page":          false,
 		"settings":            b.GetSettings(),

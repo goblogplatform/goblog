@@ -25,6 +25,7 @@ type IAuth interface {
 	IsAdmin(c *gin.Context) bool
 	IsLoggedIn(c *gin.Context) bool
 	IsWizardMode(c *gin.Context) bool
+	EmailLoginEnabled() bool
 }
 
 // Auth API
@@ -34,20 +35,25 @@ type Auth struct {
 	// Mailer delivers one-time login codes. nil means email login is not
 	// configured and the OTP endpoints respond 404.
 	Mailer mail.Sender
+	// sendLimiter throttles POST /api/login/email per client IP. It is a
+	// pointer (rather than an embedded sync.Mutex) because Auth is passed
+	// around by value (New returns a value, wizard constructs its own); every
+	// copy of a given Auth shares the same limiter.
+	sendLimiter *ipLimiter
 }
 
 // New constructs an Auth API
 func New(db *gorm.DB, version string) Auth {
-	api := Auth{db: &db, version: version}
+	api := Auth{db: &db, version: version, sendLimiter: newIPLimiter()}
 	return api
 }
 
-// EmailLoginEnabled reports whether SMTP is configured in the environment
-// (smtp_host and smtp_from), i.e. whether the login page should offer email
-// login. main uses the same check to decide whether to set Mailer.
-func EmailLoginEnabled() bool {
-	_, ok := mail.NewSMTPSenderFromEnv()
-	return ok
+// EmailLoginEnabled reports whether email login is configured, i.e. whether
+// the login page should offer email login. It mirrors the check the OTP
+// handlers use (Mailer != nil), which main sets once at startup from the
+// environment, so the login page and the endpoints can never disagree.
+func (a *Auth) EmailLoginEnabled() bool {
+	return a.Mailer != nil
 }
 
 // AccessTokenResponse comes from Github OAuth API when the user has successfully
@@ -144,7 +150,6 @@ type githubUser struct {
 // RequestUser fetches the GitHub profile for accessToken and returns it as an
 // unstored BlogUser (ID is zero; the database assigns it on UpsertUser).
 func (a *Auth) RequestUser(accessToken string) (*BlogUser, error) {
-	gh := &githubUser{}
 	//get the user info from Github
 	req, err := http.NewRequest("GET", "https://api.github.com/user", strings.NewReader(""))
 	if err != nil {
@@ -175,8 +180,30 @@ func (a *Auth) RequestUser(accessToken string) (*BlogUser, error) {
 		return nil, errors.New(bodyString)
 	}
 
-	json.Unmarshal(bodyBytes, gh)
-	user := &BlogUser{
+	user, err := parseGitHubUser(bodyBytes, accessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("Parsed user: ", user.Login, user.ProviderID)
+
+	return user, nil
+}
+
+// parseGitHubUser parses GitHub's /user response body into an unstored
+// BlogUser. It rejects a body that doesn't unmarshal as JSON and one that
+// unmarshals but carries no id (id 0 is not a real GitHub user id; treating
+// it as one would let unrelated failures collapse onto a single shared
+// identity).
+func parseGitHubUser(body []byte, accessToken string) (*BlogUser, error) {
+	gh := &githubUser{}
+	if err := json.Unmarshal(body, gh); err != nil {
+		return nil, errors.New("unexpected GitHub user response: " + err.Error())
+	}
+	if gh.ID == 0 {
+		return nil, errors.New("unexpected GitHub user response: missing id")
+	}
+	return &BlogUser{
 		Provider:    ProviderGitHub,
 		ProviderID:  strconv.Itoa(gh.ID),
 		Login:       gh.Login,
@@ -184,11 +211,7 @@ func (a *Auth) RequestUser(accessToken string) (*BlogUser, error) {
 		Name:        gh.Name,
 		Email:       gh.Email,
 		AccessToken: accessToken,
-	}
-
-	fmt.Println("Parsed user: ", user.Login, user.ProviderID)
-
-	return user, nil
+	}, nil
 }
 
 // UpsertUser stores user, matching an existing row by (Provider, ProviderID).

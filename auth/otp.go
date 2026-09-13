@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -26,14 +27,63 @@ const (
 	loginCodeMaxAttempts = 5
 	loginCodeResendAfter = 60 * time.Second
 	sessionTokenBytes    = 32
+
+	// Per-IP limit on POST /api/login/email, independent of the per-address
+	// resend window above: without it, one client can mail-bomb unlimited
+	// distinct addresses or burn the site's SMTP quota.
+	loginCodeSendsPerIP  = 5
+	loginCodeSendsWindow = 10 * time.Minute
 )
 
+// ipLimiter counts recent hits per key (client IP) inside a sliding window.
+// It is referenced from Auth via a pointer (see Auth.sendLimiter) because
+// Auth values are copied around, and every copy must share one limiter.
+type ipLimiter struct {
+	mu   sync.Mutex
+	hits map[string][]time.Time
+}
+
+func newIPLimiter() *ipLimiter {
+	return &ipLimiter{hits: make(map[string][]time.Time)}
+}
+
+// allow reports whether ip may make another request at now, recording the
+// attempt if so. Timestamps older than loginCodeSendsWindow are pruned first,
+// so the limit only ever reflects the trailing window.
+func (l *ipLimiter) allow(ip string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cutoff := now.Add(-loginCodeSendsWindow)
+	kept := l.hits[ip][:0]
+	for _, t := range l.hits[ip] {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= loginCodeSendsPerIP {
+		l.hits[ip] = kept
+		return false
+	}
+	l.hits[ip] = append(kept, now)
+	return true
+}
+
+// emailRejectedChars are characters that have no place in a bare address but
+// that a mail header/relay could interpret specially (e.g. "a@b.com,c@d.com"
+// or "<a@b.com>" smuggling a second recipient). Rejecting them here is
+// defence in depth; mail.Message separately rejects raw line breaks.
+const emailRejectedChars = " \t,<>;\"()"
+
 // normalizeEmail trims and lowercases raw and does a shape check: non-empty,
-// at most 254 bytes, exactly one "@" with something on both sides. It is
-// deliberately loose; the emailed code is the real proof of ownership.
+// at most 254 bytes, exactly one "@" with something on both sides, and none
+// of emailRejectedChars. It is deliberately loose beyond that; the emailed
+// code is the real proof of ownership.
 func normalizeEmail(raw string) (string, bool) {
 	e := strings.ToLower(strings.TrimSpace(raw))
 	if e == "" || len(e) > 254 {
+		return "", false
+	}
+	if strings.ContainsAny(e, emailRejectedChars) {
 		return "", false
 	}
 	at := strings.Index(e, "@")
@@ -72,7 +122,9 @@ func (a *Auth) siteTitle() string {
 // It always answers 200 {"status":"sent"} for a well-formed address whether
 // or not that address has logged in before, so it cannot be used to probe
 // for accounts. Requests inside loginCodeResendAfter of the previous one for
-// the same address get 429.
+// the same address get 429, as do clients over loginCodeSendsPerIP sends in
+// loginCodeSendsWindow (checked first, so it isn't itself an oracle for
+// whether a given address was rate-limited).
 func (a *Auth) SendLoginCodeHandler(c *gin.Context) {
 	if a.Mailer == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "email login not configured"})
@@ -81,6 +133,10 @@ func (a *Auth) SendLoginCodeHandler(c *gin.Context) {
 	email, ok := normalizeEmail(c.PostForm("email"))
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid email address"})
+		return
+	}
+	if !a.sendLimiter.allow(c.ClientIP(), time.Now()) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many requests; try again later"})
 		return
 	}
 	now := time.Now()
@@ -109,7 +165,9 @@ func (a *Auth) SendLoginCodeHandler(c *gin.Context) {
 	body := fmt.Sprintf("Your login code is %s. It expires in 10 minutes.\n\nIf you did not request this, ignore this email.\n", code)
 	if err := a.Mailer.Send(email, subject, body); err != nil {
 		log.Printf("sending login code to %s: %v", email, err)
-		(*a.db).Delete(&LoginCode{}, "email = ?", email)
+		if delErr := (*a.db).Delete(&LoginCode{}, "email = ?", email).Error; delErr != nil {
+			log.Printf("cleaning up login code for %s after a failed send: %v", email, delErr)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not send the login code"})
 		return
 	}

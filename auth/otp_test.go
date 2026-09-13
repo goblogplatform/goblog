@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -63,8 +64,18 @@ func newOTPRouter(a *auth.Auth) *gin.Engine {
 }
 
 func postForm(r *gin.Engine, path string, form url.Values, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	return postFormFromIP(r, path, form, cookies, "")
+}
+
+// postFormFromIP is postForm but also sets the request's RemoteAddr so
+// gin's c.ClientIP() (TestMode falls back to RemoteAddr) reports remoteAddr's
+// host. Pass "" to leave RemoteAddr at httptest's default.
+func postFormFromIP(r *gin.Engine, path string, form url.Values, cookies []*http.Cookie, remoteAddr string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if remoteAddr != "" {
+		req.RemoteAddr = remoteAddr
+	}
 	for _, c := range cookies {
 		req.AddCookie(c)
 	}
@@ -75,6 +86,10 @@ func postForm(r *gin.Engine, path string, form url.Values, cookies []*http.Cooki
 
 func sendCode(r *gin.Engine, email string) *httptest.ResponseRecorder {
 	return postForm(r, "/api/login/email", url.Values{"email": {email}}, nil)
+}
+
+func sendCodeFromIP(r *gin.Engine, email, remoteAddr string) *httptest.ResponseRecorder {
+	return postFormFromIP(r, "/api/login/email", url.Values{"email": {email}}, nil, remoteAddr)
 }
 
 // newOTPAuth is newAuth with a fake mailer attached.
@@ -104,7 +119,10 @@ func TestSendLoginCode_NotConfigured_404(t *testing.T) {
 func TestSendLoginCode_BadEmail_400(t *testing.T) {
 	a, db, m := newOTPAuth(t)
 	r := newOTPRouter(a)
-	for _, bad := range []string{"", "   ", "no-at-sign", "@example.com", "x@", "a@b@c", strings.Repeat("a", 250) + "@x.io"} {
+	for _, bad := range []string{
+		"", "   ", "no-at-sign", "@example.com", "x@", "a@b@c", strings.Repeat("a", 250) + "@x.io",
+		"a b@example.com", "a@b.com,c@d.com", "<a@b.com>", "a;b@c.com",
+	} {
 		w := sendCode(r, bad)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("%q: expected 400, got %d %s", bad, w.Code, w.Body)
@@ -405,14 +423,49 @@ func TestVerifyLoginCode_NeverPromotesToAdmin(t *testing.T) {
 }
 
 func TestEmailLoginEnabled(t *testing.T) {
-	t.Setenv("smtp_host", "")
-	t.Setenv("smtp_from", "")
-	if auth.EmailLoginEnabled() {
-		t.Fatal("expected disabled without smtp_host/smtp_from")
+	a, _ := newAuth(t)
+	if a.EmailLoginEnabled() {
+		t.Fatal("expected disabled with a nil Mailer")
 	}
-	t.Setenv("smtp_host", "smtp.example.com")
-	t.Setenv("smtp_from", "blog@example.com")
-	if !auth.EmailLoginEnabled() {
-		t.Fatal("expected enabled")
+	a.Mailer = &fakeMailer{}
+	if !a.EmailLoginEnabled() {
+		t.Fatal("expected enabled once Mailer is set")
 	}
 }
+
+// TestSendLoginCode_PerIPRateLimit covers F2: at most loginCodeSendsPerIP
+// sends per client IP per loginCodeSendsWindow, independent of the
+// per-address resend window (each send below targets a distinct address).
+func TestSendLoginCode_PerIPRateLimit(t *testing.T) {
+	a, _, m := newOTPAuth(t)
+	r := newOTPRouter(a)
+	const ip = "203.0.113.7:12345"
+
+	for i := 0; i < 5; i++ {
+		email := fmt.Sprintf("reader%d@example.com", i)
+		if w := sendCodeFromIP(r, email, ip); w.Code != http.StatusOK {
+			t.Fatalf("send %d: expected 200, got %d %s", i, w.Code, w.Body)
+		}
+	}
+	if len(m.sent) != 5 {
+		t.Fatalf("expected 5 emails sent, got %d", len(m.sent))
+	}
+
+	w := sendCodeFromIP(r, "reader5@example.com", ip)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 on the 6th send from one IP, got %d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "too many requests") {
+		t.Errorf("unexpected body: %s", w.Body)
+	}
+	if len(m.sent) != 5 {
+		t.Fatalf("expected no email sent for the rate-limited request, got %d", len(m.sent))
+	}
+
+	// A different IP is unaffected by the first IP's limit.
+	otherIP := "198.51.100.9:54321"
+	if w := sendCodeFromIP(r, "reader-other@example.com", otherIP); w.Code != http.StatusOK {
+		t.Fatalf("expected 200 from a different IP, got %d %s", w.Code, w.Body)
+	}
+}
+

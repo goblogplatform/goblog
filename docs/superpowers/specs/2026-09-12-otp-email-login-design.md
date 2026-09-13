@@ -104,7 +104,12 @@ the `admin_login` block:
 | `smtp_from`     | From address on the code email            | —       |
 
 Email login is enabled iff `smtp_host` and `smtp_from` are both non-empty.
-`auth.EmailLoginEnabled()` reads the env (same pattern as `isConfiguredAdmin`).
+Both the login page and the OTP endpoints derive "enabled" from the same
+place: `Auth.EmailLoginEnabled()` returns `Mailer != nil`, and `main` sets
+`Mailer` from the env once at startup via `mail.NewSMTPSenderFromEnv()`.
+Neither reads the env again afterwards, so the login page and the endpoints
+can never disagree at runtime — but it also means changing `smtp_*` in
+`.env` requires restarting goblog to take effect.
 
 ## Mail package (`mail/`)
 
@@ -154,21 +159,31 @@ configured"}` when `Mailer == nil`.
 
 ### `POST /api/login/email` — form field `email`
 
-1. Normalise: trim, lowercase. Reject (400) if empty, > 254 chars, or without
-   exactly one `@` with non-empty sides.
-2. Delete rows with `expires_at < now` (opportunistic pruning).
-3. If a row exists for this email with `created_at > now - 60s` → 429
+1. Normalise: trim, lowercase. Reject (400) if empty, > 254 chars, without
+   exactly one `@` with non-empty sides, or containing a space, tab, `,`,
+   `<`, `>`, `;`, `"`, `(` or `)`.
+2. Per-IP rate limit: an in-memory `ipLimiter` (`auth/otp.go`) allows at most
+   `loginCodeSendsPerIP` (5) requests per client IP (`c.ClientIP()`) per
+   `loginCodeSendsWindow` (10 minutes), sliding window. Over the limit → 429
+   `{"error": "too many requests; try again later"}`. This is independent of
+   and checked before the per-address window below, so it also catches
+   requests for many distinct addresses from one IP (mail-bombing third
+   parties, burning SMTP quota) that the per-address check alone would miss.
+   The limiter lives on `*Auth` (`sendLimiter *ipLimiter`, allocated in `New`)
+   rather than embedded by value, since `Auth` is copied around.
+3. Delete rows with `expires_at < now` (opportunistic pruning).
+4. If a row exists for this email with `created_at > now - 60s` → 429
    `{"error": "please wait before requesting another code"}`.
-4. Generate a 6-digit code from `crypto/rand` (zero-padded), sha256 it, upsert
+5. Generate a 6-digit code from `crypto/rand` (zero-padded), sha256 it, upsert
    the row with `expires_at = now + 10m`, `attempts = 0`, `created_at = now`.
-5. Send `"Your <site_title> login code"` with body
+6. Send `"Your <site_title> login code"` with body
    `"Your login code is 123456. It expires in 10 minutes.\n\nIf you did not
    request this, ignore this email."` `auth` cannot import `blog` (cycle), so the site
    title is read directly: `db.Table("settings").Where("key = ?",
    "site_title").Select("value")`; fall back to "GoBlog" on error or empty.
-6. On mail failure: log the error, delete the row, return 500
-   `{"error": "could not send the login code"}`.
-7. Success: 200 `{"status": "sent"}`. The body is identical whether or not the
+7. On mail failure: log the error, delete the row (logging that error too if
+   it fails), return 500 `{"error": "could not send the login code"}`.
+8. Success: 200 `{"status": "sent"}`. The body is identical whether or not the
    address has logged in before.
 
 ### `POST /api/login/email/verify` — form fields `email`, `code`
