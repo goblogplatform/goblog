@@ -2,7 +2,7 @@
 <div class="container">
     {{ template "admin_nav.html" . }}
     <h1>Users</h1>
-    <p class="text-muted">Page {{ .page }} of {{ .total_pages }} &middot; {{ .total }} users</p>
+    <p class="text-muted">Page {{ .page }} of {{ .total_pages }} &middot; {{ .total }} user{{ if ne .total 1 }}s{{ end }}</p>
     <p class="text-muted">Admins can manage posts, pages, comments, settings and other users. Only GitHub users can be made admin, and the last admin can't be demoted.</p>
 
     {{ if .users }}

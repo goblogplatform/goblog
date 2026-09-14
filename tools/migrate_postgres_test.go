@@ -16,14 +16,14 @@ import (
 // Auth is a stand-in IAuth: the blog only needs it to construct.
 type Auth struct{}
 
-func (Auth) IsAdmin(*gin.Context) bool                      { return false }
-func (Auth) IsLoggedIn(*gin.Context) bool                   { return false }
-func (Auth) IsWizardMode(*gin.Context) bool                 { return false }
-func (Auth) EmailLoginEnabled() bool                        { return false }
-func (Auth) CurrentUser(*gin.Context) *auth.BlogUser        { return nil }
-func (Auth) ListUsers(int, int) ([]auth.UserListing, int64) { return nil, 0 }
-func (Auth) PromoteAdmin(int) error                         { return nil }
-func (Auth) DemoteAdmin(int) error                          { return nil }
+func (Auth) IsAdmin(*gin.Context) bool                             { return false }
+func (Auth) IsLoggedIn(*gin.Context) bool                          { return false }
+func (Auth) IsWizardMode(*gin.Context) bool                        { return false }
+func (Auth) EmailLoginEnabled() bool                               { return false }
+func (Auth) CurrentUser(*gin.Context) *auth.BlogUser               { return nil }
+func (Auth) ListUsers(int, int) ([]auth.UserListing, int64, error) { return nil, 0, nil }
+func (Auth) PromoteAdmin(int) error                                { return nil }
+func (Auth) DemoteAdmin(int) error                                 { return nil }
 
 // openTestPostgres connects to the Postgres instance named by
 // GOBLOG_TEST_POSTGRES_DSN (CI provides one) and returns an empty schema,

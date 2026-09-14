@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"goblog/mail"
 )
@@ -26,7 +27,7 @@ type IAuth interface {
 	IsWizardMode(c *gin.Context) bool
 	EmailLoginEnabled() bool
 	CurrentUser(c *gin.Context) *BlogUser
-	ListUsers(offset, limit int) ([]UserListing, int64)
+	ListUsers(offset, limit int) ([]UserListing, int64, error)
 	PromoteAdmin(userID int) error
 	DemoteAdmin(userID int) error
 }
@@ -348,15 +349,22 @@ type UserListing struct {
 }
 
 // ListUsers returns a page of users, newest first, each flagged with whether
-// they are currently admin, along with the total number of users.
-func (a *Auth) ListUsers(offset, limit int) ([]UserListing, int64) {
+// they are currently admin, along with the total number of users. A query
+// error is returned rather than an empty page that looks like "no users".
+func (a *Auth) ListUsers(offset, limit int) ([]UserListing, int64, error) {
 	var total int64
-	(*a.db).Model(&BlogUser{}).Count(&total)
+	if err := (*a.db).Model(&BlogUser{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 	var users []BlogUser
-	(*a.db).Order("id desc").Offset(offset).Limit(limit).Find(&users)
+	if err := (*a.db).Order("id desc").Offset(offset).Limit(limit).Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
 
 	var admins []AdminUser
-	(*a.db).Find(&admins)
+	if err := (*a.db).Find(&admins).Error; err != nil {
+		return nil, 0, err
+	}
 	isAdmin := make(map[int]bool, len(admins))
 	for _, admin := range admins {
 		isAdmin[admin.BlogUserID] = true
@@ -366,7 +374,7 @@ func (a *Auth) ListUsers(offset, limit int) ([]UserListing, int64) {
 	for i, u := range users {
 		listing[i] = UserListing{BlogUser: u, IsAdmin: isAdmin[u.ID]}
 	}
-	return listing, total
+	return listing, total, nil
 }
 
 // PromoteAdmin makes the given user an admin. Unlike EnsureAdmin this is not
@@ -397,19 +405,31 @@ func (a *Auth) PromoteAdmin(userID int) error {
 
 // DemoteAdmin removes the given user's admin status. Returns
 // gorm.ErrRecordNotFound if they are not an admin and ErrLastAdmin if they
-// are the only one. The count-and-delete runs in a transaction so two
-// concurrent demotions can't both see two admins and remove both.
+// are the only one.
+//
+// A transaction alone isn't enough to protect the last admin on Postgres or
+// MySQL: two concurrent demotions could each count two admins and each
+// delete a different one. So the admin rows are read with SELECT ... FOR
+// UPDATE, which serialises concurrent demotions; the second one then sees
+// the row the first removed as gone and refuses. (SQLite has no FOR UPDATE
+// and its driver drops the clause; it serialises writers anyway.)
 func (a *Auth) DemoteAdmin(userID int) error {
 	return (*a.db).Transaction(func(tx *gorm.DB) error {
-		var existing AdminUser
-		if err := tx.Where("blog_user_id = ?", userID).First(&existing).Error; err != nil {
+		var admins []AdminUser
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Find(&admins).Error; err != nil {
 			return err
 		}
-		var total int64
-		if err := tx.Model(&AdminUser{}).Count(&total).Error; err != nil {
-			return err
+		isAdmin := false
+		for _, admin := range admins {
+			if admin.BlogUserID == userID {
+				isAdmin = true
+				break
+			}
 		}
-		if total <= 1 {
+		if !isAdmin {
+			return gorm.ErrRecordNotFound
+		}
+		if len(admins) <= 1 {
 			return ErrLastAdmin
 		}
 		return tx.Where("blog_user_id = ?", userID).Delete(&AdminUser{}).Error

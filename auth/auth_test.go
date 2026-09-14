@@ -460,6 +460,16 @@ func TestDemoteAdmin_NotAnAdmin_Refused(t *testing.T) {
 	}
 }
 
+func TestListUsers_QueryError_Returned(t *testing.T) {
+	a, db := newAuth(t)
+	if err := db.Migrator().DropTable(&auth.BlogUser{}); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if _, _, err := a.ListUsers(0, 10); err == nil {
+		t.Fatal("expected an error when the users table can't be read")
+	}
+}
+
 func TestListUsers_ReturnsPageWithAdminFlag(t *testing.T) {
 	a, db := newAuth(t)
 	admin := seedAdmin(t, db, "1", "boss")
@@ -467,7 +477,10 @@ func TestListUsers_ReturnsPageWithAdminFlag(t *testing.T) {
 		db.Create(&auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: strconv.Itoa(i), Login: "user" + strconv.Itoa(i)})
 	}
 
-	users, total := a.ListUsers(0, 2)
+	users, total, err := a.ListUsers(0, 2)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
 	if total != 4 {
 		t.Fatalf("expected total 4, got %d", total)
 	}
@@ -482,7 +495,7 @@ func TestListUsers_ReturnsPageWithAdminFlag(t *testing.T) {
 		t.Fatal("user4 must not be flagged admin")
 	}
 
-	last, _ := a.ListUsers(2, 2)
+	last, _, _ := a.ListUsers(2, 2)
 	if len(last) != 2 || last[1].ID != admin.ID || !last[1].IsAdmin {
 		t.Fatalf("expected the seeded admin flagged on the second page, got %+v", last)
 	}

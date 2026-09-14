@@ -57,7 +57,7 @@ func (m *Auth) EmailLoginEnabled() bool { return false }
 // User management delegates to a real auth.Auth over the test DB (set by
 // tests that need it) so the handlers are exercised against real behaviour
 // rather than a mock's.
-func (m *Auth) ListUsers(offset, limit int) ([]auth.UserListing, int64) {
+func (m *Auth) ListUsers(offset, limit int) ([]auth.UserListing, int64, error) {
 	return m.real.ListUsers(offset, limit)
 }
 func (m *Auth) PromoteAdmin(userID int) error { return m.real.PromoteAdmin(userID) }
@@ -1026,6 +1026,49 @@ func TestPromoteAdminAPI(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("malformed body: expected 400, got %d", w.Code)
+	}
+	// A missing or non-positive id is a malformed request, not an unknown user.
+	for _, body := range []string{"{}", `{"id": 0}`, `{"id": -1}`} {
+		for _, method := range []string{"POST", "DELETE"} {
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(method, "/api/v1/admins", strings.NewReader(body))
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("%s %s: expected 400, got %d", method, body, w.Code)
+			}
+		}
+	}
+}
+
+func TestAdminUsers_SingularSummary(t *testing.T) {
+	router, a, db := newUsersHarness(t, "default")
+	seedUser(t, db, auth.ProviderGitHub, "1", "only", true)
+	a.On("IsAdmin", mock.Anything).Return(true)
+	a.On("IsLoggedIn", mock.Anything).Return(true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/users", nil)
+	router.ServeHTTP(w, req)
+	if body := w.Body.String(); !strings.Contains(body, "1 user<") || strings.Contains(body, "1 users") {
+		t.Errorf("expected the summary to read '1 user', body: %.400s", body)
+	}
+}
+
+// TestAdminUsers_ListError checks a failing user query surfaces as a 500
+// rather than rendering an empty list as if there were no users.
+func TestAdminUsers_ListError(t *testing.T) {
+	router, a, db := newUsersHarness(t, "default")
+	a.On("IsAdmin", mock.Anything).Return(true)
+	a.On("IsLoggedIn", mock.Anything).Return(true)
+	if err := db.Migrator().DropTable(&auth.BlogUser{}); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/users", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
 	}
 }
 

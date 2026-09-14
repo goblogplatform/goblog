@@ -968,7 +968,12 @@ func (a *Admin) AdminUsers(c *gin.Context) {
 	if err != nil || page < 1 {
 		page = 1
 	}
-	users, total := a.auth.ListUsers((page-1)*adminUsersPerPage, adminUsersPerPage)
+	users, total, err := a.auth.ListUsers((page-1)*adminUsersPerPage, adminUsersPerPage)
+	if err != nil {
+		log.Println("ERROR LISTING USERS: ", err)
+		c.JSON(http.StatusInternalServerError, "Error listing users")
+		return
+	}
 	totalPages := int((total + adminUsersPerPage - 1) / adminUsersPerPage)
 	if totalPages < 1 {
 		totalPages = 1
@@ -1009,7 +1014,7 @@ func (a *Admin) PromoteAdmin(c *gin.Context) {
 		return
 	}
 	var req adminRequest
-	if c.BindJSON(&req) != nil {
+	if c.BindJSON(&req) != nil || req.ID <= 0 {
 		c.JSON(http.StatusBadRequest, "Malformed request, missing some information")
 		return
 	}
@@ -1035,7 +1040,7 @@ func (a *Admin) DemoteAdmin(c *gin.Context) {
 		return
 	}
 	var req adminRequest
-	if c.BindJSON(&req) != nil {
+	if c.BindJSON(&req) != nil || req.ID <= 0 {
 		c.JSON(http.StatusBadRequest, "Malformed request, missing some information")
 		return
 	}
