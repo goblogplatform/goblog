@@ -19,6 +19,7 @@ type Auth struct{}
 func (Auth) IsAdmin(*gin.Context) bool      { return false }
 func (Auth) IsLoggedIn(*gin.Context) bool   { return false }
 func (Auth) IsWizardMode(*gin.Context) bool { return false }
+func (Auth) EmailLoginEnabled() bool        { return false }
 
 // openTestPostgres connects to the Postgres instance named by
 // GOBLOG_TEST_POSTGRES_DSN (CI provides one) and returns an empty schema,
@@ -86,5 +87,34 @@ func TestMigrationPostgres(t *testing.T) {
 	}
 	if got, total := b.GetComments(0, 10); len(got) != 1 || total != 1 {
 		t.Errorf("expected 1 comment, got %d (total %d)", len(got), total)
+	}
+}
+
+// TestMigrationPostgres_UserIDSequence covers issue #523: GitHub users were
+// inserted with explicit ids, which does not advance the Postgres sequence.
+// After Migrate the next DB-assigned id must be past the largest existing one.
+func TestMigrationPostgres_UserIDSequence(t *testing.T) {
+	db := openTestPostgres(t)
+	if err := tools.Migrate(db); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO blog_users (id, login) VALUES (23049896, 'legacy')`).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := tools.Migrate(db); err != nil {
+		t.Fatalf("second migration failed: %v", err)
+	}
+
+	fresh := auth.BlogUser{Provider: auth.ProviderEmail, ProviderID: "new@example.com", Login: "new@example.com"}
+	if err := db.Create(&fresh).Error; err != nil {
+		t.Fatalf("create without explicit id: %v", err)
+	}
+	if fresh.ID != 23049897 {
+		t.Fatalf("expected DB-assigned id 23049897, got %d", fresh.ID)
+	}
+	var provider string
+	db.Raw("SELECT provider FROM blog_users WHERE id = 23049896").Scan(&provider)
+	if provider != auth.ProviderGitHub {
+		t.Fatalf("expected legacy row backfilled as github, got %q", provider)
 	}
 }

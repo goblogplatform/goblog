@@ -1,8 +1,10 @@
 package auth_test
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"goblog/auth"
@@ -38,7 +40,7 @@ func newAuth(t *testing.T) (*auth.Auth, *gorm.DB) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := db.AutoMigrate(&auth.BlogUser{}, &auth.AdminUser{}); err != nil {
+	if err := db.AutoMigrate(&auth.BlogUser{}, &auth.AdminUser{}, &auth.LoginCode{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	a := auth.New(db, "test")
@@ -61,7 +63,7 @@ func TestIsWizardMode_NoAdminUser_ReturnsTrue(t *testing.T) {
 
 func TestIsWizardMode_WithAdminUser_ReturnsFalse(t *testing.T) {
 	a, db := newAuth(t)
-	user := auth.BlogUser{ID: 1, Login: "admin"}
+	user := auth.BlogUser{ID: 1, Provider: auth.ProviderGitHub, ProviderID: "1", Login: "admin"}
 	db.Create(&user)
 	db.Create(&auth.AdminUser{BlogUserID: user.ID, BlogUser: user})
 	if a.IsWizardMode(newCtx()) {
@@ -71,7 +73,7 @@ func TestIsWizardMode_WithAdminUser_ReturnsFalse(t *testing.T) {
 
 func TestEnsureAdmin_NoAdmin_CreatesRow(t *testing.T) {
 	a, db := newAuth(t)
-	user := auth.BlogUser{ID: 42, Login: "operator"}
+	user := auth.BlogUser{ID: 42, Provider: auth.ProviderGitHub, ProviderID: "42", Login: "operator"}
 	db.Create(&user)
 
 	if err := a.EnsureAdmin(&user); err != nil {
@@ -92,8 +94,8 @@ func TestEnsureAdmin_NoAdmin_CreatesRow(t *testing.T) {
 
 func TestEnsureAdmin_AdminExists_NoOp(t *testing.T) {
 	a, db := newAuth(t)
-	first := auth.BlogUser{ID: 1, Login: "first"}
-	second := auth.BlogUser{ID: 2, Login: "second"}
+	first := auth.BlogUser{ID: 1, Provider: auth.ProviderGitHub, ProviderID: "1", Login: "first"}
+	second := auth.BlogUser{ID: 2, Provider: auth.ProviderGitHub, ProviderID: "2", Login: "second"}
 	db.Create(&first)
 	db.Create(&second)
 	db.Create(&auth.AdminUser{BlogUserID: first.ID, BlogUser: first})
@@ -133,16 +135,18 @@ func TestEnsureAdmin_PinnedIdentity(t *testing.T) {
 		user        auth.BlogUser
 		wantPromote bool
 	}{
-		{"neither set: first login promoted", "", "", auth.BlogUser{ID: 7, Login: "anyone"}, true},
-		{"login matches", "operator", "", auth.BlogUser{ID: 7, Login: "operator"}, true},
-		{"login matches case-insensitively", "Operator", "", auth.BlogUser{ID: 7, Login: "operator"}, true},
-		{"login mismatch", "operator", "", auth.BlogUser{ID: 7, Login: "intruder"}, false},
-		{"id matches", "", "7", auth.BlogUser{ID: 7, Login: "whatever"}, true},
-		{"id mismatch", "", "7", auth.BlogUser{ID: 8, Login: "operator"}, false},
-		{"both set, login matches", "operator", "999", auth.BlogUser{ID: 7, Login: "operator"}, true},
-		{"both set, id matches", "someone-else", "7", auth.BlogUser{ID: 7, Login: "operator"}, true},
-		{"both set, neither matches", "operator", "7", auth.BlogUser{ID: 8, Login: "intruder"}, false},
-		{"malformed id never matches", "", "not-a-number", auth.BlogUser{ID: 7, Login: "operator"}, false},
+		{"neither set: first login promoted", "", "", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "anyone"}, true},
+		{"login matches", "operator", "", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, true},
+		{"login matches case-insensitively", "Operator", "", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, true},
+		{"login mismatch", "operator", "", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "intruder"}, false},
+		{"id matches", "", "7", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "whatever"}, true},
+		{"id mismatch", "", "7", auth.BlogUser{ID: 8, Provider: auth.ProviderGitHub, ProviderID: "8", Login: "operator"}, false},
+		{"both set, login matches", "operator", "999", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, true},
+		{"both set, id matches", "someone-else", "7", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, true},
+		{"both set, neither matches", "operator", "7", auth.BlogUser{ID: 8, Provider: auth.ProviderGitHub, ProviderID: "8", Login: "intruder"}, false},
+		{"malformed id never matches", "", "not-a-number", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "operator"}, false},
+		{"id with leading zeros still matches", "", "007", auth.BlogUser{ID: 7, Provider: auth.ProviderGitHub, ProviderID: "7", Login: "whatever"}, true},
+		{"email user is never the configured admin", "", "", auth.BlogUser{ID: 9, Provider: auth.ProviderEmail, ProviderID: "op@example.com", Login: "op@example.com"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,8 +178,8 @@ func TestEnsureAdmin_PinnedIdentity(t *testing.T) {
 func TestEnsureAdmin_PinnedIdentity_AdminExists_NoOp(t *testing.T) {
 	a, db := newAuth(t)
 	t.Setenv("admin_login", "operator")
-	first := auth.BlogUser{ID: 1, Login: "operator"}
-	second := auth.BlogUser{ID: 2, Login: "operator"}
+	first := auth.BlogUser{ID: 1, Provider: auth.ProviderGitHub, ProviderID: "1", Login: "operator"}
+	second := auth.BlogUser{ID: 2, Provider: auth.ProviderGitHub, ProviderID: "2", Login: "operator"}
 	db.Create(&first)
 	db.Create(&second)
 	db.Create(&auth.AdminUser{BlogUserID: first.ID, BlogUser: first})
@@ -185,5 +189,89 @@ func TestEnsureAdmin_PinnedIdentity_AdminExists_NoOp(t *testing.T) {
 	}
 	if got := adminCount(t, db); got != 1 {
 		t.Fatalf("expected admin count to stay 1, got %d", got)
+	}
+}
+
+func TestUpsertUser_NewUser_GetsDBAssignedID(t *testing.T) {
+	a, db := newAuth(t)
+	stored, err := a.UpsertUser(&auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "23049896", Login: "octocat", AccessToken: "tok1"})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	if stored.ID == 0 {
+		t.Fatal("expected the database to assign an id")
+	}
+	if stored.ID == 23049896 {
+		t.Fatal("the GitHub id must not be used as the internal id")
+	}
+	var count int64
+	db.Model(&auth.BlogUser{}).Count(&count)
+	if count != 1 {
+		t.Fatalf("expected 1 row, got %d", count)
+	}
+}
+
+func TestUpsertUser_ReturningUser_MatchedByProviderID(t *testing.T) {
+	a, db := newAuth(t)
+	first, err := a.UpsertUser(&auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "23049896", Login: "octocat", Name: "Old", AccessToken: "tok1"})
+	if err != nil {
+		t.Fatalf("first UpsertUser: %v", err)
+	}
+	second, err := a.UpsertUser(&auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "23049896", Login: "octocat2", Name: "New", AccessToken: "tok2"})
+	if err != nil {
+		t.Fatalf("second UpsertUser: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected the same internal id, got %d then %d", first.ID, second.ID)
+	}
+	var count int64
+	db.Model(&auth.BlogUser{}).Count(&count)
+	if count != 1 {
+		t.Fatalf("expected 1 row, got %d", count)
+	}
+	var got auth.BlogUser
+	db.First(&got, first.ID)
+	if got.Login != "octocat2" || got.Name != "New" || got.AccessToken != "tok2" {
+		t.Fatalf("expected profile and token refreshed, got %+v", got)
+	}
+}
+
+func TestUpsertUser_SameProviderIDDifferentProvider_IsDifferentUser(t *testing.T) {
+	a, _ := newAuth(t)
+	gh, _ := a.UpsertUser(&auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "7", Login: "seven"})
+	em, err := a.UpsertUser(&auth.BlogUser{Provider: auth.ProviderEmail, ProviderID: "7", Login: "7"})
+	if err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	if gh.ID == em.ID {
+		t.Fatal("expected different providers with the same provider id to be different users")
+	}
+}
+
+func TestBlogUser_JSONOmitsAccessToken(t *testing.T) {
+	b, err := json.Marshal(auth.BlogUser{Login: "x", AccessToken: "supersecret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "supersecret") || strings.Contains(string(b), "access_token") {
+		t.Fatalf("access token must not be serialised: %s", b)
+	}
+}
+
+func TestUpsertUser_RejectsEmptyIdentity(t *testing.T) {
+	a, db := newAuth(t)
+	for _, u := range []auth.BlogUser{
+		{Login: "no-provider"},
+		{Provider: auth.ProviderGitHub, Login: "no-provider-id"},
+		{ProviderID: "7", Login: "no-provider"},
+	} {
+		if _, err := a.UpsertUser(&u); err == nil {
+			t.Errorf("expected an error for %+v", u)
+		}
+	}
+	var count int64
+	db.Model(&auth.BlogUser{}).Count(&count)
+	if count != 0 {
+		t.Fatalf("expected no rows to be created, got %d", count)
 	}
 }

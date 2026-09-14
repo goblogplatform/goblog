@@ -1065,15 +1065,16 @@ func (b *Blog) Login(c *gin.Context) {
 
 	clientID := os.Getenv("client_id")
 	b.Render(c, http.StatusOK, "login.html", gin.H{
-		"logged_in":  b.auth.IsLoggedIn(c),
-		"is_admin":   b.auth.IsAdmin(c),
-		"client_id":  clientID,
-		"version":    b.Version,
-		"title":      "Login",
-		"recent":     b.GetLatest(),
-		"admin_page": false,
-		"settings":   b.GetSettings(),
-		"nav_pages":  b.GetNavPages(),
+		"logged_in":           b.auth.IsLoggedIn(c),
+		"is_admin":            b.auth.IsAdmin(c),
+		"client_id":           clientID,
+		"version":             b.Version,
+		"title":               "Login",
+		"email_login_enabled": b.auth.EmailLoginEnabled(),
+		"recent":              b.GetLatest(),
+		"admin_page":          false,
+		"settings":            b.GetSettings(),
+		"nav_pages":           b.GetNavPages(),
 	})
 }
 

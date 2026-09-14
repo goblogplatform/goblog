@@ -46,6 +46,8 @@ func (m *Auth) IsWizardMode(c *gin.Context) bool {
 	return args.Bool(0)
 }
 
+func (m *Auth) EmailLoginEnabled() bool { return false }
+
 func TestCreatePost(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&auth.BlogUser{})

@@ -107,11 +107,63 @@ func TestMigrationWithOldSchema(t *testing.T) {
 		t.Fatalf("expected login 'testuser' for id 23049896, got '%s'", login)
 	}
 
+	var legacyProvider, legacyProviderID string
+	db.Raw("SELECT provider, provider_id FROM blog_users WHERE id = 23049896").Row().Scan(&legacyProvider, &legacyProviderID)
+	if legacyProvider != "github" || legacyProviderID != "23049896" {
+		t.Fatalf("expected legacy user backfilled as github/23049896, got %q/%q", legacyProvider, legacyProviderID)
+	}
+
 	// Verify tag data survived
 	var tagCount int64
 	db.Raw("SELECT count(*) FROM tags").Scan(&tagCount)
 	if tagCount != 2 {
 		t.Fatalf("expected 2 tags, got %d", tagCount)
+	}
+}
+
+// TestMigrationBackfillsUserProvider covers issue #523: rows created before
+// BlogUser had a provider pair are GitHub users whose id was the GitHub id.
+// Migrate must tag them as such and leave rows that already have a provider
+// alone.
+func TestMigrationBackfillsUserProvider(t *testing.T) {
+	os.Remove("test_provider.db")
+	db, err := gorm.Open(sqlite.Open("test_provider.db"), &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to open sqlite db: %v", err)
+	}
+	t.Cleanup(func() { os.Remove("test_provider.db") })
+
+	if err := tools.Migrate(db); err != nil {
+		t.Fatalf("first migration failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO blog_users (id, login, provider, provider_id) VALUES
+		(23049896, 'legacy', NULL, NULL),
+		(23049897, 'legacy-empty', '', ''),
+		(5, 'someone@example.com', 'email', 'someone@example.com')`).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := tools.Migrate(db); err != nil {
+		t.Fatalf("second migration failed: %v", err)
+	}
+
+	type row struct {
+		Provider   string
+		ProviderID string
+	}
+	want := map[int]row{
+		23049896: {"github", "23049896"},
+		23049897: {"github", "23049897"},
+		5:        {"email", "someone@example.com"},
+	}
+	for id, w := range want {
+		var got row
+		db.Raw("SELECT provider, provider_id FROM blog_users WHERE id = ?", id).Scan(&got)
+		if got != w {
+			t.Errorf("id %d: want %+v, got %+v", id, w, got)
+		}
 	}
 }
 

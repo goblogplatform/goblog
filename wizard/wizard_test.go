@@ -37,7 +37,7 @@ func TestCreateAdminUser_PromotesFirstUser(t *testing.T) {
 	t.Setenv("admin_github_id", "")
 	w, db := newWizard(t)
 
-	user := &auth.BlogUser{ID: 42, Login: "operator"}
+	user := &auth.BlogUser{ID: 42, Provider: auth.ProviderGitHub, ProviderID: "42", Login: "operator"}
 	if err := w.createAdminUser(user); err != nil {
 		t.Fatalf("createAdminUser: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestCreateAdminUser_RefusesUnconfiguredIdentity(t *testing.T) {
 	t.Setenv("admin_github_id", "")
 	w, db := newWizard(t)
 
-	err := w.createAdminUser(&auth.BlogUser{ID: 43, Login: "intruder"})
+	err := w.createAdminUser(&auth.BlogUser{ID: 43, Provider: auth.ProviderGitHub, ProviderID: "43", Login: "intruder"})
 	if err == nil {
 		t.Fatal("expected an error for a user that is not the configured admin")
 	}
@@ -67,5 +67,43 @@ func TestCreateAdminUser_RefusesUnconfiguredIdentity(t *testing.T) {
 	}
 	if got := adminCount(t, db); got != 0 {
 		t.Fatalf("expected no admin row, got %d", got)
+	}
+}
+
+// TestCreateAdminUser_ReturningUser_DoesNotDuplicate: the wizard can be re-run
+// (or the same person can have logged in before); it must find the existing
+// row instead of failing on a duplicate insert.
+func TestCreateAdminUser_ReturningUser_DoesNotDuplicate(t *testing.T) {
+	t.Setenv("admin_login", "")
+	t.Setenv("admin_github_id", "")
+	w, db := newWizard(t)
+
+	existing := auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "42", Login: "operator"}
+	db.Create(&existing)
+
+	if err := w.createAdminUser(&auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "42", Login: "operator"}); err != nil {
+		t.Fatalf("createAdminUser: %v", err)
+	}
+	var blogUsers int64
+	db.Model(&auth.BlogUser{}).Count(&blogUsers)
+	if blogUsers != 1 {
+		t.Fatalf("expected 1 blog user, got %d", blogUsers)
+	}
+	var admin auth.AdminUser
+	db.First(&admin)
+	if admin.BlogUserID != existing.ID {
+		t.Fatalf("expected admin to reference existing user %d, got %d", existing.ID, admin.BlogUserID)
+	}
+}
+
+func TestIsDbNil_DoesNotInsertRows(t *testing.T) {
+	w, db := newWizard(t)
+	if w.IsDbNil() {
+		t.Fatal("expected IsDbNil false with a db")
+	}
+	var n int64
+	db.Model(&auth.BlogUser{}).Count(&n)
+	if n != 0 {
+		t.Fatalf("IsDbNil must not insert probe rows, found %d", n)
 	}
 }

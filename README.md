@@ -91,6 +91,19 @@ admin_github_id=12345                 # numeric id: https://api.github.com/users
 ```
 Other accounts can still log in as regular users but are never promoted. Leave both unset to keep the first-to-login behaviour.
 
+### Email Login (one-time codes)
+Visitors without a GitHub account can log in with an emailed 6-digit code. Add SMTP details to `.env`:
+```bash
+smtp_host=smtp.example.com
+smtp_port=587                         # 465 for implicit TLS; anything else uses STARTTLS when offered
+smtp_user=postmaster@example.com      # omit for an unauthenticated relay
+smtp_password=...
+smtp_from=blog@example.com
+```
+When `smtp_host` and `smtp_from` are both set the login page offers "sign in with email"; otherwise it shows GitHub only. Codes expire after 10 minutes, allow 5 wrong attempts, and can be re-requested once a minute. Email users are regular users — the admin account is still GitHub-only (see above).
+
+SMTP settings are read once at startup, so restart goblog after changing any `smtp_*` value in `.env` for the change to take effect. Go's SMTP client only sends `smtp_user`/`smtp_password` over an encrypted connection (STARTTLS, or implicit TLS on port 465) unless the host is `localhost`, so if you need an unencrypted remote relay, use it without credentials.
+
 ## Theming
 
 Themes live in `themes/{name}/` with this structure:
