@@ -45,12 +45,15 @@ func (p *Plugin) Name() string        { return "directory" }
 func (p *Plugin) DisplayName() string { return "Plugin Directory" }
 func (p *Plugin) Version() string     { return "1.0.0" }
 
+// SetUserAgent sets the User-Agent sent to the registry.
+func (p *Plugin) SetUserAgent(ua string) { p.fetcher.SetUserAgent(ua) }
+
 func (p *Plugin) Settings() []gplugin.SettingDefinition {
 	return []gplugin.SettingDefinition{
 		{Key: "enabled", Type: "text", DefaultValue: "false", Label: "Enabled",
 			Description: "Set to 'true' to publish the plugin directory at /plugins"},
 		{Key: "index_url", Type: "text", DefaultValue: defaultIndexURL, Label: "Index URL",
-			Description: "index.json published by the plugin registry"},
+			Description: "index.json published by the plugin registry. Only point this at a registry you trust: its README, changelog and release-note HTML is shown as-is."},
 		{Key: "refresh_minutes", Type: "text", DefaultValue: "15", Label: "Refresh interval (minutes)",
 			Description: "How often the index is re-fetched"},
 	}
@@ -70,6 +73,13 @@ func (p *Plugin) Pages() []gplugin.PageDefinition {
 // OnInit ensures the directory page exists in the pages table, the same way
 // the scholar plugin creates its research page. The admin can rename or
 // reorder it afterwards.
+//
+// blog.Page.Slug has a unique index, so if some other page already uses the
+// "plugins" slug (a different page type), creating our page would fail. That
+// must not abort plugin.Registry.Init, which stops at the first error and
+// would skip settings seeding and OnInit for every plugin registered after
+// this one. So we log a warning and leave initialization to the operator
+// instead of returning an error.
 func (p *Plugin) OnInit(db *gorm.DB) error {
 	var page blog.Page
 	err := db.Where("page_type = ?", PageType).First(&page).Error
@@ -80,6 +90,13 @@ func (p *Plugin) OnInit(db *gorm.DB) error {
 		return fmt.Errorf("directory plugin: query page: %w", err)
 	}
 	def := p.Pages()[0]
+	var existing blog.Page
+	if err := db.Where("slug = ?", def.Slug).First(&existing).Error; err == nil {
+		log.Printf("Directory plugin: page slug %q is already used by a %q page; rename it and restart to create the plugin directory page", def.Slug, existing.PageType)
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("directory plugin: query slug: %w", err)
+	}
 	page = blog.Page{
 		Title:     def.Title,
 		Slug:      def.Slug,
@@ -124,11 +141,11 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "", nil
 	}
 	c := ctx.GinContext
-	p.fetcher.Ensure(indexURL(ctx.Settings))
 	base := basePath(c)
 
 	switch {
 	case ctx.SubPath == "":
+		p.fetcher.Ensure(indexURL(ctx.Settings))
 		_, entries, ok := p.fetcher.Index()
 		if !ok {
 			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML}
@@ -141,6 +158,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html}
 
 	case ctx.SubPath == "index.json":
+		p.fetcher.Ensure(indexURL(ctx.Settings))
 		raw, _, ok := p.fetcher.Index()
 		if !ok {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "plugin directory index unavailable"})
@@ -151,6 +169,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "", nil
 
 	case validName(ctx.SubPath):
+		p.fetcher.Ensure(indexURL(ctx.Settings))
 		e, ok := p.fetcher.Entry(ctx.SubPath)
 		if !ok {
 			return "", nil

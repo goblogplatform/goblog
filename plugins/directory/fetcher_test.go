@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const fixtureIndex = `[{"name":"hello","display_name":"Hello","description":"Says hi","version":"1.0.0","author":"Jason","license":"GPL-3.0","source_url":"https://github.com/goblogplatform/goblog-plugin-hello","download_url":"https://raw.githubusercontent.com/goblogplatform/goblog-plugin-hello/v1.0.0/plugin.go","sha256":"abc","min_goblog_version":"0.2.6","install_type":"dynamic","released_at":"2026-09-14T00:00:00Z","detail_url":"DETAIL_URL"}]`
@@ -165,5 +166,55 @@ func TestFetcher_Ensure(t *testing.T) {
 	f.Ensure(srv.URL + "/index.json")
 	if srv.hits.Load() != before {
 		t.Error("Ensure should not fetch again when a copy is cached")
+	}
+}
+
+// TestFetcher_EnsureThrottlesWhileCacheStaysEmpty verifies that when the
+// registry is unreachable (so the cache never gets populated), Ensure only
+// attempts a fetch once per ensureRetryInterval instead of on every call -
+// otherwise every request served while the registry is down would block on
+// its own synchronous HTTP fetch.
+func TestFetcher_EnsureThrottlesWhileCacheStaysEmpty(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	f := NewFetcher(srv.Client())
+
+	f.Ensure(srv.URL + "/index.json")
+	f.Ensure(srv.URL + "/index.json")
+	if got := hits.Load(); got != 1 {
+		t.Errorf("two Ensure calls within the retry window should attempt one fetch, got %d", got)
+	}
+	if _, _, ok := f.Index(); ok {
+		t.Fatal("index should still be empty; the server always fails")
+	}
+
+	// Simulate the retry window having elapsed.
+	f.mu.Lock()
+	f.lastAttempt = time.Now().Add(-time.Minute)
+	f.mu.Unlock()
+
+	f.Ensure(srv.URL + "/index.json")
+	if got := hits.Load(); got != 2 {
+		t.Errorf("Ensure should retry once the retry window has elapsed, got %d hits", got)
+	}
+}
+
+// TestFetcher_EnsureUnreachableReturnsQuickly guards against a regression
+// where Ensure blocks on a full HTTP timeout on every call: with an
+// unreachable address, a second Ensure call (within the retry window) must
+// not attempt another connection and should return essentially immediately.
+func TestFetcher_EnsureUnreachableReturnsQuickly(t *testing.T) {
+	f := NewFetcher(&http.Client{Timeout: 2 * time.Second})
+	f.Ensure("http://127.0.0.1:1/index.json")
+
+	start := time.Now()
+	f.Ensure("http://127.0.0.1:1/index.json")
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Errorf("second Ensure call should be throttled and return immediately, took %v", elapsed)
 	}
 }

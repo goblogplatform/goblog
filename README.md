@@ -185,7 +185,7 @@ docker run -p 7000:7000 -e ENABLE_DYNAMIC_PLUGINS=true \
 ```
 With the Docker image (its entrypoint is a shell command, so override it):
 ```bash
-docker run --rm -v "$PWD:/p" --entrypoint /go/src/github.com/compscidr/goblog/goblog \
+docker run --rm --network none -v "$PWD:/p" --entrypoint /go/src/github.com/compscidr/goblog/goblog \
   compscidr/goblog:latest validate-plugin /p/plugin.go
 ```
 This is what the [plugin directory](https://goblog.live/plugins) registry runs on every submission.
@@ -193,7 +193,7 @@ This is what the [plugin directory](https://goblog.live/plugins) registry runs o
 ### Plugin directory
 [goblog.live/plugins](https://goblog.live/plugins) lists published dynamic plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`). Plugins are individual GitHub repositories with releases; the curated list and the build that produces the index live in [goblogplatform/plugins](https://github.com/goblogplatform/plugins), which also documents how to submit one.
 
-The pages are rendered by the built-in `directory` plugin, which any goblog can turn on under **Admin → Settings → Plugin Directory** (`enabled` = `true`). It fetches `index_url` every `refresh_minutes`, keeps the last good copy if the registry is unreachable, and serves `/plugins`, `/plugins/<name>` and `/plugins/index.json`.
+The pages are rendered by the built-in `directory` plugin, which any goblog can turn on under **Admin → Settings → Plugin Directory** (`enabled` = `true`). It fetches `index_url` every `refresh_minutes`, keeps the last good copy if the registry is unreachable, and serves `/plugins`, `/plugins/<name>` and `/plugins/index.json`. Only point `index_url` at a registry you trust: its README, changelog and release-note HTML is shown as-is.
 
 ## Testing
 ```bash

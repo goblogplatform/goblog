@@ -75,6 +75,27 @@ func TestOnInit_CreatesPageOnce(t *testing.T) {
 	}
 }
 
+func TestOnInit_SlugCollision(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Page{})
+	existing := blog.Page{Title: "Mine", Slug: "plugins", PageType: blog.PageTypeCustom, Enabled: true}
+	if err := db.Create(&existing).Error; err != nil {
+		t.Fatal(err)
+	}
+	p := New()
+	if err := p.OnInit(db); err != nil {
+		t.Fatalf("OnInit must not fail when the slug is already taken, got %v", err)
+	}
+	var pages []blog.Page
+	db.Where("slug = ?", "plugins").Find(&pages)
+	if len(pages) != 1 {
+		t.Fatalf("expected exactly one page with slug %q, got %d", "plugins", len(pages))
+	}
+	if pages[0].PageType != blog.PageTypeCustom {
+		t.Errorf("the pre-existing page must be left alone, got page_type %q", pages[0].PageType)
+	}
+}
+
 func TestScheduledJob_RefreshesWhenStale(t *testing.T) {
 	srv := newFixtureServer(t)
 	p := New()
@@ -276,6 +297,47 @@ func TestRenderPage_Detail(t *testing.T) {
 		if tmpl, _ := p.RenderPage(ctx, PageType); tmpl != "" || w.Body.Len() != 0 {
 			t.Errorf("%q: expected to be declined, got tmpl=%q body=%q", sub, tmpl, w.Body.String())
 		}
+	}
+}
+
+func TestRenderPage_DeclinedSubPathDoesNotFetch(t *testing.T) {
+	srv := newFixtureServer(t)
+	p := New()
+	p.fetcher = NewFetcher(srv.Client())
+	settings := map[string]string{"index_url": srv.URL + "/index.json"}
+
+	// The cache is empty and no successful fetch has happened yet, so a
+	// declined sub-path must not trigger Ensure's synchronous fetch.
+	ctx, w := newRenderCtx(t, "/plugins/Bad%20Name", "Bad Name", settings)
+	if tmpl, _ := p.RenderPage(ctx, PageType); tmpl != "" || w.Body.Len() != 0 {
+		t.Errorf("declined sub-path should be declined, got tmpl=%q body=%q", tmpl, w.Body.String())
+	}
+	if srv.hits.Load() != 0 {
+		t.Errorf("declined sub-path must not hit the registry, hits=%d", srv.hits.Load())
+	}
+}
+
+func TestRenderPage_DetailEscapesIndexStrings(t *testing.T) {
+	srv := newFixtureServer(t)
+	srv.index.Store(func(w http.ResponseWriter) {
+		w.Write([]byte(`[{"name":"hello","display_name":"<script>alert(1)</script>","description":"x","version":"1","source_url":"javascript:alert(1)","download_url":"javascript:alert(2)","install_type":"dynamic","detail_url":"` + srv.URL + `/plugins/hello.json"}]`))
+	})
+	srv.detail.Store(func(w http.ResponseWriter) {
+		w.Write([]byte(`{"name":"hello","display_name":"Hello","version":"1","readme_html":"<b>ok</b>","releases":[{"version":"1","url":"javascript:alert(3)"}]}`))
+	})
+	p := New()
+	p.fetcher = NewFetcher(srv.Client())
+	ctx, _ := newRenderCtx(t, "/plugins/hello", "hello", map[string]string{"index_url": srv.URL + "/index.json"})
+	_, data := p.RenderPage(ctx, PageType)
+	html, _ := data["plugin_content"].(string)
+	if strings.Contains(html, "<script>") {
+		t.Errorf("display_name must be escaped:\n%s", html)
+	}
+	if strings.Contains(html, `href="javascript:`) {
+		t.Errorf("unsafe URLs (source_url, download_url, release url) must be neutralised:\n%s", html)
+	}
+	if !strings.Contains(html, "<b>ok</b>") {
+		t.Errorf("readme_html is trusted, sanitized-by-the-registry HTML and must pass through raw:\n%s", html)
 	}
 }
 

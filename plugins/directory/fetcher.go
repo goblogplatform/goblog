@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -13,6 +14,13 @@ import (
 // URL cannot exhaust memory.
 const maxIndexBytes = 8 << 20
 
+// ensureRetryInterval is how long Ensure waits after a fetch attempt (success
+// or failure) before it is willing to try again while the cache is still
+// empty. Without this, every request served while the registry is down (or
+// during startup, before the first scheduled refresh) would trigger its own
+// synchronous, blocking HTTP fetch.
+const ensureRetryInterval = 30 * time.Second
+
 // Fetcher keeps an in-memory copy of the directory index and of the detail
 // JSON for plugins that have been viewed. Every fetch that fails keeps the
 // previous copy, so the directory degrades to "slightly stale" rather than
@@ -21,12 +29,13 @@ type Fetcher struct {
 	client    *http.Client
 	userAgent string
 
-	mu        sync.RWMutex
-	raw       []byte           // index.json bytes, served verbatim
-	entries   []Entry          // parsed raw
-	byName    map[string]Entry // entries keyed by Name
-	details   map[string]*Detail
-	fetchedAt time.Time
+	mu          sync.RWMutex
+	raw         []byte           // index.json bytes, served verbatim
+	entries     []Entry          // parsed raw
+	byName      map[string]Entry // entries keyed by Name
+	details     map[string]*Detail
+	fetchedAt   time.Time
+	lastAttempt time.Time // set at the start of every Refresh, success or failure
 }
 
 // NewFetcher returns a Fetcher using client (nil means a 10s-timeout default).
@@ -44,6 +53,10 @@ func (f *Fetcher) SetUserAgent(ua string) { f.userAgent = ua }
 // success and re-fetching the details of every plugin already cached. On any
 // error the previous index and details are kept and the error returned.
 func (f *Fetcher) Refresh(indexURL string) error {
+	f.mu.Lock()
+	f.lastAttempt = time.Now()
+	f.mu.Unlock()
+
 	raw, err := f.get(indexURL)
 	if err != nil {
 		return fmt.Errorf("fetch index: %w", err)
@@ -83,14 +96,20 @@ func (f *Fetcher) Refresh(indexURL string) error {
 	return nil
 }
 
-// Ensure fetches the index if nothing is cached yet. Errors are logged by
-// the caller's next Refresh; here they simply leave the cache empty.
+// Ensure fetches the index if nothing is cached yet, throttled to at most one
+// attempt per ensureRetryInterval so a registry outage does not turn every
+// request into a blocking synchronous fetch. Fetch errors are logged here;
+// the cache is simply left empty (or stale, if there is an older copy).
 func (f *Fetcher) Ensure(indexURL string) {
 	f.mu.RLock()
 	empty := f.raw == nil
+	recentAttempt := time.Since(f.lastAttempt) < ensureRetryInterval
 	f.mu.RUnlock()
-	if empty {
-		_ = f.Refresh(indexURL)
+	if !empty || recentAttempt {
+		return
+	}
+	if err := f.Refresh(indexURL); err != nil {
+		log.Printf("Directory plugin: initial index fetch failed: %v", err)
 	}
 }
 

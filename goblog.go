@@ -301,7 +301,9 @@ func main() {
 	registry.Register(analytics.New())
 	registry.Register(socialicons.New())
 	registry.Register(scholarplugin.New())
-	registry.Register(directory.New())
+	dir := directory.New()
+	dir.SetUserAgent("goblog-directory/" + Version)
+	registry.Register(dir)
 	if os.Getenv("ENABLE_DYNAMIC_PLUGINS") == "true" {
 		gplugin.LoadDynamicPlugins(registry, "plugins/dynamic")
 	}
