@@ -60,6 +60,10 @@ func TestBlogWorkflow(t *testing.T) {
 	db.AutoMigrate(&blog.Tag{})
 	db.AutoMigrate(&blog.Comment{})
 	db.AutoMigrate(&blog.Page{})
+	db.AutoMigrate(&blog.Setting{})
+	// This workflow exercises anonymous commenting, so turn off the login
+	// requirement (issue #524); the logged-in path has its own tests.
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
 
 	// Seed default post type
 	defaultType := blog.PostType{Name: "Post", Slug: "posts", Description: "Blog posts"}
@@ -427,10 +431,7 @@ func TestBlogWorkflow(t *testing.T) {
 	}
 	os.Rename("local.env.old", "local.env")
 
-	// Comment tests. These exercise anonymous commenting, so turn off the
-	// login requirement (issue #524); the logged-in path has its own tests.
-	db.AutoMigrate(&blog.Setting{})
-	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
+	// Comment tests
 
 	// Token + script-derived check that a real browser would submit (see TestSubmitCommentSpamCheck)
 	commentToken := b.CommentTokenAt(post.ID, time.Now().Add(-10*time.Second))
@@ -1047,5 +1048,73 @@ func TestCommentsRequireLogin_Setting(t *testing.T) {
 	db.Model(&blog.Setting{}).Where("key = ?", "comments_require_login").Update("value", "true")
 	if !b.CommentsRequireLogin() {
 		t.Fatal("expected login to be required when the setting is true")
+	}
+}
+
+// renderPostPage renders the post page with the given theme, logged-in user
+// (nil for anonymous) and comments_require_login value.
+func renderPostPage(t *testing.T, theme string, user *auth.BlogUser, requireLogin string) string {
+	t.Helper()
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Setting{}, &blog.Page{}, &blog.Backlink{}, &blog.ExternalBacklink{})
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: requireLogin})
+	a := &Auth{user: user}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(user != nil)
+	b := blog.New(db, a, "test")
+	post := blog.Post{Title: "Render Post", Content: "Body", Slug: "render-post"}
+	db.Create(&post)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/posts/:yyyy/:mm/:dd/:slug", b.Post)
+	req, _ := http.NewRequest("GET", post.Permalink(), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s: expected 200, got %d", theme, w.Code)
+	}
+	return w.Body.String()
+}
+
+// TestPostPage_CommentFormFollowsLoginState covers the comment section's three
+// states (issue #524) in every theme.
+func TestPostPage_CommentFormFollowsLoginState(t *testing.T) {
+	for _, theme := range []string{"default", "forest", "minimal"} {
+		t.Run(theme+"/required and logged out", func(t *testing.T) {
+			body := renderPostPage(t, theme, nil, "true")
+			if strings.Contains(body, `action="/comments"`) {
+				t.Error("expected no comment form")
+			}
+			if !strings.Contains(body, `href="/login?next=`) {
+				t.Error("expected a login link that returns to the post")
+			}
+		})
+		t.Run(theme+"/not required and logged out", func(t *testing.T) {
+			body := renderPostPage(t, theme, nil, "false")
+			assertCommentFormProtected(t, body)
+			if !strings.Contains(body, `name="email"`) {
+				t.Error("expected the email field for anonymous commenters")
+			}
+		})
+		t.Run(theme+"/logged in", func(t *testing.T) {
+			user := &auth.BlogUser{ID: 3, Provider: auth.ProviderEmail, Login: "jason@example.com", Email: "jason@example.com"}
+			body := renderPostPage(t, theme, user, "true")
+			assertCommentFormProtected(t, body)
+			if strings.Contains(body, `name="email"`) {
+				t.Error("expected no email field for logged-in commenters")
+			}
+			if !strings.Contains(body, `name="name" value="jason"`) {
+				t.Error("expected the name field prefilled with the display name")
+			}
+			if !strings.Contains(body, "jason@example.com") {
+				t.Error("expected the page to say which account is commenting")
+			}
+		})
 	}
 }

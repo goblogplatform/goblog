@@ -137,6 +137,7 @@
           {{ else if eq .comment_error "name_too_long" }}Name is too long (max 100 characters).
           {{ else if eq .comment_error "content_too_long" }}Comment is too long (max 5000 characters).
           {{ else if eq .comment_error "spam_check" }}Your comment could not be verified. Please make sure JavaScript is enabled and try again.
+          {{ else if eq .comment_error "login_required" }}Please log in to leave a comment.
           {{ else }}An error occurred. Please try again.
           {{ end }}
         </div>
@@ -173,6 +174,9 @@
 
         <hr>
         <h4 class="text-left">Leave a Comment</h4>
+        {{ if and .comments_require_login (not .comment_user) }}
+        <p><a href="/login?next={{ .post.Permalink }}">Log in</a> to leave a comment.</p>
+        {{ else }}
         <form method="POST" action="/comments">
           <input type="hidden" name="post_id" value="{{ .post.ID }}">
           <input type="hidden" name="redirect" value="{{ .post.Permalink }}">
@@ -182,6 +186,13 @@
             <label for="website">Website</label>
             <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
           </div>
+          {{ if .comment_user }}
+          <p class="text-muted"><small>Commenting as {{ .comment_user.Email }}</small></p>
+          <div class="form-group">
+            <label for="comment-name">Name *</label>
+            <input type="text" class="form-control" id="comment-name" name="name" value="{{ if .is_admin }}{{ .settings.site_title.Value }}{{ else }}{{ .comment_user.DisplayName }}{{ end }}" required maxlength="100">
+          </div>
+          {{ else }}
           <div class="form-group">
             <label for="comment-name">Name *</label>
             <input type="text" class="form-control" id="comment-name" name="name" required maxlength="100"{{ if .is_admin }} value="{{ .settings.site_title.Value }}"{{ end }}>
@@ -190,6 +201,7 @@
             <label for="comment-email">Email (not displayed)</label>
             <input type="email" class="form-control" id="comment-email" name="email" maxlength="254">
           </div>
+          {{ end }}
           <div class="form-group">
             <label for="comment-content">Comment * <small>(Markdown supported)</small></label>
             <textarea class="form-control" id="comment-content" name="content" rows="4" required maxlength="5000"></textarea>
@@ -205,6 +217,7 @@
             document.getElementById("comment_check").value = token.split("").reverse().join("");
           })();
         </script>
+        {{ end }}
 
         <script type="text/javascript">
           function previewComment() {
