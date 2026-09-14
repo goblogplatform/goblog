@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -338,5 +339,151 @@ func TestBlogUser_DisplayName(t *testing.T) {
 				t.Fatalf("got %q want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// seedAdmin stores a GitHub user and makes them admin directly, bypassing the
+// promotion gate, so tests can start from an "admin already exists" state.
+func seedAdmin(t *testing.T, db *gorm.DB, id, login string) auth.BlogUser {
+	t.Helper()
+	u := auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: id, Login: login}
+	if err := db.Create(&u).Error; err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := db.Create(&auth.AdminUser{BlogUserID: u.ID}).Error; err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	return u
+}
+
+func countAdmins(t *testing.T, db *gorm.DB) int64 {
+	t.Helper()
+	var n int64
+	db.Model(&auth.AdminUser{}).Count(&n)
+	return n
+}
+
+func TestPromoteAdmin_GitHubUser_AddsRow(t *testing.T) {
+	a, db := newAuth(t)
+	seedAdmin(t, db, "1", "first")
+	u := auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "2", Login: "second"}
+	db.Create(&u)
+
+	if err := a.PromoteAdmin(u.ID); err != nil {
+		t.Fatalf("PromoteAdmin: %v", err)
+	}
+	if n := countAdmins(t, db); n != 2 {
+		t.Fatalf("expected 2 admins, got %d", n)
+	}
+}
+
+func TestPromoteAdmin_Idempotent(t *testing.T) {
+	a, db := newAuth(t)
+	u := seedAdmin(t, db, "1", "first")
+
+	if err := a.PromoteAdmin(u.ID); err != nil {
+		t.Fatalf("PromoteAdmin on existing admin: %v", err)
+	}
+	if n := countAdmins(t, db); n != 1 {
+		t.Fatalf("expected 1 admin row, got %d", n)
+	}
+}
+
+func TestPromoteAdmin_EmailUser_Refused(t *testing.T) {
+	a, db := newAuth(t)
+	u := auth.BlogUser{Provider: auth.ProviderEmail, ProviderID: "a@example.com", Login: "a@example.com"}
+	db.Create(&u)
+
+	err := a.PromoteAdmin(u.ID)
+	if !errors.Is(err, auth.ErrNotPromotable) {
+		t.Fatalf("expected ErrNotPromotable, got %v", err)
+	}
+	if n := countAdmins(t, db); n != 0 {
+		t.Fatalf("expected no admin rows, got %d", n)
+	}
+}
+
+func TestPromoteAdmin_UnknownUser_Refused(t *testing.T) {
+	a, db := newAuth(t)
+	err := a.PromoteAdmin(999)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected ErrRecordNotFound, got %v", err)
+	}
+	if n := countAdmins(t, db); n != 0 {
+		t.Fatalf("expected no admin rows, got %d", n)
+	}
+}
+
+func TestDemoteAdmin_WithAnotherAdmin_RemovesRow(t *testing.T) {
+	a, db := newAuth(t)
+	first := seedAdmin(t, db, "1", "first")
+	seedAdmin(t, db, "2", "second")
+
+	if err := a.DemoteAdmin(first.ID); err != nil {
+		t.Fatalf("DemoteAdmin: %v", err)
+	}
+	if n := countAdmins(t, db); n != 1 {
+		t.Fatalf("expected 1 admin, got %d", n)
+	}
+	var remaining auth.AdminUser
+	db.First(&remaining)
+	if remaining.BlogUserID == first.ID {
+		t.Fatal("the demoted user is still admin")
+	}
+}
+
+func TestDemoteAdmin_LastAdmin_Refused(t *testing.T) {
+	a, db := newAuth(t)
+	only := seedAdmin(t, db, "1", "only")
+
+	err := a.DemoteAdmin(only.ID)
+	if !errors.Is(err, auth.ErrLastAdmin) {
+		t.Fatalf("expected ErrLastAdmin, got %v", err)
+	}
+	if n := countAdmins(t, db); n != 1 {
+		t.Fatalf("the last admin must survive; got %d rows", n)
+	}
+}
+
+func TestDemoteAdmin_NotAnAdmin_Refused(t *testing.T) {
+	a, db := newAuth(t)
+	seedAdmin(t, db, "1", "first")
+	u := auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "2", Login: "plain"}
+	db.Create(&u)
+
+	err := a.DemoteAdmin(u.ID)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected ErrRecordNotFound, got %v", err)
+	}
+	if n := countAdmins(t, db); n != 1 {
+		t.Fatalf("expected 1 admin row, got %d", n)
+	}
+}
+
+func TestListUsers_ReturnsPageWithAdminFlag(t *testing.T) {
+	a, db := newAuth(t)
+	admin := seedAdmin(t, db, "1", "boss")
+	for i := 2; i <= 4; i++ {
+		db.Create(&auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: strconv.Itoa(i), Login: "user" + strconv.Itoa(i)})
+	}
+
+	users, total := a.ListUsers(0, 2)
+	if total != 4 {
+		t.Fatalf("expected total 4, got %d", total)
+	}
+	if len(users) != 2 {
+		t.Fatalf("expected a page of 2, got %d", len(users))
+	}
+	// newest first
+	if users[0].Login != "user4" || users[1].Login != "user3" {
+		t.Fatalf("expected user4,user3 got %s,%s", users[0].Login, users[1].Login)
+	}
+	if users[0].IsAdmin {
+		t.Fatal("user4 must not be flagged admin")
+	}
+
+	last, _ := a.ListUsers(2, 2)
+	if len(last) != 2 || last[1].ID != admin.ID || !last[1].IsAdmin {
+		t.Fatalf("expected the seeded admin flagged on the second page, got %+v", last)
 	}
 }

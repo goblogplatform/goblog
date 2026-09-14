@@ -53,6 +53,10 @@ func (m *Auth) IsWizardMode(c *gin.Context) bool {
 
 func (m *Auth) EmailLoginEnabled() bool { return false }
 
+func (m *Auth) ListUsers(int, int) ([]auth.UserListing, int64) { return nil, 0 }
+func (m *Auth) PromoteAdmin(int) error                         { return nil }
+func (m *Auth) DemoteAdmin(int) error                          { return nil }
+
 func TestBlogWorkflow(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&auth.BlogUser{})

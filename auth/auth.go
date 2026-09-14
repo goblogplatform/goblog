@@ -26,6 +26,9 @@ type IAuth interface {
 	IsWizardMode(c *gin.Context) bool
 	EmailLoginEnabled() bool
 	CurrentUser(c *gin.Context) *BlogUser
+	ListUsers(offset, limit int) ([]UserListing, int64)
+	PromoteAdmin(userID int) error
+	DemoteAdmin(userID int) error
 }
 
 // Auth API
@@ -326,6 +329,90 @@ func (a *Auth) EnsureAdmin(user *BlogUser) error {
 			return ErrNotConfiguredAdmin
 		}
 		return tx.Create(&AdminUser{BlogUserID: user.ID}).Error
+	})
+}
+
+// ErrNotPromotable is returned by PromoteAdmin for users who can't hold
+// admin: only GitHub users can (email login is a weaker credential, see #565).
+var ErrNotPromotable = errors.New("only GitHub users can be admin")
+
+// ErrLastAdmin is returned by DemoteAdmin when the demotion would leave the
+// site with no admin at all, which would also re-open the install wizard
+// (IsWizardMode is "no admin_users row").
+var ErrLastAdmin = errors.New("cannot demote the last admin")
+
+// UserListing is a BlogUser with its admin status, for the admin users page.
+type UserListing struct {
+	BlogUser
+	IsAdmin bool
+}
+
+// ListUsers returns a page of users, newest first, each flagged with whether
+// they are currently admin, along with the total number of users.
+func (a *Auth) ListUsers(offset, limit int) ([]UserListing, int64) {
+	var total int64
+	(*a.db).Model(&BlogUser{}).Count(&total)
+	var users []BlogUser
+	(*a.db).Order("id desc").Offset(offset).Limit(limit).Find(&users)
+
+	var admins []AdminUser
+	(*a.db).Find(&admins)
+	isAdmin := make(map[int]bool, len(admins))
+	for _, admin := range admins {
+		isAdmin[admin.BlogUserID] = true
+	}
+
+	listing := make([]UserListing, len(users))
+	for i, u := range users {
+		listing[i] = UserListing{BlogUser: u, IsAdmin: isAdmin[u.ID]}
+	}
+	return listing, total
+}
+
+// PromoteAdmin makes the given user an admin. Unlike EnsureAdmin this is not
+// gated on the admin_login / admin_github_id pin: that pin only governs who
+// bootstraps the first admin, after which existing admins decide. Returns
+// gorm.ErrRecordNotFound for an unknown user and ErrNotPromotable for a
+// non-GitHub user. Idempotent.
+func (a *Auth) PromoteAdmin(userID int) error {
+	return (*a.db).Transaction(func(tx *gorm.DB) error {
+		var user BlogUser
+		if err := tx.First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Provider != ProviderGitHub {
+			return ErrNotPromotable
+		}
+		var existing AdminUser
+		err := tx.Where("blog_user_id = ?", userID).First(&existing).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		return tx.Create(&AdminUser{BlogUserID: userID}).Error
+	})
+}
+
+// DemoteAdmin removes the given user's admin status. Returns
+// gorm.ErrRecordNotFound if they are not an admin and ErrLastAdmin if they
+// are the only one. The count-and-delete runs in a transaction so two
+// concurrent demotions can't both see two admins and remove both.
+func (a *Auth) DemoteAdmin(userID int) error {
+	return (*a.db).Transaction(func(tx *gorm.DB) error {
+		var existing AdminUser
+		if err := tx.Where("blog_user_id = ?", userID).First(&existing).Error; err != nil {
+			return err
+		}
+		var total int64
+		if err := tx.Model(&AdminUser{}).Count(&total).Error; err != nil {
+			return err
+		}
+		if total <= 1 {
+			return ErrLastAdmin
+		}
+		return tx.Where("blog_user_id = ?", userID).Delete(&AdminUser{}).Error
 	})
 }
 
