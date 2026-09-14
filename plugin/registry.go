@@ -214,8 +214,13 @@ func (r *Registry) GetPagePlugin(pageType string) Plugin {
 	return nil
 }
 
-// RenderPluginPage renders a plugin-owned page. Returns template name, data, and whether it was handled.
-func (r *Registry) RenderPluginPage(c *gin.Context, pageType string) (string, gin.H, bool) {
+// RenderPluginPage renders a plugin-owned page. subPath is the request path
+// after the page slug ("" for the page itself). Returns the template name,
+// its data, and whether the request was handled. A plugin handles a request
+// either by returning a template name or by writing the response itself
+// (for example JSON), in which case the template name is empty and the
+// caller must not render anything.
+func (r *Registry) RenderPluginPage(c *gin.Context, pageType, subPath string) (string, gin.H, bool) {
 	p := r.GetPagePlugin(pageType)
 	if p == nil {
 		return "", nil, false
@@ -226,10 +231,11 @@ func (r *Registry) RenderPluginPage(c *gin.Context, pageType string) (string, gi
 		DB:         r.db,
 		Settings:   settings,
 		Template:   pageType,
+		SubPath:    subPath,
 	}
 	tmpl, data := p.RenderPage(ctx, pageType)
 	if tmpl == "" {
-		return "", nil, false
+		return "", nil, c.Writer.Written()
 	}
 	return tmpl, data, true
 }

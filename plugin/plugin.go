@@ -37,6 +37,12 @@ type HookContext struct {
 	Settings   map[string]string // plugin's own settings (namespace prefix stripped)
 	Template   string            // which template is being rendered
 	Data       gin.H             // the existing template data (read-only)
+
+	// SubPath is set for RenderPage only: the request path after the page's
+	// slug, without the leading slash. "" for /plugins, "hello" for
+	// /plugins/hello, "index.json" for /plugins/index.json. Plugins that
+	// don't use it can ignore it: blog only routes sub-paths to plugin pages.
+	SubPath string
 }
 
 // PageDefinition describes a dynamic page type that a plugin provides.
