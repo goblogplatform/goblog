@@ -177,6 +177,19 @@ docker run -p 7000:7000 -e ENABLE_DYNAMIC_PLUGINS=true \
   compscidr/goblog:latest
 ```
 
+#### Checking a plugin file
+`goblog validate-plugin <file.go>` loads a single file through the same interpreter and prints its identity as JSON (exit 1 with the load error on stderr if it fails):
+```bash
+./goblog validate-plugin plugins/dynamic/hello.go.example
+# {"name":"hello","display_name":"Hello (example)","version":"1.0.0"}
+```
+With the Docker image (its entrypoint is a shell command, so override it):
+```bash
+docker run --rm -v "$PWD:/p" --entrypoint /go/src/github.com/compscidr/goblog/goblog \
+  compscidr/goblog:latest validate-plugin /p/plugin.go
+```
+This is what the [plugin directory](https://goblog.live/plugins) registry runs on every submission.
+
 ## Testing
 ```bash
 go test ./...
