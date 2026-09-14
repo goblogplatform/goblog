@@ -3,7 +3,7 @@ package admin_test
 import (
 	"bytes"
 	"encoding/json"
-	
+
 	"goblog/admin"
 	"goblog/auth"
 	"goblog/blog"
@@ -29,7 +29,11 @@ import (
 
 type Auth struct {
 	mock.Mock
+	// user is what CurrentUser reports; nil means nobody is logged in.
+	user *auth.BlogUser
 }
+
+func (m *Auth) CurrentUser(c *gin.Context) *auth.BlogUser { return m.user }
 
 func (m *Auth) IsAdmin(c *gin.Context) bool {
 	args := m.Called(c)
@@ -62,7 +66,7 @@ func TestCreatePost(t *testing.T) {
 	defaultType := blog.PostType{Name: "Post", Slug: "posts", Description: "Blog posts"}
 	db.Create(&defaultType)
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 	ad := admin.New(db, a, &b, "test")
 

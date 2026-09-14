@@ -25,6 +25,7 @@ type IAuth interface {
 	IsLoggedIn(c *gin.Context) bool
 	IsWizardMode(c *gin.Context) bool
 	EmailLoginEnabled() bool
+	CurrentUser(c *gin.Context) *BlogUser
 }
 
 // Auth API
@@ -382,17 +383,24 @@ func (a *Auth) IsWizardMode(c *gin.Context) bool {
 	return err != nil
 }
 
-// IsLoggedIn Returns true if the user is logged in, false otherwise
-func (a *Auth) IsLoggedIn(c *gin.Context) bool {
+// CurrentUser returns the user whose session token is in the request's
+// session, or nil when nobody is logged in (no token, or a token that no
+// longer matches a user).
+func (a *Auth) CurrentUser(c *gin.Context) *BlogUser {
 	session := sessions.Default(c)
 	token := session.Get("token")
 	if token == nil {
-		return false
+		return nil
 	}
 	var existingUser BlogUser
 	err := (*a.db).Where("access_token = ?", token).First(&existingUser).Error
 	if err != nil {
-		return false
+		return nil
 	}
-	return true
+	return &existingUser
+}
+
+// IsLoggedIn Returns true if the user is logged in, false otherwise
+func (a *Auth) IsLoggedIn(c *gin.Context) bool {
+	return a.CurrentUser(c) != nil
 }

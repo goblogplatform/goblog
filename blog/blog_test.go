@@ -3,7 +3,7 @@ package blog_test
 import (
 	"bytes"
 	"encoding/json"
-	
+
 	"goblog/admin"
 	"goblog/auth"
 	"goblog/blog"
@@ -29,7 +29,11 @@ import (
 
 type Auth struct {
 	mock.Mock
+	// user is what CurrentUser reports; nil means nobody is logged in.
+	user *auth.BlogUser
 }
+
+func (m *Auth) CurrentUser(c *gin.Context) *auth.BlogUser { return m.user }
 
 func (m *Auth) IsAdmin(c *gin.Context) bool {
 	args := m.Called(c)
@@ -61,7 +65,7 @@ func TestBlogWorkflow(t *testing.T) {
 	defaultType := blog.PostType{Name: "Post", Slug: "posts", Description: "Blog posts"}
 	db.Create(&defaultType)
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 	admin := admin.New(db, a, &b, "test")
 
@@ -490,7 +494,7 @@ func TestBacklinks(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Backlink{}, &blog.ExternalBacklink{})
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 
 	// Create two posts. Post B will link to Post A.
@@ -557,7 +561,7 @@ func TestGetNavPages(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&blog.Page{}, &blog.PostType{}, &blog.Post{}, &blog.Setting{})
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 
 	// Create pages with various states
@@ -583,7 +587,7 @@ func TestGetPageBySlug(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&blog.Page{}, &blog.PostType{}, &blog.Post{}, &blog.Setting{})
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 
 	db.Create(&blog.Page{Title: "About", Slug: "about", PageType: blog.PageTypeAbout, Enabled: true})
@@ -615,7 +619,7 @@ func TestExternalBacklinks(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Backlink{}, &blog.ExternalBacklink{})
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 
 	post := blog.Post{
