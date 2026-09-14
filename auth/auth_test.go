@@ -257,3 +257,21 @@ func TestBlogUser_JSONOmitsAccessToken(t *testing.T) {
 		t.Fatalf("access token must not be serialised: %s", b)
 	}
 }
+
+func TestUpsertUser_RejectsEmptyIdentity(t *testing.T) {
+	a, db := newAuth(t)
+	for _, u := range []auth.BlogUser{
+		{Login: "no-provider"},
+		{Provider: auth.ProviderGitHub, Login: "no-provider-id"},
+		{ProviderID: "7", Login: "no-provider"},
+	} {
+		if _, err := a.UpsertUser(&u); err == nil {
+			t.Errorf("expected an error for %+v", u)
+		}
+	}
+	var count int64
+	db.Model(&auth.BlogUser{}).Count(&count)
+	if count != 0 {
+		t.Fatalf("expected no rows to be created, got %d", count)
+	}
+}

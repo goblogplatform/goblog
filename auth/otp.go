@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -143,7 +144,13 @@ func (a *Auth) SendLoginCodeHandler(c *gin.Context) {
 	(*a.db).Where("expires_at < ?", now).Delete(&LoginCode{})
 
 	var existing LoginCode
-	if err := (*a.db).First(&existing, "email = ?", email).Error; err == nil && now.Sub(existing.CreatedAt) < loginCodeResendAfter {
+	err := (*a.db).First(&existing, "email = ?", email).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("looking up login code for %s: %v", email, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not send the login code"})
+		return
+	}
+	if err == nil && now.Sub(existing.CreatedAt) < loginCodeResendAfter {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "please wait before requesting another code"})
 		return
 	}

@@ -469,3 +469,16 @@ func TestSendLoginCode_PerIPRateLimit(t *testing.T) {
 	}
 }
 
+func TestSendLoginCode_LookupFailure_500AndNoMail(t *testing.T) {
+	a, db, m := newOTPAuth(t)
+	// Simulate a failing SELECT: with the table gone, the resend-window
+	// lookup errors with something other than "record not found".
+	db.Exec("DROP TABLE login_codes")
+	w := sendCode(newOTPRouter(a), "reader@example.com")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when the code lookup fails, got %d %s", w.Code, w.Body)
+	}
+	if len(m.sent) != 0 {
+		t.Fatal("no code may be issued when the resend check could not run")
+	}
+}

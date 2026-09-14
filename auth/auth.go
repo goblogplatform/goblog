@@ -3,7 +3,6 @@ package auth
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -105,7 +104,6 @@ func (a *Auth) requestAccessToken(parsedCode string) (*AccessTokenResponse, erro
 	}
 
 	bodyString := string(bodyBytes)
-	fmt.Println("post:\n", bodyString) //todo: remove - just for debugging
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.New(bodyString)
@@ -113,29 +111,6 @@ func (a *Auth) requestAccessToken(parsedCode string) (*AccessTokenResponse, erro
 
 	json.Unmarshal(bodyBytes, &data)
 	return data, nil
-}
-
-// formatRequest generates ascii representation of a request
-func (a *Auth) formatRequest(r *http.Request) string {
-	// Create return string
-	var request []string // Add the request string
-	url := fmt.Sprintf("%v %v %v", r.Method, r.URL, r.Proto)
-	request = append(request, url)                             // Add the host
-	request = append(request, fmt.Sprintf("Host: %v", r.Host)) // Loop through headers
-	for name, headers := range r.Header {
-		name = strings.ToLower(name)
-		for _, h := range headers {
-			request = append(request, fmt.Sprintf("%v: %v", name, h))
-		}
-	}
-
-	// If this is a POST, add post data
-	if r.Method == "POST" {
-		r.ParseForm()
-		request = append(request, "\n")
-		request = append(request, r.Form.Encode())
-	} // Return the request as a string
-	return strings.Join(request, "\n")
 }
 
 // githubUser is the subset of GitHub's /user response we keep.
@@ -158,7 +133,6 @@ func (a *Auth) RequestUser(accessToken string) (*BlogUser, error) {
 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "token "+accessToken)
-	fmt.Println("REQ" + a.formatRequest(req))
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -174,7 +148,6 @@ func (a *Auth) RequestUser(accessToken string) (*BlogUser, error) {
 	}
 
 	bodyString := string(bodyBytes)
-	fmt.Println("github response:\n", bodyString) //todo: remove - just for debugging
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.New(bodyString)
@@ -184,8 +157,6 @@ func (a *Auth) RequestUser(accessToken string) (*BlogUser, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	fmt.Println("Parsed user: ", user.Login, user.ProviderID)
 
 	return user, nil
 }
@@ -219,6 +190,9 @@ func parseGitHubUser(body []byte, accessToken string) (*BlogUser, error) {
 // profile fields and AccessToken are refreshed. Either way the stored row is
 // returned.
 func (a *Auth) UpsertUser(user *BlogUser) (*BlogUser, error) {
+	if user.Provider == "" || user.ProviderID == "" {
+		return nil, errors.New("user must have a provider and provider id")
+	}
 	var existing BlogUser
 	err := (*a.db).Where("provider = ? AND provider_id = ?", user.Provider, user.ProviderID).First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
