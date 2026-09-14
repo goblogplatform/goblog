@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"goblog/mail"
 )
@@ -26,6 +27,9 @@ type IAuth interface {
 	IsWizardMode(c *gin.Context) bool
 	EmailLoginEnabled() bool
 	CurrentUser(c *gin.Context) *BlogUser
+	ListUsers(offset, limit int) ([]UserListing, int64, error)
+	PromoteAdmin(userID int) error
+	DemoteAdmin(userID int) error
 }
 
 // Auth API
@@ -326,6 +330,109 @@ func (a *Auth) EnsureAdmin(user *BlogUser) error {
 			return ErrNotConfiguredAdmin
 		}
 		return tx.Create(&AdminUser{BlogUserID: user.ID}).Error
+	})
+}
+
+// ErrNotPromotable is returned by PromoteAdmin for users who can't hold
+// admin: only GitHub users can (email login is a weaker credential, see #565).
+var ErrNotPromotable = errors.New("only GitHub users can be admin")
+
+// ErrLastAdmin is returned by DemoteAdmin when the demotion would leave the
+// site with no admin at all, which would also re-open the install wizard
+// (IsWizardMode is "no admin_users row").
+var ErrLastAdmin = errors.New("cannot demote the last admin")
+
+// UserListing is a BlogUser with its admin status, for the admin users page.
+type UserListing struct {
+	BlogUser
+	IsAdmin bool
+}
+
+// ListUsers returns a page of users, newest first, each flagged with whether
+// they are currently admin, along with the total number of users. A query
+// error is returned rather than an empty page that looks like "no users".
+func (a *Auth) ListUsers(offset, limit int) ([]UserListing, int64, error) {
+	var total int64
+	if err := (*a.db).Model(&BlogUser{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var users []BlogUser
+	if err := (*a.db).Order("id desc").Offset(offset).Limit(limit).Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var admins []AdminUser
+	if err := (*a.db).Find(&admins).Error; err != nil {
+		return nil, 0, err
+	}
+	isAdmin := make(map[int]bool, len(admins))
+	for _, admin := range admins {
+		isAdmin[admin.BlogUserID] = true
+	}
+
+	listing := make([]UserListing, len(users))
+	for i, u := range users {
+		listing[i] = UserListing{BlogUser: u, IsAdmin: isAdmin[u.ID]}
+	}
+	return listing, total, nil
+}
+
+// PromoteAdmin makes the given user an admin. Unlike EnsureAdmin this is not
+// gated on the admin_login / admin_github_id pin: that pin only governs who
+// bootstraps the first admin, after which existing admins decide. Returns
+// gorm.ErrRecordNotFound for an unknown user and ErrNotPromotable for a
+// non-GitHub user. Idempotent.
+func (a *Auth) PromoteAdmin(userID int) error {
+	return (*a.db).Transaction(func(tx *gorm.DB) error {
+		var user BlogUser
+		if err := tx.First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Provider != ProviderGitHub {
+			return ErrNotPromotable
+		}
+		var existing AdminUser
+		err := tx.Where("blog_user_id = ?", userID).First(&existing).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		return tx.Create(&AdminUser{BlogUserID: userID}).Error
+	})
+}
+
+// DemoteAdmin removes the given user's admin status. Returns
+// gorm.ErrRecordNotFound if they are not an admin and ErrLastAdmin if they
+// are the only one.
+//
+// A transaction alone isn't enough to protect the last admin on Postgres or
+// MySQL: two concurrent demotions could each count two admins and each
+// delete a different one. So the admin rows are read with SELECT ... FOR
+// UPDATE, which serialises concurrent demotions; the second one then sees
+// the row the first removed as gone and refuses. (SQLite has no FOR UPDATE
+// and its driver drops the clause; it serialises writers anyway.)
+func (a *Auth) DemoteAdmin(userID int) error {
+	return (*a.db).Transaction(func(tx *gorm.DB) error {
+		var admins []AdminUser
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Find(&admins).Error; err != nil {
+			return err
+		}
+		isAdmin := false
+		for _, admin := range admins {
+			if admin.BlogUserID == userID {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			return gorm.ErrRecordNotFound
+		}
+		if len(admins) <= 1 {
+			return ErrLastAdmin
+		}
+		return tx.Where("blog_user_id = ?", userID).Delete(&AdminUser{}).Error
 	})
 }
 

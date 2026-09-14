@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
 	"goblog/auth"
 	"goblog/blog"
@@ -952,6 +953,108 @@ func (a *Admin) AdminComments(c *gin.Context) {
 		"settings":      a.b.GetSettings(),
 		"nav_pages":     a.b.GetNavPages(),
 	})
+}
+
+const adminUsersPerPage = 50
+
+// AdminUsers renders the user list with promote/demote controls (#548).
+func (a *Admin) AdminUsers(c *gin.Context) {
+	if !a.auth.IsAdmin(c) {
+		c.JSON(http.StatusUnauthorized, "Not Authorized")
+		return
+	}
+
+	page, err := strconv.Atoi(c.Query("page"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+	users, total, err := a.auth.ListUsers((page-1)*adminUsersPerPage, adminUsersPerPage)
+	if err != nil {
+		log.Println("ERROR LISTING USERS: ", err)
+		c.JSON(http.StatusInternalServerError, "Error listing users")
+		return
+	}
+	totalPages := int((total + adminUsersPerPage - 1) / adminUsersPerPage)
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	// The last admin can't be demoted (auth.ErrLastAdmin), so don't offer it.
+	var adminCount int64
+	(*a.db).Model(&auth.AdminUser{}).Count(&adminCount)
+
+	c.HTML(http.StatusOK, "admin_users.html", gin.H{
+		"users":       users,
+		"can_demote":  adminCount > 1,
+		"total":       total,
+		"page":        page,
+		"total_pages": totalPages,
+		"prev_page":   page - 1,
+		"next_page":   page + 1,
+		"logged_in":   a.auth.IsLoggedIn(c),
+		"is_admin":    a.auth.IsAdmin(c),
+		"version":     a.version,
+		"recent":      a.b.GetLatest(),
+		"admin_page":  true,
+		"settings":    a.b.GetSettings(),
+		"nav_pages":   a.b.GetNavPages(),
+	})
+}
+
+// adminRequest is the JSON body of the promote/demote endpoints.
+type adminRequest struct {
+	ID int `json:"id"`
+}
+
+// PromoteAdmin makes the user in the request body an admin.
+// POST /api/v1/admins {"id": <blog user id>}
+func (a *Admin) PromoteAdmin(c *gin.Context) {
+	if !a.auth.IsAdmin(c) {
+		c.JSON(http.StatusUnauthorized, "Not Authorized")
+		return
+	}
+	var req adminRequest
+	if c.BindJSON(&req) != nil || req.ID <= 0 {
+		c.JSON(http.StatusBadRequest, "Malformed request, missing some information")
+		return
+	}
+	switch err := a.auth.PromoteAdmin(req.ID); {
+	case err == nil:
+		c.JSON(http.StatusOK, "")
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		c.JSON(http.StatusNotFound, "No such user")
+	case errors.Is(err, auth.ErrNotPromotable):
+		c.JSON(http.StatusBadRequest, err.Error())
+	default:
+		log.Println("ERROR PROMOTING ADMIN: ", err)
+		c.JSON(http.StatusInternalServerError, "Error promoting user")
+	}
+}
+
+// DemoteAdmin removes admin from the user in the request body. Refused with
+// 409 when they are the last admin.
+// DELETE /api/v1/admins {"id": <blog user id>}
+func (a *Admin) DemoteAdmin(c *gin.Context) {
+	if !a.auth.IsAdmin(c) {
+		c.JSON(http.StatusUnauthorized, "Not Authorized")
+		return
+	}
+	var req adminRequest
+	if c.BindJSON(&req) != nil || req.ID <= 0 {
+		c.JSON(http.StatusBadRequest, "Malformed request, missing some information")
+		return
+	}
+	switch err := a.auth.DemoteAdmin(req.ID); {
+	case err == nil:
+		c.JSON(http.StatusOK, "")
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		c.JSON(http.StatusNotFound, "That user is not an admin")
+	case errors.Is(err, auth.ErrLastAdmin):
+		c.JSON(http.StatusConflict, err.Error())
+	default:
+		log.Println("ERROR DEMOTING ADMIN: ", err)
+		c.JSON(http.StatusInternalServerError, "Error demoting user")
+	}
 }
 
 // AdminEditPage renders the form to edit a single page

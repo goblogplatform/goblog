@@ -91,6 +91,11 @@ admin_github_id=12345                 # numeric id: https://api.github.com/users
 ```
 Other accounts can still log in as regular users but are never promoted. Leave both unset to keep the first-to-login behaviour.
 
+### Managing Admins
+The pin above only decides who becomes the *first* admin. After that, admins are managed from the **Users** page in the admin area (`/admin/users`), which lists everyone who has logged in. An existing admin can promote any GitHub user to admin or demote another admin; the last remaining admin can't be demoted, so the site never ends up with none. Email-login users can't be made admin (see #565).
+
+To hand the site over to a different GitHub account: log in with the new account once so it appears in the list, promote it from your current admin account, then log in as the new account and demote the old one.
+
 ### Email Login (one-time codes)
 Visitors without a GitHub account can log in with an emailed 6-digit code. Add SMTP details to `.env`:
 ```bash

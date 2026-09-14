@@ -32,6 +32,7 @@ type Auth struct {
 	mock.Mock
 	// user is what CurrentUser reports; nil means nobody is logged in.
 	user *auth.BlogUser
+	real *auth.Auth
 }
 
 func (m *Auth) CurrentUser(c *gin.Context) *auth.BlogUser { return m.user }
@@ -52,6 +53,15 @@ func (m *Auth) IsWizardMode(c *gin.Context) bool {
 }
 
 func (m *Auth) EmailLoginEnabled() bool { return false }
+
+// User management delegates to a real auth.Auth over the test DB (set by
+// tests that need it) so the handlers are exercised against real behaviour
+// rather than a mock's.
+func (m *Auth) ListUsers(offset, limit int) ([]auth.UserListing, int64, error) {
+	return m.real.ListUsers(offset, limit)
+}
+func (m *Auth) PromoteAdmin(userID int) error { return m.real.PromoteAdmin(userID) }
+func (m *Auth) DemoteAdmin(userID int) error  { return m.real.DemoteAdmin(userID) }
 
 func TestCreatePost(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
@@ -825,5 +835,262 @@ func TestAdminSettings_RendersCheckboxSetting(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// newUsersHarness wires an Admin with a real auth.Auth for user management
+// and the given theme's templates, returning the router, the mock auth and
+// the DB.
+func newUsersHarness(t *testing.T, theme string) (*gin.Engine, *Auth, *gorm.DB) {
+	t.Helper()
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &auth.AdminUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{})
+	realAuth := auth.New(db, "test")
+	a := &Auth{real: &realAuth}
+	b := blog.New(db, a, "test")
+	ad := admin.New(db, a, &b, "test")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(sessions.Sessions("s", cookie.NewStore([]byte("test"))))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/admin/users", ad.AdminUsers)
+	router.POST("/api/v1/admins", ad.PromoteAdmin)
+	router.DELETE("/api/v1/admins", ad.DemoteAdmin)
+	return router, a, db
+}
+
+func seedUser(t *testing.T, db *gorm.DB, provider, id, login string, isAdmin bool) auth.BlogUser {
+	t.Helper()
+	u := auth.BlogUser{Provider: provider, ProviderID: id, Login: login}
+	if err := db.Create(&u).Error; err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if isAdmin {
+		if err := db.Create(&auth.AdminUser{BlogUserID: u.ID}).Error; err != nil {
+			t.Fatalf("create admin: %v", err)
+		}
+	}
+	return u
+}
+
+func adminsJSON(router *gin.Engine, method string, id int) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]int{"id": id})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(method, "/api/v1/admins", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	return w
+}
+
+func TestAdminUsers_NonAdmin_Unauthorized(t *testing.T) {
+	router, a, _ := newUsersHarness(t, "default")
+	a.On("IsAdmin", mock.Anything).Return(false)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/users", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /admin/users: expected 401, got %d", w.Code)
+	}
+	if w := adminsJSON(router, "POST", 1); w.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /api/v1/admins: expected 401, got %d", w.Code)
+	}
+	if w := adminsJSON(router, "DELETE", 1); w.Code != http.StatusUnauthorized {
+		t.Fatalf("DELETE /api/v1/admins: expected 401, got %d", w.Code)
+	}
+}
+
+// TestAdminUsers_RendersUsers checks every theme lists users with their
+// admin status and the right control: promote for GitHub non-admins, demote
+// for admins, and nothing for email users (#565) or the last admin.
+func TestAdminUsers_RendersUsers(t *testing.T) {
+	for _, theme := range []string{"default", "forest", "minimal"} {
+		t.Run(theme, func(t *testing.T) {
+			router, a, db := newUsersHarness(t, theme)
+			boss := seedUser(t, db, auth.ProviderGitHub, "1", "boss", true)
+			plain := seedUser(t, db, auth.ProviderGitHub, "2", "plain", false)
+			mailer := seedUser(t, db, auth.ProviderEmail, "m@example.com", "m@example.com", false)
+			a.On("IsAdmin", mock.Anything).Return(true)
+			a.On("IsLoggedIn", mock.Anything).Return(true)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", "/admin/users", nil)
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+			body := w.Body.String()
+
+			row := func(u auth.BlogUser) string {
+				re := regexp.MustCompile(`(?s)<tr id="user-row-` + strconv.Itoa(u.ID) + `">.*?</tr>`)
+				m := re.FindString(body)
+				if m == "" {
+					t.Fatalf("no row for %s", u.Login)
+				}
+				return m
+			}
+			// html/template renders the JS-context id as "( 2 )"; match loosely.
+			control := func(fn string, u auth.BlogUser) *regexp.Regexp {
+				return regexp.MustCompile(fn + `\(\s*` + strconv.Itoa(u.ID) + `\s*\)`)
+			}
+			if r := row(boss); !strings.Contains(r, "Admin") || strings.Contains(r, "demoteAdmin(") || strings.Contains(r, "promoteAdmin(") {
+				t.Errorf("last admin must be badged with no controls: %s", r)
+			}
+			if r := row(plain); !control("promoteAdmin", plain).MatchString(r) {
+				t.Errorf("github non-admin must have a promote control: %s", r)
+			}
+			if r := row(mailer); strings.Contains(r, "promoteAdmin(") || strings.Contains(r, "demoteAdmin(") {
+				t.Errorf("email user must have no controls: %s", r)
+			}
+			if !strings.Contains(body, "3 users") {
+				t.Errorf("expected a total in the summary")
+			}
+
+			// With a second admin the first one becomes demotable.
+			db.Create(&auth.AdminUser{BlogUserID: plain.ID})
+			w = httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			body = w.Body.String()
+			if r := row(boss); !control("demoteAdmin", boss).MatchString(r) {
+				t.Errorf("admin must have a demote control once another admin exists: %s", r)
+			}
+		})
+	}
+}
+
+func TestAdminUsers_Pagination(t *testing.T) {
+	router, a, db := newUsersHarness(t, "default")
+	seedUser(t, db, auth.ProviderGitHub, "1", "boss", true)
+	for i := 2; i <= 51; i++ {
+		seedUser(t, db, auth.ProviderGitHub, strconv.Itoa(i), "user"+strconv.Itoa(i), false)
+	}
+	a.On("IsAdmin", mock.Anything).Return(true)
+	a.On("IsLoggedIn", mock.Anything).Return(true)
+
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+	body := get("/admin/users")
+	if n := strings.Count(body, `id="user-row-`); n != 50 {
+		t.Errorf("expected 50 rows on page 1, got %d", n)
+	}
+	if !strings.Contains(body, "user51") || strings.Contains(body, ">boss<") {
+		t.Errorf("page 1 must be newest first and exclude the oldest user")
+	}
+	if !strings.Contains(body, "Page 1 of 2") || !strings.Contains(body, "/admin/users?page=2") {
+		t.Errorf("expected pagination summary and next link")
+	}
+	body = get("/admin/users?page=2")
+	if n := strings.Count(body, `id="user-row-`); n != 1 || !strings.Contains(body, ">boss<") {
+		t.Errorf("expected only the oldest user on page 2")
+	}
+	if !strings.Contains(get("/admin/users?page=abc"), "Page 1 of 2") {
+		t.Errorf("invalid page must fall back to page 1")
+	}
+}
+
+func TestPromoteAdminAPI(t *testing.T) {
+	router, a, db := newUsersHarness(t, "default")
+	seedUser(t, db, auth.ProviderGitHub, "1", "boss", true)
+	plain := seedUser(t, db, auth.ProviderGitHub, "2", "plain", false)
+	mailer := seedUser(t, db, auth.ProviderEmail, "m@example.com", "m@example.com", false)
+	a.On("IsAdmin", mock.Anything).Return(true)
+
+	if w := adminsJSON(router, "POST", plain.ID); w.Code != http.StatusOK {
+		t.Fatalf("promote github user: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var n int64
+	db.Model(&auth.AdminUser{}).Where("blog_user_id = ?", plain.ID).Count(&n)
+	if n != 1 {
+		t.Fatalf("expected plain to be admin after promotion")
+	}
+	if w := adminsJSON(router, "POST", mailer.ID); w.Code != http.StatusBadRequest {
+		t.Errorf("promote email user: expected 400, got %d", w.Code)
+	}
+	if w := adminsJSON(router, "POST", 999); w.Code != http.StatusNotFound {
+		t.Errorf("promote unknown user: expected 404, got %d", w.Code)
+	}
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/admins", strings.NewReader("not json"))
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("malformed body: expected 400, got %d", w.Code)
+	}
+	// A missing or non-positive id is a malformed request, not an unknown user.
+	for _, body := range []string{"{}", `{"id": 0}`, `{"id": -1}`} {
+		for _, method := range []string{"POST", "DELETE"} {
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(method, "/api/v1/admins", strings.NewReader(body))
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("%s %s: expected 400, got %d", method, body, w.Code)
+			}
+		}
+	}
+}
+
+func TestAdminUsers_SingularSummary(t *testing.T) {
+	router, a, db := newUsersHarness(t, "default")
+	seedUser(t, db, auth.ProviderGitHub, "1", "only", true)
+	a.On("IsAdmin", mock.Anything).Return(true)
+	a.On("IsLoggedIn", mock.Anything).Return(true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/users", nil)
+	router.ServeHTTP(w, req)
+	if body := w.Body.String(); !strings.Contains(body, "1 user<") || strings.Contains(body, "1 users") {
+		t.Errorf("expected the summary to read '1 user', body: %.400s", body)
+	}
+}
+
+// TestAdminUsers_ListError checks a failing user query surfaces as a 500
+// rather than rendering an empty list as if there were no users.
+func TestAdminUsers_ListError(t *testing.T) {
+	router, a, db := newUsersHarness(t, "default")
+	a.On("IsAdmin", mock.Anything).Return(true)
+	a.On("IsLoggedIn", mock.Anything).Return(true)
+	if err := db.Migrator().DropTable(&auth.BlogUser{}); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/users", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestDemoteAdminAPI(t *testing.T) {
+	router, a, db := newUsersHarness(t, "default")
+	boss := seedUser(t, db, auth.ProviderGitHub, "1", "boss", true)
+	second := seedUser(t, db, auth.ProviderGitHub, "2", "second", true)
+	plain := seedUser(t, db, auth.ProviderGitHub, "3", "plain", false)
+	a.On("IsAdmin", mock.Anything).Return(true)
+
+	if w := adminsJSON(router, "DELETE", plain.ID); w.Code != http.StatusNotFound {
+		t.Errorf("demote non-admin: expected 404, got %d", w.Code)
+	}
+	if w := adminsJSON(router, "DELETE", second.ID); w.Code != http.StatusOK {
+		t.Fatalf("demote with another admin left: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := adminsJSON(router, "DELETE", boss.ID); w.Code != http.StatusConflict {
+		t.Errorf("demote last admin: expected 409, got %d", w.Code)
+	}
+	var n int64
+	db.Model(&auth.AdminUser{}).Count(&n)
+	if n != 1 {
+		t.Fatalf("expected exactly one admin to remain, got %d", n)
 	}
 }
