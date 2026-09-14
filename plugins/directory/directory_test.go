@@ -83,7 +83,7 @@ func TestScheduledJob_RefreshesWhenStale(t *testing.T) {
 	if len(jobs) != 1 || jobs[0].Interval != time.Minute {
 		t.Fatalf("jobs: %+v", jobs)
 	}
-	settings := map[string]string{"index_url": srv.URL + "/index.json", "refresh_minutes": "15"}
+	settings := map[string]string{"enabled": "true", "index_url": srv.URL + "/index.json", "refresh_minutes": "15"}
 
 	// Empty cache: the job fetches.
 	if err := jobs[0].Run(nil, settings); err != nil {
@@ -109,6 +109,46 @@ func TestScheduledJob_RefreshesWhenStale(t *testing.T) {
 	}
 	if srv.hits.Load() == before {
 		t.Error("job should refetch a stale index")
+	}
+}
+
+func TestScheduledJob_NoopWhenDisabled(t *testing.T) {
+	srv := newFixtureServer(t)
+	p := New()
+	p.fetcher = NewFetcher(srv.Client())
+	jobs := p.ScheduledJobs()
+
+	// enabled unset: no-op, no HTTP hit, cache stays empty.
+	if err := jobs[0].Run(nil, map[string]string{"index_url": srv.URL + "/index.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if srv.hits.Load() != 0 {
+		t.Error("job should not have hit the server while enabled is unset")
+	}
+	if _, _, ok := p.fetcher.Index(); ok {
+		t.Error("cache should stay empty while enabled is unset")
+	}
+
+	// enabled = "false": same.
+	if err := jobs[0].Run(nil, map[string]string{"enabled": "false", "index_url": srv.URL + "/index.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if srv.hits.Load() != 0 {
+		t.Error("job should not have hit the server while enabled is false")
+	}
+	if _, _, ok := p.fetcher.Index(); ok {
+		t.Error("cache should stay empty while enabled is false")
+	}
+
+	// enabled = "true": the job fetches.
+	if err := jobs[0].Run(nil, map[string]string{"enabled": "true", "index_url": srv.URL + "/index.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if srv.hits.Load() == 0 {
+		t.Error("job should have hit the server once enabled")
+	}
+	if _, _, ok := p.fetcher.Index(); !ok {
+		t.Error("cache should be populated once enabled")
 	}
 }
 

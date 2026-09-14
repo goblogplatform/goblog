@@ -102,6 +102,9 @@ func (p *Plugin) ScheduledJobs() []gplugin.ScheduledJob {
 		Name:     "refresh-index",
 		Interval: time.Minute,
 		Run: func(_ *gorm.DB, settings map[string]string) error {
+			if settings["enabled"] != "true" {
+				return nil
+			}
 			if time.Since(p.fetcher.FetchedAt()) < refreshInterval(settings) {
 				return nil
 			}
