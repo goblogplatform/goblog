@@ -18,6 +18,10 @@
                     <input type="{{ .Type }}" id="{{ .Key }}" name="{{ .Key }}" class="form-control" oninput="uploadFile(this)" required>
                     {{ else if eq .Type "textarea" }}
                     <textarea id="{{ .Key }}" name="{{ .Key }}" class="form-control" rows="5">{{ .Value }}</textarea>
+                    {{ else if eq .Type "checkbox" }}
+                    <div class="form-check form-switch">
+                        <input type="checkbox" id="{{ .Key }}" name="{{ .Key }}" class="form-check-input" {{ if eq .Value "true" }}checked{{ end }}>
+                    </div>
                     {{ else if eq .Key "theme" }}
                     <select id="{{ .Key }}" name="{{ .Key }}" class="form-control">
                         {{ $current := .Value }}
