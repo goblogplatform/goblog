@@ -16,7 +16,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 - Full-text search
 - File uploads (images, PDFs, etc.)
 - Internal and external backlink tracking
-- Comments with markdown support, spam honeypot, and rate limiting
+- Comments with markdown support, spam honeypot, and rate limiting; by default commenters must be logged in (GitHub or email code)
 - RSS-ready sitemap generation
 
 ### Pages
@@ -103,6 +103,9 @@ smtp_from=blog@example.com
 When `smtp_host` and `smtp_from` are both set the login page offers "sign in with email"; otherwise it shows GitHub only. Codes expire after 10 minutes, allow 5 wrong attempts, and can be re-requested once a minute. Email users are regular users — the admin account is still GitHub-only (see above).
 
 SMTP settings are read once at startup, so restart goblog after changing any `smtp_*` value in `.env` for the change to take effect. Go's SMTP client only sends `smtp_user`/`smtp_password` over an encrypted connection (STARTTLS, or implicit TLS on port 465) unless the host is `localhost`, so if you need an unencrypted remote relay, use it without credentials.
+
+### Comments and Login
+Comments require a logged-in user by default: the comment form is replaced by a "Log in to leave a comment" link, and a comment is attributed to the account that posted it (the email is always the account's; the name defaults to the GitHub name or the email's local part but can be edited per comment). Since email login is the way most readers will get an account, configure SMTP as above. If you would rather allow anonymous comments — for example on a site with GitHub login only — untick **comments_require_login** on the admin settings page.
 
 ## Theming
 
