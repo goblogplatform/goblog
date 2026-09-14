@@ -68,16 +68,16 @@
       {{ if .email_login_enabled }}
       <div class="clear">&nbsp;</div>
       <p class="text-muted">or sign in with email</p>
-      <form id="email-form" class="form-inline justify-content-center">
-        <input type="email" id="email-input" class="form-control mr-2" placeholder="you@example.com" autocomplete="email" required>
+      <form id="email-form" class="justify-content-center gap-2 flex-wrap mx-auto" style="display: flex; max-width: 420px;">
+        <input type="email" id="email-input" class="form-control flex-grow-1" style="flex-basis: 220px;" placeholder="you@example.com" autocomplete="email" required>
         <button type="submit" class="btn btn-primary">Send code</button>
       </form>
-      <form id="code-form" class="form-inline justify-content-center" style="display:none">
-        <input type="text" id="code-input" class="form-control mr-2" placeholder="6-digit code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+      <form id="code-form" class="justify-content-center gap-2 flex-wrap mx-auto" style="display: none; max-width: 420px;">
+        <input type="text" id="code-input" class="form-control flex-grow-1" style="flex-basis: 220px; letter-spacing: 0.2em;" placeholder="6-digit code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
         <button type="submit" class="btn btn-primary">Verify</button>
       </form>
-      <p id="email-login-status" class="mt-2"></p>
-      <a href="#" id="email-change" style="display:none">use a different email</a>
+      <p id="email-login-status" class="text-muted mt-2" style="min-height: 1.5em;"></p>
+      <a href="#" id="email-change" class="small" style="display: none;">use a different email</a>
       {{ end }}
 
       <div class="clear">
