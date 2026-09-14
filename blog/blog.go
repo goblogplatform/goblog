@@ -1074,6 +1074,7 @@ func (b *Blog) Login(c *gin.Context) {
 		"logged_in":           b.auth.IsLoggedIn(c),
 		"is_admin":            b.auth.IsAdmin(c),
 		"client_id":           clientID,
+		"next":                SafeNext(c.Query("next")),
 		"version":             b.Version,
 		"title":               "Login",
 		"email_login_enabled": b.auth.EmailLoginEnabled(),
@@ -1085,6 +1086,19 @@ func (b *Blog) Login(c *gin.Context) {
 }
 
 // Logout of the blog
+// SafeNext reduces a requested post-login destination to a same-site path:
+// it must start with a single "/" (so no "//host" or "/\host" scheme-relative
+// URLs and no absolute URLs). Anything else becomes "/".
+func SafeNext(raw string) string {
+	if len(raw) < 1 || raw[0] != '/' {
+		return "/"
+	}
+	if len(raw) > 1 && (raw[1] == '/' || raw[1] == '\\') {
+		return "/"
+	}
+	return raw
+}
+
 func (b *Blog) Logout(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Delete("token")

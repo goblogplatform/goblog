@@ -4,12 +4,14 @@
   var host = location.protocol + '//' + window.location.host
   var urlParams = new URLSearchParams(window.location.search);
   var code = urlParams.get('code');
+  // Where to go after logging in; validated server-side to a same-site path.
+  var next = {{ .next }};
 
   if (code) {
     //todo: get the post to be tied to the uri of the page (so it works on localhost, dev and prod)
     var post = $.post(host + "/api/login", {"code": code});
     post.done(function(data) {
-      window.location.href = '/';
+      window.location.href = next;
     });
   }
 
@@ -35,7 +37,7 @@
       e.preventDefault();
       status.text("");
       $.post(host + "/api/login/email/verify", {email: $("#email-input").val(), code: $("#code-input").val()})
-        .done(function () { window.location.href = "/"; })
+        .done(function () { window.location.href = next; })
         .fail(function (xhr) { showError(xhr, "Could not verify the code."); });
     });
     change.on("click", function (e) {

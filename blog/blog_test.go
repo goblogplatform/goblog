@@ -419,6 +419,25 @@ func TestBlogWorkflow(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected to get status %d but instead got %d\n", http.StatusOK, w.Code)
 	}
+	if !strings.Contains(w.Body.String(), `var next = "/"`) {
+		t.Errorf("expected the login page to default its post-login destination to /")
+	}
+
+	// login with a return-to path (issue #524); an off-site one is dropped
+	a.On("IsAdmin", mock.Anything).Return(false).Once()
+	req, _ = http.NewRequest("GET", "/login?next=/posts/2026/09/14/hi", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), `var next = "/posts/2026/09/14/hi"`) {
+		t.Errorf("expected the login page to carry the next path, body: %.300s", w.Body.String())
+	}
+	a.On("IsAdmin", mock.Anything).Return(false).Once()
+	req, _ = http.NewRequest("GET", "/login?next=//evil.example.com", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), `var next = "/"`) {
+		t.Errorf("expected an off-site next to fall back to /")
+	}
 
 	//login without the .env file
 	os.Rename("local.env", "local.env.old")
@@ -1116,5 +1135,24 @@ func TestPostPage_CommentFormFollowsLoginState(t *testing.T) {
 				t.Error("expected the page to say which account is commenting")
 			}
 		})
+	}
+}
+
+func TestSafeNext(t *testing.T) {
+	cases := map[string]string{
+		"":                              "/",
+		"/":                             "/",
+		"/posts/2026/09/14/hello":       "/posts/2026/09/14/hello",
+		"/posts/x?a=1#comments":         "/posts/x?a=1#comments",
+		"//evil.example.com":            "/",
+		"/\\evil.example.com":           "/",
+		"https://evil.example.com/post": "/",
+		"posts/relative":                "/",
+		"javascript:alert(1)":           "/",
+	}
+	for in, want := range cases {
+		if got := blog.SafeNext(in); got != want {
+			t.Errorf("SafeNext(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
