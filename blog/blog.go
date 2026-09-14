@@ -1226,10 +1226,8 @@ func (b *Blog) GetPostsByIDs(ids []uint) map[uint]Post {
 
 // SubmitComment handles POST /comments form submissions
 func (b *Blog) SubmitComment(c *gin.Context) {
-	redirect := c.PostForm("redirect")
-	if redirect == "" {
-		redirect = "/"
-	}
+	// The form names where to go afterwards; keep it on this site.
+	redirect := SafeNext(c.PostForm("redirect"))
 
 	// Honeypot check - if website field is filled, silently redirect
 	if c.PostForm("website") != "" {

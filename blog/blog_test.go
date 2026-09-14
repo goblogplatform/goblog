@@ -3,6 +3,7 @@ package blog_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 
 	"goblog/admin"
 	"goblog/auth"
@@ -1071,14 +1072,23 @@ func TestCommentsRequireLogin_Setting(t *testing.T) {
 }
 
 // renderPostPage renders the post page with the given theme, logged-in user
-// (nil for anonymous) and comments_require_login value.
+// (nil for anonymous) and comments_require_login value, through the /posts/
+// route. See renderPostPageVia for the NoRoute-resolved URL forms.
 func renderPostPage(t *testing.T, theme string, user *auth.BlogUser, requireLogin string) string {
+	t.Helper()
+	return renderPostPageVia(t, theme, user, false, requireLogin, "/posts/%s")
+}
+
+// renderPostPageVia renders a post whose permalink date is substituted into
+// pathFmt ("/posts/%s" for the routed handler, "/%s" for the legacy
+// date-only URL that NoRoute resolves) as an admin or a regular visitor.
+func renderPostPageVia(t *testing.T, theme string, user *auth.BlogUser, admin bool, requireLogin string, pathFmt string) string {
 	t.Helper()
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Setting{}, &blog.Page{}, &blog.Backlink{}, &blog.ExternalBacklink{})
 	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: requireLogin})
 	a := &Auth{user: user}
-	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsAdmin", mock.Anything).Return(admin)
 	a.On("IsLoggedIn", mock.Anything).Return(user != nil)
 	b := blog.New(db, a, "test")
 	post := blog.Post{Title: "Render Post", Content: "Body", Slug: "render-post"}
@@ -1092,13 +1102,42 @@ func renderPostPage(t *testing.T, theme string, user *auth.BlogUser, requireLogi
 	template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
 	router.SetHTMLTemplate(tmpl)
 	router.GET("/posts/:yyyy/:mm/:dd/:slug", b.Post)
-	req, _ := http.NewRequest("GET", post.Permalink(), nil)
+	router.NoRoute(b.NoRoute)
+	datePath := strings.TrimPrefix(post.Permalink(), "/posts/")
+	req, _ := http.NewRequest("GET", fmt.Sprintf(pathFmt, datePath), nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("%s: expected 200, got %d", theme, w.Code)
 	}
 	return w.Body.String()
+}
+
+// TestNoRoutePost_CommentFormFollowsLoginState covers the same states for
+// posts resolved by NoRoute (legacy /yyyy/mm/dd/slug URLs), for both the
+// visitor and the admin rendering, which use a separate render path.
+func TestNoRoutePost_CommentFormFollowsLoginState(t *testing.T) {
+	t.Run("visitor, required and logged out", func(t *testing.T) {
+		body := renderPostPageVia(t, "default", nil, false, "true", "/%s")
+		if strings.Contains(body, `action="/comments"`) || !strings.Contains(body, `href="/login?next=`) {
+			t.Error("expected a login link instead of the comment form")
+		}
+	})
+	t.Run("visitor, logged in", func(t *testing.T) {
+		user := &auth.BlogUser{ID: 3, Login: "someone", Email: "someone@example.com"}
+		body := renderPostPageVia(t, "default", user, false, "true", "/%s")
+		assertCommentFormProtected(t, body)
+		if !strings.Contains(body, "Commenting as someone@example.com") {
+			t.Error("expected the logged-in commenter note")
+		}
+	})
+	t.Run("admin", func(t *testing.T) {
+		user := &auth.BlogUser{ID: 1, Login: "admin", Email: "admin@example.com"}
+		body := renderPostPageVia(t, "default", user, true, "true", "/%s")
+		if !strings.Contains(body, "Render Post") {
+			t.Error("expected the admin post view to render")
+		}
+	})
 }
 
 // TestPostPage_CommentFormFollowsLoginState covers the comment section's three
@@ -1153,6 +1192,16 @@ func TestSafeNext(t *testing.T) {
 	for in, want := range cases {
 		if got := blog.SafeNext(in); got != want {
 			t.Errorf("SafeNext(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSubmitComment_RedirectIsSameSiteOnly(t *testing.T) {
+	_, _, _, _, submit := newCommentFixture(t)
+	for _, bad := range []string{"https://evil.example.com/", "//evil.example.com", "/\\evil.example.com"} {
+		loc, _ := submit(map[string]string{"redirect": bad})
+		if !strings.HasPrefix(loc, "/?comment_error=") {
+			t.Errorf("redirect %q: expected a same-site fallback, got %s", bad, loc)
 		}
 	}
 }
