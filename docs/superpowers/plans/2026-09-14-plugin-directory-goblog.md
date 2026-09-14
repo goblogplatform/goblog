@@ -1667,6 +1667,7 @@ To publish your own, see the <a href="https://github.com/goblogplatform/plugins"
 
 ```html
 <p><a href="{{ .Base }}">&larr; All plugins</a></p>
+<h2>{{ .Entry.DisplayName }} <small>v{{ .Entry.Version }}</small></h2>
 <p>{{ .Entry.Description }}</p>
 <dl>
   <dt>Version</dt><dd>{{ .Entry.Version }}{{ if .Entry.ReleasedAt }} <small>(released {{ date .Entry.ReleasedAt }})</small>{{ end }}</dd>
