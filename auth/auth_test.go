@@ -275,3 +275,68 @@ func TestUpsertUser_RejectsEmptyIdentity(t *testing.T) {
 		t.Fatalf("expected no rows to be created, got %d", count)
 	}
 }
+
+// currentUserVia runs CurrentUser inside a request whose session carries
+// the given token ("" for no token) and returns what it reported.
+func currentUserVia(t *testing.T, a *auth.Auth, token string) *auth.BlogUser {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(sessions.Sessions("session", cookie.NewStore([]byte("test"))))
+	var got *auth.BlogUser
+	r.GET("/", func(c *gin.Context) {
+		if token != "" {
+			s := sessions.Default(c)
+			s.Set("token", token)
+			if err := s.Save(); err != nil {
+				t.Fatalf("save session: %v", err)
+			}
+		}
+		got = a.CurrentUser(c)
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	return got
+}
+
+func TestCurrentUser_NoSession_ReturnsNil(t *testing.T) {
+	a, _ := newAuth(t)
+	if got := currentUserVia(t, a, ""); got != nil {
+		t.Fatalf("expected nil, got %+v", got)
+	}
+}
+
+func TestCurrentUser_UnknownToken_ReturnsNil(t *testing.T) {
+	a, _ := newAuth(t)
+	if got := currentUserVia(t, a, "nope"); got != nil {
+		t.Fatalf("expected nil, got %+v", got)
+	}
+}
+
+func TestCurrentUser_KnownToken_ReturnsUser(t *testing.T) {
+	a, db := newAuth(t)
+	db.Create(&auth.BlogUser{Provider: auth.ProviderEmail, ProviderID: "who@example.com", Login: "who@example.com", Email: "who@example.com", AccessToken: "tok"})
+	got := currentUserVia(t, a, "tok")
+	if got == nil || got.Email != "who@example.com" {
+		t.Fatalf("expected the email user, got %+v", got)
+	}
+}
+
+func TestBlogUser_DisplayName(t *testing.T) {
+	cases := []struct {
+		name string
+		user auth.BlogUser
+		want string
+	}{
+		{"name wins", auth.BlogUser{Name: "Jason Ernst", Login: "compscidr", Email: "j@example.com"}, "Jason Ernst"},
+		{"login when no name", auth.BlogUser{Login: "compscidr", Email: "j@example.com"}, "compscidr"},
+		{"email user shows local part", auth.BlogUser{Provider: auth.ProviderEmail, Login: "jason@example.com", Email: "jason@example.com"}, "jason"},
+		{"nothing set", auth.BlogUser{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.user.DisplayName(); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}

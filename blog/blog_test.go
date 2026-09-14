@@ -3,7 +3,8 @@ package blog_test
 import (
 	"bytes"
 	"encoding/json"
-	
+	"fmt"
+
 	"goblog/admin"
 	"goblog/auth"
 	"goblog/blog"
@@ -29,7 +30,11 @@ import (
 
 type Auth struct {
 	mock.Mock
+	// user is what CurrentUser reports; nil means nobody is logged in.
+	user *auth.BlogUser
 }
+
+func (m *Auth) CurrentUser(c *gin.Context) *auth.BlogUser { return m.user }
 
 func (m *Auth) IsAdmin(c *gin.Context) bool {
 	args := m.Called(c)
@@ -56,12 +61,16 @@ func TestBlogWorkflow(t *testing.T) {
 	db.AutoMigrate(&blog.Tag{})
 	db.AutoMigrate(&blog.Comment{})
 	db.AutoMigrate(&blog.Page{})
+	db.AutoMigrate(&blog.Setting{})
+	// This workflow exercises anonymous commenting, so turn off the login
+	// requirement (issue #524); the logged-in path has its own tests.
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
 
 	// Seed default post type
 	defaultType := blog.PostType{Name: "Post", Slug: "posts", Description: "Blog posts"}
 	db.Create(&defaultType)
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 	admin := admin.New(db, a, &b, "test")
 
@@ -411,6 +420,25 @@ func TestBlogWorkflow(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected to get status %d but instead got %d\n", http.StatusOK, w.Code)
 	}
+	if !strings.Contains(w.Body.String(), `var next = "/"`) {
+		t.Errorf("expected the login page to default its post-login destination to /")
+	}
+
+	// login with a return-to path (issue #524); an off-site one is dropped
+	a.On("IsAdmin", mock.Anything).Return(false).Once()
+	req, _ = http.NewRequest("GET", "/login?next=/posts/2026/09/14/hi", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), `var next = "/posts/2026/09/14/hi"`) {
+		t.Errorf("expected the login page to carry the next path, body: %.300s", w.Body.String())
+	}
+	a.On("IsAdmin", mock.Anything).Return(false).Once()
+	req, _ = http.NewRequest("GET", "/login?next=//evil.example.com", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), `var next = "/"`) {
+		t.Errorf("expected an off-site next to fall back to /")
+	}
 
 	//login without the .env file
 	os.Rename("local.env", "local.env.old")
@@ -490,7 +518,7 @@ func TestBacklinks(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Backlink{}, &blog.ExternalBacklink{})
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 
 	// Create two posts. Post B will link to Post A.
@@ -557,7 +585,7 @@ func TestGetNavPages(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&blog.Page{}, &blog.PostType{}, &blog.Post{}, &blog.Setting{})
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 
 	// Create pages with various states
@@ -583,7 +611,7 @@ func TestGetPageBySlug(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&blog.Page{}, &blog.PostType{}, &blog.Post{}, &blog.Setting{})
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 
 	db.Create(&blog.Page{Title: "About", Slug: "about", PageType: blog.PageTypeAbout, Enabled: true})
@@ -615,7 +643,7 @@ func TestExternalBacklinks(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
 	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Backlink{}, &blog.ExternalBacklink{})
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 
 	post := blog.Post{
@@ -786,7 +814,10 @@ func reverseString(s string) string {
 // implausibly fast or with a stale token.
 func TestSubmitCommentSpamCheck(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
-	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{})
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Setting{})
+	// Anonymous submissions: the anti-spam checks are independent of the
+	// login requirement (issue #524), which is tested separately.
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
 	a := &Auth{}
 	b := blog.New(db, a, "test")
 
@@ -906,5 +937,271 @@ func TestGetComments(t *testing.T) {
 	comments, total = b.GetComments(10, 2)
 	if len(comments) != 0 || total != 5 {
 		t.Errorf("expected empty page beyond the end with total 5, got %+v total %d", comments, total)
+	}
+}
+
+// newCommentFixture builds a blog with one post and a /comments route, returning
+// a submit helper. The mock auth's user field controls who is logged in and
+// the settings table starts empty, so comments_require_login is at its default.
+func newCommentFixture(t *testing.T) (*gorm.DB, blog.Blog, *Auth, *blog.Post, func(fields map[string]string) (string, int)) {
+	t.Helper()
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Setting{})
+	a := &Auth{}
+	b := blog.New(db, a, "test")
+	post := blog.Post{Title: "Test Post", Content: "Some content", Slug: "test-post"}
+	db.Create(&post)
+
+	router := gin.Default()
+	router.POST("/comments", b.SubmitComment)
+	ip := 0
+	submit := func(fields map[string]string) (string, int) {
+		t.Helper()
+		token := b.CommentTokenAt(post.ID, time.Now().Add(-10*time.Second))
+		form := url.Values{}
+		form.Set("post_id", strconv.Itoa(int(post.ID)))
+		form.Set("content", "Hello there")
+		form.Set("redirect", "/p")
+		form.Set("comment_token", token)
+		form.Set("comment_check", reverseString(token))
+		for k, v := range fields {
+			form.Set(k, v)
+		}
+		req, _ := http.NewRequest("POST", "/comments", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		ip++
+		req.RemoteAddr = "10.1.0." + strconv.Itoa(ip) + ":1234" // fresh IP per call to dodge the rate limiter
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Header().Get("Location"), w.Code
+	}
+	return db, b, a, &post, submit
+}
+
+func TestSubmitComment_RequiresLoginByDefault(t *testing.T) {
+	db, _, _, _, submit := newCommentFixture(t)
+	loc, code := submit(map[string]string{"name": "anon"})
+	if code != http.StatusSeeOther || !strings.Contains(loc, "comment_error=login_required") {
+		t.Fatalf("expected login_required redirect, got %d %s", code, loc)
+	}
+	var n int64
+	db.Model(&blog.Comment{}).Count(&n)
+	if n != 0 {
+		t.Fatalf("expected no comment stored, got %d", n)
+	}
+}
+
+func TestSubmitComment_AnonymousAllowedWhenSettingOff(t *testing.T) {
+	db, _, _, _, submit := newCommentFixture(t)
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
+	loc, _ := submit(map[string]string{"name": "anon", "email": "anon@example.com"})
+	if !strings.Contains(loc, "#comment-") {
+		t.Fatalf("expected success redirect, got %s", loc)
+	}
+	var c blog.Comment
+	db.First(&c)
+	if c.Name != "anon" || c.Email != "anon@example.com" || c.UserID != nil {
+		t.Fatalf("expected anonymous comment with form values and no user, got %+v", c)
+	}
+}
+
+func TestSubmitComment_LoggedInUsesAccountEmailAndRecordsUser(t *testing.T) {
+	db, _, a, _, submit := newCommentFixture(t)
+	user := auth.BlogUser{Provider: auth.ProviderEmail, ProviderID: "real@example.com", Login: "real@example.com", Email: "real@example.com", AccessToken: "tok"}
+	db.Create(&user)
+	a.user = &user
+
+	loc, _ := submit(map[string]string{"name": "Real Person", "email": "spoofed@example.com"})
+	if !strings.Contains(loc, "#comment-") {
+		t.Fatalf("expected success redirect, got %s", loc)
+	}
+	var c blog.Comment
+	db.First(&c)
+	if c.Name != "Real Person" {
+		t.Errorf("expected the submitted name, got %q", c.Name)
+	}
+	if c.Email != "real@example.com" {
+		t.Errorf("expected the account email, got %q", c.Email)
+	}
+	if c.UserID == nil || *c.UserID != user.ID {
+		t.Errorf("expected UserID %d, got %v", user.ID, c.UserID)
+	}
+}
+
+func TestSubmitComment_LoggedInBlankNameFallsBackToDisplayName(t *testing.T) {
+	db, _, a, _, submit := newCommentFixture(t)
+	user := auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "1", Login: "compscidr", Email: "j@example.com", AccessToken: "tok"}
+	db.Create(&user)
+	a.user = &user
+
+	loc, _ := submit(map[string]string{"name": "  "})
+	if !strings.Contains(loc, "#comment-") {
+		t.Fatalf("expected success redirect, got %s", loc)
+	}
+	var c blog.Comment
+	db.First(&c)
+	if c.Name != "compscidr" {
+		t.Errorf("expected display name fallback, got %q", c.Name)
+	}
+}
+
+func TestSubmitComment_LoggedInStillNeedsContent(t *testing.T) {
+	_, _, a, _, submit := newCommentFixture(t)
+	a.user = &auth.BlogUser{ID: 7, Login: "someone"}
+	loc, _ := submit(map[string]string{"content": ""})
+	if !strings.Contains(loc, "comment_error=missing_fields") {
+		t.Fatalf("expected missing_fields redirect, got %s", loc)
+	}
+}
+
+func TestCommentsRequireLogin_Setting(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Setting{})
+	b := blog.New(db, &Auth{}, "test")
+	if !b.CommentsRequireLogin() {
+		t.Fatal("expected login to be required when the setting row is missing")
+	}
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
+	if b.CommentsRequireLogin() {
+		t.Fatal("expected login not to be required when the setting is false")
+	}
+	db.Model(&blog.Setting{}).Where("key = ?", "comments_require_login").Update("value", "true")
+	if !b.CommentsRequireLogin() {
+		t.Fatal("expected login to be required when the setting is true")
+	}
+}
+
+// renderPostPage renders the post page with the given theme, logged-in user
+// (nil for anonymous) and comments_require_login value, through the /posts/
+// route. See renderPostPageVia for the NoRoute-resolved URL forms.
+func renderPostPage(t *testing.T, theme string, user *auth.BlogUser, requireLogin string) string {
+	t.Helper()
+	return renderPostPageVia(t, theme, user, false, requireLogin, "/posts/%s")
+}
+
+// renderPostPageVia renders a post whose permalink date is substituted into
+// pathFmt ("/posts/%s" for the routed handler, "/%s" for the legacy
+// date-only URL that NoRoute resolves) as an admin or a regular visitor.
+func renderPostPageVia(t *testing.T, theme string, user *auth.BlogUser, admin bool, requireLogin string, pathFmt string) string {
+	t.Helper()
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Setting{}, &blog.Page{}, &blog.Backlink{}, &blog.ExternalBacklink{})
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: requireLogin})
+	a := &Auth{user: user}
+	a.On("IsAdmin", mock.Anything).Return(admin)
+	a.On("IsLoggedIn", mock.Anything).Return(user != nil)
+	b := blog.New(db, a, "test")
+	post := blog.Post{Title: "Render Post", Content: "Body", Slug: "render-post"}
+	db.Create(&post)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/posts/:yyyy/:mm/:dd/:slug", b.Post)
+	router.NoRoute(b.NoRoute)
+	datePath := strings.TrimPrefix(post.Permalink(), "/posts/")
+	req, _ := http.NewRequest("GET", fmt.Sprintf(pathFmt, datePath), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s: expected 200, got %d", theme, w.Code)
+	}
+	return w.Body.String()
+}
+
+// TestNoRoutePost_CommentFormFollowsLoginState covers the same states for
+// posts resolved by NoRoute (legacy /yyyy/mm/dd/slug URLs), for both the
+// visitor and the admin rendering, which use a separate render path.
+func TestNoRoutePost_CommentFormFollowsLoginState(t *testing.T) {
+	t.Run("visitor, required and logged out", func(t *testing.T) {
+		body := renderPostPageVia(t, "default", nil, false, "true", "/%s")
+		if strings.Contains(body, `action="/comments"`) || !strings.Contains(body, `href="/login?next=`) {
+			t.Error("expected a login link instead of the comment form")
+		}
+	})
+	t.Run("visitor, logged in", func(t *testing.T) {
+		user := &auth.BlogUser{ID: 3, Login: "someone", Email: "someone@example.com"}
+		body := renderPostPageVia(t, "default", user, false, "true", "/%s")
+		assertCommentFormProtected(t, body)
+		if !strings.Contains(body, "Commenting as someone@example.com") {
+			t.Error("expected the logged-in commenter note")
+		}
+	})
+	t.Run("admin", func(t *testing.T) {
+		user := &auth.BlogUser{ID: 1, Login: "admin", Email: "admin@example.com"}
+		body := renderPostPageVia(t, "default", user, true, "true", "/%s")
+		if !strings.Contains(body, "Render Post") {
+			t.Error("expected the admin post view to render")
+		}
+	})
+}
+
+// TestPostPage_CommentFormFollowsLoginState covers the comment section's three
+// states (issue #524) in every theme.
+func TestPostPage_CommentFormFollowsLoginState(t *testing.T) {
+	for _, theme := range []string{"default", "forest", "minimal"} {
+		t.Run(theme+"/required and logged out", func(t *testing.T) {
+			body := renderPostPage(t, theme, nil, "true")
+			if strings.Contains(body, `action="/comments"`) {
+				t.Error("expected no comment form")
+			}
+			if !strings.Contains(body, `href="/login?next=`) {
+				t.Error("expected a login link that returns to the post")
+			}
+		})
+		t.Run(theme+"/not required and logged out", func(t *testing.T) {
+			body := renderPostPage(t, theme, nil, "false")
+			assertCommentFormProtected(t, body)
+			if !strings.Contains(body, `name="email"`) {
+				t.Error("expected the email field for anonymous commenters")
+			}
+		})
+		t.Run(theme+"/logged in", func(t *testing.T) {
+			user := &auth.BlogUser{ID: 3, Provider: auth.ProviderEmail, Login: "jason@example.com", Email: "jason@example.com"}
+			body := renderPostPage(t, theme, user, "true")
+			assertCommentFormProtected(t, body)
+			if strings.Contains(body, `name="email"`) {
+				t.Error("expected no email field for logged-in commenters")
+			}
+			if !strings.Contains(body, `name="name" value="jason"`) {
+				t.Error("expected the name field prefilled with the display name")
+			}
+			if !strings.Contains(body, "jason@example.com") {
+				t.Error("expected the page to say which account is commenting")
+			}
+		})
+	}
+}
+
+func TestSafeNext(t *testing.T) {
+	cases := map[string]string{
+		"":                              "/",
+		"/":                             "/",
+		"/posts/2026/09/14/hello":       "/posts/2026/09/14/hello",
+		"/posts/x?a=1#comments":         "/posts/x?a=1#comments",
+		"//evil.example.com":            "/",
+		"/\\evil.example.com":           "/",
+		"https://evil.example.com/post": "/",
+		"posts/relative":                "/",
+		"javascript:alert(1)":           "/",
+	}
+	for in, want := range cases {
+		if got := blog.SafeNext(in); got != want {
+			t.Errorf("SafeNext(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSubmitComment_RedirectIsSameSiteOnly(t *testing.T) {
+	_, _, _, _, submit := newCommentFixture(t)
+	for _, bad := range []string{"https://evil.example.com/", "//evil.example.com", "/\\evil.example.com"} {
+		loc, _ := submit(map[string]string{"redirect": bad})
+		if !strings.HasPrefix(loc, "/?comment_error=") {
+			t.Errorf("redirect %q: expected a same-site fallback, got %s", bad, loc)
+		}
 	}
 }

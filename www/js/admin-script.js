@@ -30,6 +30,9 @@ function updateSettings(redirect) {
             }
         } else if (type === "submit") {
             return
+        } else if (type === "checkbox") {
+            // a checkbox's .value is "on" whether or not it is ticked
+            value = this.checked ? "true" : "false"
         }
         settings.push(
             {"key": key, "value": value, "type": type}

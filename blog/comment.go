@@ -11,4 +11,8 @@ type Comment struct {
 	Email     string    `json:"email"`
 	Content   string    `sql:"type:text;" json:"content"`
 	IPAddress string    `json:"-"`
+	// UserID is the BlogUser who posted the comment while logged in; nil for
+	// comments left anonymously (before login was required, or with the
+	// comments_require_login setting off).
+	UserID *int `json:"user_id" gorm:"index"`
 }

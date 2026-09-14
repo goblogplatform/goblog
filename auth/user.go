@@ -1,6 +1,9 @@
 package auth
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Values for BlogUser.Provider.
 const (
@@ -24,6 +27,19 @@ type BlogUser struct {
 	// AccessToken is the session credential: the GitHub OAuth token for
 	// GitHub users, a random token for email users. Never sent to clients.
 	AccessToken string `json:"-"`
+}
+
+// DisplayName is the name to show for the user where one is needed, e.g. as
+// the default author of a comment: the profile name, else the login, with an
+// email-address login reduced to its local part so addresses aren't shown.
+func (u BlogUser) DisplayName() string {
+	if u.Name != "" {
+		return u.Name
+	}
+	if at := strings.Index(u.Login, "@"); at > 0 {
+		return u.Login[:at]
+	}
+	return u.Login
 }
 
 type AdminUser struct {

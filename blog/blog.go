@@ -649,35 +649,39 @@ func (b *Blog) renderPost(c *gin.Context, post *Post) {
 	b.TrackReferer(c, post.ID)
 	if b.auth.IsAdmin(c) {
 		b.Render(c, http.StatusOK, "post-admin.html", gin.H{
-			"logged_in":          b.auth.IsLoggedIn(c),
-			"is_admin":           b.auth.IsAdmin(c),
-			"post":               post,
-			"post_types":         b.GetPostTypes(),
-			"version":            b.Version,
-			"recent":             b.GetLatest(),
-			"admin_page":         false,
-			"settings":           b.GetSettings(),
-			"comments":           b.getCommentsByPostID(post.ID),
-			"comment_error":      c.Query("comment_error"),
-			"comment_token":      b.CommentToken(post.ID),
-			"backlinks":          b.GetBacklinks(post.ID),
-			"outbound_links":     b.GetOutboundLinks(post.ID),
-			"external_backlinks": b.GetExternalBacklinks(post.ID),
-			"nav_pages":          b.GetNavPages(),
+			"logged_in":              b.auth.IsLoggedIn(c),
+			"is_admin":               b.auth.IsAdmin(c),
+			"post":                   post,
+			"post_types":             b.GetPostTypes(),
+			"version":                b.Version,
+			"recent":                 b.GetLatest(),
+			"admin_page":             false,
+			"settings":               b.GetSettings(),
+			"comments":               b.getCommentsByPostID(post.ID),
+			"comment_error":          c.Query("comment_error"),
+			"comment_token":          b.CommentToken(post.ID),
+			"comment_user":           b.auth.CurrentUser(c),
+			"comments_require_login": b.CommentsRequireLogin(),
+			"backlinks":              b.GetBacklinks(post.ID),
+			"outbound_links":         b.GetOutboundLinks(post.ID),
+			"external_backlinks":     b.GetExternalBacklinks(post.ID),
+			"nav_pages":              b.GetNavPages(),
 		})
 	} else {
 		b.Render(c, http.StatusOK, "post.html", gin.H{
-			"logged_in":     b.auth.IsLoggedIn(c),
-			"is_admin":      b.auth.IsAdmin(c),
-			"post":          post,
-			"version":       b.Version,
-			"recent":        b.GetLatest(),
-			"admin_page":    false,
-			"settings":      b.GetSettings(),
-			"comments":      b.getCommentsByPostID(post.ID),
-			"comment_error": c.Query("comment_error"),
-			"comment_token": b.CommentToken(post.ID),
-			"nav_pages":     b.GetNavPages(),
+			"logged_in":              b.auth.IsLoggedIn(c),
+			"is_admin":               b.auth.IsAdmin(c),
+			"post":                   post,
+			"version":                b.Version,
+			"recent":                 b.GetLatest(),
+			"admin_page":             false,
+			"settings":               b.GetSettings(),
+			"comments":               b.getCommentsByPostID(post.ID),
+			"comment_error":          c.Query("comment_error"),
+			"comment_token":          b.CommentToken(post.ID),
+			"comment_user":           b.auth.CurrentUser(c),
+			"comments_require_login": b.CommentsRequireLogin(),
+			"nav_pages":              b.GetNavPages(),
 		})
 	}
 }
@@ -840,17 +844,19 @@ func (b *Blog) Post(c *gin.Context) {
 	} else {
 		b.TrackReferer(c, post.ID)
 		data := gin.H{
-			"logged_in":     b.auth.IsLoggedIn(c),
-			"is_admin":      b.auth.IsAdmin(c),
-			"post":          post,
-			"version":       b.Version,
-			"recent":        b.GetLatest(),
-			"admin_page":    false,
-			"settings":      b.GetSettings(),
-			"comments":      b.getCommentsByPostID(post.ID),
-			"comment_error": c.Query("comment_error"),
-			"comment_token": b.CommentToken(post.ID),
-			"nav_pages":     b.GetNavPages(),
+			"logged_in":              b.auth.IsLoggedIn(c),
+			"is_admin":               b.auth.IsAdmin(c),
+			"post":                   post,
+			"version":                b.Version,
+			"recent":                 b.GetLatest(),
+			"admin_page":             false,
+			"settings":               b.GetSettings(),
+			"comments":               b.getCommentsByPostID(post.ID),
+			"comment_error":          c.Query("comment_error"),
+			"comment_token":          b.CommentToken(post.ID),
+			"comment_user":           b.auth.CurrentUser(c),
+			"comments_require_login": b.CommentsRequireLogin(),
+			"nav_pages":              b.GetNavPages(),
 		}
 		if b.auth.IsAdmin(c) {
 			data["backlinks"] = b.GetBacklinks(post.ID)
@@ -1068,6 +1074,7 @@ func (b *Blog) Login(c *gin.Context) {
 		"logged_in":           b.auth.IsLoggedIn(c),
 		"is_admin":            b.auth.IsAdmin(c),
 		"client_id":           clientID,
+		"next":                SafeNext(c.Query("next")),
 		"version":             b.Version,
 		"title":               "Login",
 		"email_login_enabled": b.auth.EmailLoginEnabled(),
@@ -1079,6 +1086,19 @@ func (b *Blog) Login(c *gin.Context) {
 }
 
 // Logout of the blog
+// SafeNext reduces a requested post-login destination to a same-site path:
+// it must start with a single "/" (so no "//host" or "/\host" scheme-relative
+// URLs and no absolute URLs). Anything else becomes "/".
+func SafeNext(raw string) string {
+	if len(raw) < 1 || raw[0] != '/' {
+		return "/"
+	}
+	if len(raw) > 1 && (raw[1] == '/' || raw[1] == '\\') {
+		return "/"
+	}
+	return raw
+}
+
 func (b *Blog) Logout(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Delete("token")
@@ -1156,6 +1176,17 @@ func (b *Blog) recordComment(ip string) {
 	b.commentLimiter[ip] = time.Now()
 }
 
+// CommentsRequireLogin reports the comments_require_login setting. Login is
+// required unless the setting exists and is explicitly "false", so a missing
+// row (or a settings table that hasn't been seeded) fails closed.
+func (b *Blog) CommentsRequireLogin() bool {
+	var setting Setting
+	if err := (*b.db).Where("key = ?", "comments_require_login").First(&setting).Error; err != nil {
+		return true
+	}
+	return setting.Value != "false"
+}
+
 func (b *Blog) getCommentsByPostID(postID uint) []Comment {
 	var comments []Comment
 	(*b.db).Where("post_id = ?", postID).Order("created_at asc").Find(&comments)
@@ -1195,10 +1226,8 @@ func (b *Blog) GetPostsByIDs(ids []uint) map[uint]Post {
 
 // SubmitComment handles POST /comments form submissions
 func (b *Blog) SubmitComment(c *gin.Context) {
-	redirect := c.PostForm("redirect")
-	if redirect == "" {
-		redirect = "/"
-	}
+	// The form names where to go afterwards; keep it on this site.
+	redirect := SafeNext(c.PostForm("redirect"))
 
 	// Honeypot check - if website field is filled, silently redirect
 	if c.PostForm("website") != "" {
@@ -1214,6 +1243,22 @@ func (b *Blog) SubmitComment(c *gin.Context) {
 	postID, err := strconv.ParseUint(postIDStr, 10, 64)
 	if err != nil || postID == 0 {
 		c.Redirect(http.StatusSeeOther, redirect+"?comment_error=invalid_post")
+		return
+	}
+
+	// Logged-in commenters are attributed to their account: the email always
+	// comes from the account (the form's value is ignored) and a blank name
+	// falls back to the account's display name (issue #524).
+	user := b.auth.CurrentUser(c)
+	var userID *int
+	if user != nil {
+		email = user.Email
+		userID = &user.ID
+		if name == "" {
+			name = user.DisplayName()
+		}
+	} else if b.CommentsRequireLogin() {
+		c.Redirect(http.StatusSeeOther, redirect+"?comment_error=login_required")
 		return
 	}
 
@@ -1252,6 +1297,7 @@ func (b *Blog) SubmitComment(c *gin.Context) {
 		Email:     email,
 		Content:   content,
 		IPAddress: ip,
+		UserID:    userID,
 	}
 	(*b.db).Create(&comment)
 	b.recordComment(ip)

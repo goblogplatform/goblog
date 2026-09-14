@@ -3,7 +3,7 @@ package admin_test
 import (
 	"bytes"
 	"encoding/json"
-	
+
 	"goblog/admin"
 	"goblog/auth"
 	"goblog/blog"
@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,7 +30,11 @@ import (
 
 type Auth struct {
 	mock.Mock
+	// user is what CurrentUser reports; nil means nobody is logged in.
+	user *auth.BlogUser
 }
+
+func (m *Auth) CurrentUser(c *gin.Context) *auth.BlogUser { return m.user }
 
 func (m *Auth) IsAdmin(c *gin.Context) bool {
 	args := m.Called(c)
@@ -62,7 +67,7 @@ func TestCreatePost(t *testing.T) {
 	defaultType := blog.PostType{Name: "Post", Slug: "posts", Description: "Blog posts"}
 	db.Create(&defaultType)
 	a := &Auth{}
-	
+
 	b := blog.New(db, a, "test")
 	ad := admin.New(db, a, &b, "test")
 
@@ -770,6 +775,55 @@ func TestAdminComments(t *testing.T) {
 		body = get("/admin/comments?page=" + p)
 		if !strings.Contains(body, "Page 1 of 2") {
 			t.Errorf("page=%s: expected fallback to page 1", p)
+		}
+	}
+}
+
+// TestAdminSettings_RendersCheckboxSetting checks a "checkbox" typed setting
+// (comments_require_login, issue #524) renders as a checkbox reflecting its
+// value in every theme, rather than a required text input.
+func TestAdminSettings_RendersCheckboxSetting(t *testing.T) {
+	for _, theme := range []string{"default", "forest", "minimal"} {
+		for _, value := range []string{"true", "false"} {
+			t.Run(theme+"/"+value, func(t *testing.T) {
+				db, _ := gorm.Open(sqlite.Open(":memory:"))
+				db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Setting{}, &blog.Page{})
+				db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: value})
+				a := &Auth{}
+				b := blog.New(db, a, "test")
+				ad := admin.New(db, a, &b, "test")
+
+				gin.SetMode(gin.TestMode)
+				router := gin.New()
+				router.Use(sessions.Sessions("s", cookie.NewStore([]byte("test"))))
+				tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+					"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+				}).ParseGlob("../templates/shared/*.html"))
+				template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
+				router.SetHTMLTemplate(tmpl)
+				router.GET("/admin/settings", ad.AdminSettings)
+
+				a.On("IsAdmin", mock.Anything).Return(true)
+				a.On("IsLoggedIn", mock.Anything).Return(true)
+				w := httptest.NewRecorder()
+				req, _ := http.NewRequest("GET", "/admin/settings", nil)
+				router.ServeHTTP(w, req)
+				if w.Code != http.StatusOK {
+					t.Fatalf("expected 200, got %d", w.Code)
+				}
+				body := w.Body.String()
+				re := regexp.MustCompile(`<input[^>]*type="checkbox"[^>]*name="comments_require_login"[^>]*>`)
+				m := re.FindString(body)
+				if m == "" {
+					t.Fatalf("expected a checkbox input for comments_require_login, body: %.300s", body)
+				}
+				if checked := strings.Contains(m, "checked"); checked != (value == "true") {
+					t.Errorf("value %s: checked=%v in %s", value, checked, m)
+				}
+				if strings.Contains(m, "required") {
+					t.Errorf("checkbox must not be required: %s", m)
+				}
+			})
 		}
 	}
 }
