@@ -1156,6 +1156,17 @@ func (b *Blog) recordComment(ip string) {
 	b.commentLimiter[ip] = time.Now()
 }
 
+// CommentsRequireLogin reports the comments_require_login setting. Login is
+// required unless the setting exists and is explicitly "false", so a missing
+// row (or a settings table that hasn't been seeded) fails closed.
+func (b *Blog) CommentsRequireLogin() bool {
+	var setting Setting
+	if err := (*b.db).Where("key = ?", "comments_require_login").First(&setting).Error; err != nil {
+		return true
+	}
+	return setting.Value != "false"
+}
+
 func (b *Blog) getCommentsByPostID(postID uint) []Comment {
 	var comments []Comment
 	(*b.db).Where("post_id = ?", postID).Order("created_at asc").Find(&comments)
@@ -1217,6 +1228,22 @@ func (b *Blog) SubmitComment(c *gin.Context) {
 		return
 	}
 
+	// Logged-in commenters are attributed to their account: the email always
+	// comes from the account (the form's value is ignored) and a blank name
+	// falls back to the account's display name (issue #524).
+	user := b.auth.CurrentUser(c)
+	var userID *int
+	if user != nil {
+		email = user.Email
+		userID = &user.ID
+		if name == "" {
+			name = user.DisplayName()
+		}
+	} else if b.CommentsRequireLogin() {
+		c.Redirect(http.StatusSeeOther, redirect+"?comment_error=login_required")
+		return
+	}
+
 	if name == "" || content == "" {
 		c.Redirect(http.StatusSeeOther, redirect+"?comment_error=missing_fields")
 		return
@@ -1252,6 +1279,7 @@ func (b *Blog) SubmitComment(c *gin.Context) {
 		Email:     email,
 		Content:   content,
 		IPAddress: ip,
+		UserID:    userID,
 	}
 	(*b.db).Create(&comment)
 	b.recordComment(ip)

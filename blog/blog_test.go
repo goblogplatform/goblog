@@ -427,7 +427,10 @@ func TestBlogWorkflow(t *testing.T) {
 	}
 	os.Rename("local.env.old", "local.env")
 
-	// Comment tests
+	// Comment tests. These exercise anonymous commenting, so turn off the
+	// login requirement (issue #524); the logged-in path has its own tests.
+	db.AutoMigrate(&blog.Setting{})
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
 
 	// Token + script-derived check that a real browser would submit (see TestSubmitCommentSpamCheck)
 	commentToken := b.CommentTokenAt(post.ID, time.Now().Add(-10*time.Second))
@@ -790,7 +793,10 @@ func reverseString(s string) string {
 // implausibly fast or with a stale token.
 func TestSubmitCommentSpamCheck(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
-	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{})
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Setting{})
+	// Anonymous submissions: the anti-spam checks are independent of the
+	// login requirement (issue #524), which is tested separately.
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
 	a := &Auth{}
 	b := blog.New(db, a, "test")
 
@@ -910,5 +916,136 @@ func TestGetComments(t *testing.T) {
 	comments, total = b.GetComments(10, 2)
 	if len(comments) != 0 || total != 5 {
 		t.Errorf("expected empty page beyond the end with total 5, got %+v total %d", comments, total)
+	}
+}
+
+// newCommentFixture builds a blog with one post and a /comments route, returning
+// a submit helper. The mock auth's user field controls who is logged in and
+// the settings table starts empty, so comments_require_login is at its default.
+func newCommentFixture(t *testing.T) (*gorm.DB, blog.Blog, *Auth, *blog.Post, func(fields map[string]string) (string, int)) {
+	t.Helper()
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Setting{})
+	a := &Auth{}
+	b := blog.New(db, a, "test")
+	post := blog.Post{Title: "Test Post", Content: "Some content", Slug: "test-post"}
+	db.Create(&post)
+
+	router := gin.Default()
+	router.POST("/comments", b.SubmitComment)
+	ip := 0
+	submit := func(fields map[string]string) (string, int) {
+		t.Helper()
+		token := b.CommentTokenAt(post.ID, time.Now().Add(-10*time.Second))
+		form := url.Values{}
+		form.Set("post_id", strconv.Itoa(int(post.ID)))
+		form.Set("content", "Hello there")
+		form.Set("redirect", "/p")
+		form.Set("comment_token", token)
+		form.Set("comment_check", reverseString(token))
+		for k, v := range fields {
+			form.Set(k, v)
+		}
+		req, _ := http.NewRequest("POST", "/comments", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		ip++
+		req.RemoteAddr = "10.1.0." + strconv.Itoa(ip) + ":1234" // fresh IP per call to dodge the rate limiter
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Header().Get("Location"), w.Code
+	}
+	return db, b, a, &post, submit
+}
+
+func TestSubmitComment_RequiresLoginByDefault(t *testing.T) {
+	db, _, _, _, submit := newCommentFixture(t)
+	loc, code := submit(map[string]string{"name": "anon"})
+	if code != http.StatusSeeOther || !strings.Contains(loc, "comment_error=login_required") {
+		t.Fatalf("expected login_required redirect, got %d %s", code, loc)
+	}
+	var n int64
+	db.Model(&blog.Comment{}).Count(&n)
+	if n != 0 {
+		t.Fatalf("expected no comment stored, got %d", n)
+	}
+}
+
+func TestSubmitComment_AnonymousAllowedWhenSettingOff(t *testing.T) {
+	db, _, _, _, submit := newCommentFixture(t)
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
+	loc, _ := submit(map[string]string{"name": "anon", "email": "anon@example.com"})
+	if !strings.Contains(loc, "#comment-") {
+		t.Fatalf("expected success redirect, got %s", loc)
+	}
+	var c blog.Comment
+	db.First(&c)
+	if c.Name != "anon" || c.Email != "anon@example.com" || c.UserID != nil {
+		t.Fatalf("expected anonymous comment with form values and no user, got %+v", c)
+	}
+}
+
+func TestSubmitComment_LoggedInUsesAccountEmailAndRecordsUser(t *testing.T) {
+	db, _, a, _, submit := newCommentFixture(t)
+	user := auth.BlogUser{Provider: auth.ProviderEmail, ProviderID: "real@example.com", Login: "real@example.com", Email: "real@example.com", AccessToken: "tok"}
+	db.Create(&user)
+	a.user = &user
+
+	loc, _ := submit(map[string]string{"name": "Real Person", "email": "spoofed@example.com"})
+	if !strings.Contains(loc, "#comment-") {
+		t.Fatalf("expected success redirect, got %s", loc)
+	}
+	var c blog.Comment
+	db.First(&c)
+	if c.Name != "Real Person" {
+		t.Errorf("expected the submitted name, got %q", c.Name)
+	}
+	if c.Email != "real@example.com" {
+		t.Errorf("expected the account email, got %q", c.Email)
+	}
+	if c.UserID == nil || *c.UserID != user.ID {
+		t.Errorf("expected UserID %d, got %v", user.ID, c.UserID)
+	}
+}
+
+func TestSubmitComment_LoggedInBlankNameFallsBackToDisplayName(t *testing.T) {
+	db, _, a, _, submit := newCommentFixture(t)
+	user := auth.BlogUser{Provider: auth.ProviderGitHub, ProviderID: "1", Login: "compscidr", Email: "j@example.com", AccessToken: "tok"}
+	db.Create(&user)
+	a.user = &user
+
+	loc, _ := submit(map[string]string{"name": "  "})
+	if !strings.Contains(loc, "#comment-") {
+		t.Fatalf("expected success redirect, got %s", loc)
+	}
+	var c blog.Comment
+	db.First(&c)
+	if c.Name != "compscidr" {
+		t.Errorf("expected display name fallback, got %q", c.Name)
+	}
+}
+
+func TestSubmitComment_LoggedInStillNeedsContent(t *testing.T) {
+	_, _, a, _, submit := newCommentFixture(t)
+	a.user = &auth.BlogUser{ID: 7, Login: "someone"}
+	loc, _ := submit(map[string]string{"content": ""})
+	if !strings.Contains(loc, "comment_error=missing_fields") {
+		t.Fatalf("expected missing_fields redirect, got %s", loc)
+	}
+}
+
+func TestCommentsRequireLogin_Setting(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Setting{})
+	b := blog.New(db, &Auth{}, "test")
+	if !b.CommentsRequireLogin() {
+		t.Fatal("expected login to be required when the setting row is missing")
+	}
+	db.Create(&blog.Setting{Key: "comments_require_login", Type: "checkbox", Value: "false"})
+	if b.CommentsRequireLogin() {
+		t.Fatal("expected login not to be required when the setting is false")
+	}
+	db.Model(&blog.Setting{}).Where("key = ?", "comments_require_login").Update("value", "true")
+	if !b.CommentsRequireLogin() {
+		t.Fatal("expected login to be required when the setting is true")
 	}
 }

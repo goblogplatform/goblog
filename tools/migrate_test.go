@@ -269,3 +269,28 @@ func TestMigrationCleansUpSelfExternalBacklinks(t *testing.T) {
 		}
 	}
 }
+
+// TestMigrationSeedsCommentsRequireLogin checks the comments_require_login
+// setting (issue #524) is seeded on and that the comments table gained the
+// user_id column.
+func TestMigrationSeedsCommentsRequireLogin(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := tools.Migrate(db); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	var s blog.Setting
+	if err := db.Where("key = ?", "comments_require_login").First(&s).Error; err != nil {
+		t.Fatalf("expected comments_require_login to be seeded: %v", err)
+	}
+	if s.Type != "checkbox" || s.Value != "true" {
+		t.Fatalf("expected checkbox/true, got %s/%s", s.Type, s.Value)
+	}
+	if !db.Migrator().HasColumn(&blog.Comment{}, "user_id") {
+		t.Fatal("expected comments.user_id column")
+	}
+}
