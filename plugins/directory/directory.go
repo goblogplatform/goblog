@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -109,8 +110,61 @@ func (p *Plugin) ScheduledJobs() []gplugin.ScheduledJob {
 	}}
 }
 
-// RenderPage is completed in the next task.
+const unavailableHTML = `<div class="alert alert-warning" role="alert">The plugin directory is unavailable right now. Please check back later.</div>`
+
+// RenderPage serves the listing (""), the raw index ("index.json") and one
+// plugin's page ("<name>"). Anything else is declined, which blog turns into
+// a 404. Errors from the registry are logged for the operator and shown to
+// readers only as "unavailable".
 func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, gin.H) {
+	if pageType != PageType {
+		return "", nil
+	}
+	c := ctx.GinContext
+	p.fetcher.Ensure(indexURL(ctx.Settings))
+	base := basePath(c)
+
+	switch {
+	case ctx.SubPath == "":
+		_, entries, ok := p.fetcher.Index()
+		if !ok {
+			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML}
+		}
+		html, err := renderListing(base, entries)
+		if err != nil {
+			log.Printf("Directory plugin: render listing: %v", err)
+			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML}
+		}
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html}
+
+	case ctx.SubPath == "index.json":
+		raw, _, ok := p.fetcher.Index()
+		if !ok {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "plugin directory index unavailable"})
+			return "", nil
+		}
+		c.Header("Cache-Control", "public, max-age=300")
+		c.Data(http.StatusOK, "application/json", raw)
+		return "", nil
+
+	case validName(ctx.SubPath):
+		e, ok := p.fetcher.Entry(ctx.SubPath)
+		if !ok {
+			return "", nil
+		}
+		notice := ""
+		d, err := p.fetcher.Detail(e.Name)
+		if err != nil {
+			log.Printf("Directory plugin: %v", err)
+			notice = "Details for this plugin are unavailable right now. Please check back later."
+		}
+		html, err := renderDetail(base, e, d, notice)
+		if err != nil {
+			log.Printf("Directory plugin: render %s: %v", e.Name, err)
+			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML, "title": e.DisplayName}
+		}
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html, "title": e.DisplayName}
+	}
 	return "", nil
 }
 

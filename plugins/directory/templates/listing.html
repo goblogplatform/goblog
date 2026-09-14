@@ -1,0 +1,22 @@
+<p>{{ len .Entries }} plugin{{ if ne (len .Entries) 1 }}s{{ end }} in the directory.
+Machine-readable index: <a href="{{ .Base }}/index.json">index.json</a>.
+To publish your own, see the <a href="https://github.com/goblogplatform/plugins">registry</a>.</p>
+{{ if .Entries }}
+<table class="table">
+  <thead>
+    <tr><th>Plugin</th><th>Description</th><th>Version</th><th>Author</th><th>License</th><th>Type</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Entries }}
+    <tr>
+      <td><a href="{{ $.Base }}/{{ .Name }}">{{ .DisplayName }}</a><br><small><a href="{{ .SourceURL }}">source</a></small></td>
+      <td>{{ .Description }}</td>
+      <td>{{ .Version }}</td>
+      <td>{{ .Author }}</td>
+      <td>{{ .License }}</td>
+      <td>{{ .InstallType }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+{{ end }}
