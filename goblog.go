@@ -10,6 +10,7 @@ import (
 	"goblog/mail"
 	gplugin "goblog/plugin"
 	"goblog/plugins/analytics"
+	"goblog/plugins/directory"
 	scholarplugin "goblog/plugins/scholar"
 	"goblog/plugins/socialicons"
 	"goblog/tools"
@@ -300,6 +301,7 @@ func main() {
 	registry.Register(analytics.New())
 	registry.Register(socialicons.New())
 	registry.Register(scholarplugin.New())
+	registry.Register(directory.New())
 	if os.Getenv("ENABLE_DYNAMIC_PLUGINS") == "true" {
 		gplugin.LoadDynamicPlugins(registry, "plugins/dynamic")
 	}

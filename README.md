@@ -41,7 +41,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 
 ### Plugins
 - Plugin system for injecting template data / HTML, scheduled jobs, settings, and whole pages
-- Built-in plugins: `analytics`, `socialicons`, `scholar` (research page; Google Scholar is blocked from most cloud IPs, so set its `source` setting to `semantic_scholar` when hosting in a datacenter)
+- Built-in plugins: `analytics`, `socialicons`, `scholar` (research page; Google Scholar is blocked from most cloud IPs, so set its `source` setting to `semantic_scholar` when hosting in a datacenter), `directory` (the plugin directory that runs [goblog.live/plugins](https://goblog.live/plugins); off by default)
 - Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
 
 ### Infrastructure
@@ -189,6 +189,11 @@ docker run --rm -v "$PWD:/p" --entrypoint /go/src/github.com/compscidr/goblog/go
   compscidr/goblog:latest validate-plugin /p/plugin.go
 ```
 This is what the [plugin directory](https://goblog.live/plugins) registry runs on every submission.
+
+### Plugin directory
+[goblog.live/plugins](https://goblog.live/plugins) lists published dynamic plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`). Plugins are individual GitHub repositories with releases; the curated list and the build that produces the index live in [goblogplatform/plugins](https://github.com/goblogplatform/plugins), which also documents how to submit one.
+
+The pages are rendered by the built-in `directory` plugin, which any goblog can turn on under **Admin → Settings → Plugin Directory** (`enabled` = `true`). It fetches `index_url` every `refresh_minutes`, keeps the last good copy if the registry is unreachable, and serves `/plugins`, `/plugins/<name>` and `/plugins/index.json`.
 
 ## Testing
 ```bash
