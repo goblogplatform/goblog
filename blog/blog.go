@@ -33,6 +33,24 @@ import (
 // Used to filter out pages owned by disabled plugins.
 type PageFilter func(page Page) bool
 
+// pluginRegistry is the part of the plugin registry the blog needs to
+// resolve and render plugin-owned pages. It is looked up from the Gin
+// context (set by plugin.Middleware) so blog does not import plugin.
+type pluginRegistry interface {
+	RenderPluginPage(c *gin.Context, pageType, subPath string) (string, gin.H, bool)
+	HasPageType(pageType string) bool
+	IsPageTypeEnabled(pageType string) bool
+}
+
+func pluginRegistryFrom(c *gin.Context) pluginRegistry {
+	if reg, exists := c.Get("plugin_registry"); exists {
+		if r, ok := reg.(pluginRegistry); ok {
+			return r
+		}
+	}
+	return nil
+}
+
 // Blog API handles non-admin functions of the blog like listing posts, tags
 // comments, etc.
 type Blog struct {
@@ -502,7 +520,9 @@ func (b *Blog) PostTypeListing(c *gin.Context, pt *PostType) {
 }
 
 // DynamicPage renders the appropriate template for a page based on its PageType.
-func (b *Blog) DynamicPage(c *gin.Context, page *Page) {
+// subPath is the request path after the page's slug; it is only ever non-empty
+// for plugin-owned pages (see NoRoute) and is passed through to the plugin.
+func (b *Blog) DynamicPage(c *gin.Context, page *Page, subPath string) {
 	navPages := b.GetNavPages()
 	switch page.PageType {
 	case PageTypeWriting:
@@ -557,45 +577,47 @@ func (b *Blog) DynamicPage(c *gin.Context, page *Page) {
 		})
 	default:
 		// Check if a plugin handles this page type
-		if reg, exists := c.Get("plugin_registry"); exists {
-			type pluginPageHandler interface {
-				RenderPluginPage(c *gin.Context, pageType string) (string, gin.H, bool)
-				HasPageType(pageType string) bool
+		if r := pluginRegistryFrom(c); r != nil {
+			tmpl, pluginData, handled := r.RenderPluginPage(c, page.PageType, subPath)
+			if handled {
+				if tmpl == "" {
+					return // the plugin wrote the response itself (e.g. JSON)
+				}
+				data := gin.H{
+					"logged_in":  b.auth.IsLoggedIn(c),
+					"is_admin":   b.auth.IsAdmin(c),
+					"page":       page,
+					"version":    b.Version,
+					"title":      page.Title,
+					"recent":     b.GetLatest(),
+					"admin_page": false,
+					"settings":   b.GetSettings(),
+					"nav_pages":  navPages,
+				}
+				for k, v := range pluginData {
+					data[k] = v
+				}
+				b.Render(c, http.StatusOK, tmpl, data)
+				return
 			}
-			if r, ok := reg.(pluginPageHandler); ok {
-				tmpl, pluginData, handled := r.RenderPluginPage(c, page.PageType)
-				if handled {
-					data := gin.H{
-						"logged_in":  b.auth.IsLoggedIn(c),
-						"is_admin":   b.auth.IsAdmin(c),
-						"page":       page,
-						"version":    b.Version,
-						"title":      page.Title,
-						"recent":     b.GetLatest(),
-						"admin_page": false,
-						"settings":   b.GetSettings(),
-						"nav_pages":  navPages,
-					}
-					for k, v := range pluginData {
-						data[k] = v
-					}
-					b.Render(c, http.StatusOK, tmpl, data)
+			if r.HasPageType(page.PageType) {
+				if r.IsPageTypeEnabled(page.PageType) {
+					// The plugin is on but declined the request (an unknown sub-path).
+					b.renderNotFound(c)
 					return
 				}
 				// Plugin owns this page type but is disabled — show 404
-				if r.HasPageType(page.PageType) {
-					b.Render(c, http.StatusNotFound, "error.html", gin.H{
-						"error":       "Page Not Available",
-						"description": "This page is currently disabled.",
-						"version":     b.Version,
-						"title":       "Not Available",
-						"recent":      b.GetLatest(),
-						"admin_page":  false,
-						"settings":    b.GetSettings(),
-						"nav_pages":   navPages,
-					})
-					return
-				}
+				b.Render(c, http.StatusNotFound, "error.html", gin.H{
+					"error":       "Page Not Available",
+					"description": "This page is currently disabled.",
+					"version":     b.Version,
+					"title":       "Not Available",
+					"recent":      b.GetLatest(),
+					"admin_page":  false,
+					"settings":    b.GetSettings(),
+					"nav_pages":   navPages,
+				})
+				return
 			}
 		}
 		// Fallback: render as custom content page
@@ -756,25 +778,41 @@ func (b *Blog) NoRoute(c *gin.Context) {
 		}
 	}
 
-	// Try to resolve as a dynamic page or post type listing by slug
+	// Try to resolve as a dynamic page or post type listing by slug. Only
+	// plugin-owned pages own what is under their slug (/plugins/hello,
+	// /plugins/index.json); built-in pages and post types are single-segment.
 	path := strings.TrimPrefix(c.Request.URL.Path, "/")
 	path = strings.TrimSuffix(path, "/")
-	if path != "" && !strings.Contains(path, "/") {
+	slug, subPath, _ := strings.Cut(path, "/")
+	if slug != "" {
 		// Check dynamic page first (pages have hero content, edit links, etc.)
-		page, err := b.GetPageBySlug(path)
+		page, err := b.GetPageBySlug(slug)
 		if err == nil && page != nil {
-			b.DynamicPage(c, page)
-			return
+			if subPath == "" {
+				b.DynamicPage(c, page, "")
+				return
+			}
+			if r := pluginRegistryFrom(c); r != nil && r.HasPageType(page.PageType) {
+				b.DynamicPage(c, page, subPath)
+				return
+			}
 		}
 
 		// Then try post type listing
-		pt, err := b.GetPostTypeBySlug(path)
-		if err == nil && pt != nil {
-			b.PostTypeListing(c, pt)
-			return
+		if subPath == "" {
+			pt, err := b.GetPostTypeBySlug(slug)
+			if err == nil && pt != nil {
+				b.PostTypeListing(c, pt)
+				return
+			}
 		}
 	}
 
+	b.renderNotFound(c)
+}
+
+// renderNotFound renders the generic 404 page.
+func (b *Blog) renderNotFound(c *gin.Context) {
 	b.Render(c, http.StatusNotFound, "error.html", gin.H{
 		"logged_in":   b.auth.IsLoggedIn(c),
 		"is_admin":    b.auth.IsAdmin(c),
