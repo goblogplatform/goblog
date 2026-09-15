@@ -246,3 +246,49 @@ README.md
 - Compiled-in plugins in the directory (`install_type` reserved for it).
 - Theme directory (#560) — reuses the sub-path extension and the registry shape.
 - Version history beyond what the release list on the detail page shows.
+
+## Piece B — concrete layout (added 2026-09-15, after pieces A and C merged in #567)
+
+Validated goblog image for CI: `compscidr/goblog:v0.2.7` (first release with
+`validate-plugin`), bumped by Renovate.
+
+### `goblogplatform/goblog-plugin-hello`
+
+```
+plugin.go            # goblog's plugins/dynamic/hello.go.example, header rewritten for a standalone repo
+goblog-plugin.json   # name hello, display_name Hello, entry plugin.go, license Apache-2.0, min_goblog_version 0.2.6
+README.md            # what it does, install (copy into plugins/dynamic/, ENABLE_DYNAMIC_PLUGINS=true), settings
+CHANGELOG.md         # ## 1.0.0
+LICENSE              # Apache-2.0 (same as goblog)
+```
+Release `v1.0.0`; `Version()` returns `1.0.0`.
+
+### `goblogplatform/plugins`
+
+```
+registry.yaml                    # plugins: [{repo: goblogplatform/goblog-plugin-hello}]
+go.mod                           # module github.com/goblogplatform/plugins; go-github/v92, yaml.v3, x/mod (semver)
+cmd/registry/main.go             # registry validate [--repo owner/name] | registry build --out dist
+internal/registry/
+  registry.go                    # load registry.yaml
+  manifest.go                    # goblog-plugin.json: parse + field checks (name ^[a-z0-9-]+$, known SPDX id, semver, entry *.go)
+  source.go                      # Source interface (releases, file at ref, render markdown); go-github implementation
+  validator.go                   # Validator interface; DockerValidator runs `validate-plugin` in the goblog image
+  validate.go                    # ValidateEntry: latest non-draft non-prerelease release, manifest, entry, identity match
+  build.go                       # Build: validate all → dist/index.json, dist/plugins/<name>.json, dist/index.html
+docs/CONTRACT.md                 # plugin repo contract + how to submit
+README.md, LICENSE, renovate.json
+.github/workflows/validate.yml   # pull_request: go test + registry validate (all entries)
+.github/workflows/publish.yml    # push main, cron 0 */6 * * *, workflow_dispatch: build → deploy to GitHub Pages;
+                                 # fails after deploying when any entry was skipped
+```
+
+Decisions:
+- Validate **every** entry on PR (registry is small; per-line diffing is not worth it).
+- SPDX check is against a short embedded list of common identifiers, extended on demand.
+- `source_url` is always the repo URL; `homepage` in the manifest is informational.
+- `detail_url` is `<base-url>/plugins/<name>.json` with base-url `https://goblogplatform.github.io/plugins`.
+- Release history = all non-draft, non-prerelease releases, newest first; `released_at` is the release's `published_at`.
+- `CHANGELOG.md` is optional (missing → `changelog_html: ""`); `README.md` is required.
+- Duplicate `name` across repos: the later entry (registry order) is skipped with an error.
+- `registry build` exits 0 when everything built, 2 when output was written but entries were skipped, 1 on a fatal error.
