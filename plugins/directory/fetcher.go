@@ -101,13 +101,16 @@ func (f *Fetcher) Refresh(indexURL string) error {
 // request into a blocking synchronous fetch. Fetch errors are logged here;
 // the cache is simply left empty (or stale, if there is an older copy).
 func (f *Fetcher) Ensure(indexURL string) {
-	f.mu.RLock()
-	empty := f.raw == nil
-	recentAttempt := time.Since(f.lastAttempt) < ensureRetryInterval
-	f.mu.RUnlock()
-	if !empty || recentAttempt {
+	// Check and claim the attempt under one lock so concurrent requests
+	// hitting an empty cache cannot all pass the check before the first
+	// one stamps lastAttempt; only the claimant fetches.
+	f.mu.Lock()
+	if f.raw != nil || time.Since(f.lastAttempt) < ensureRetryInterval {
+		f.mu.Unlock()
 		return
 	}
+	f.lastAttempt = time.Now()
+	f.mu.Unlock()
 	if err := f.Refresh(indexURL); err != nil {
 		log.Printf("Directory plugin: initial index fetch failed: %v", err)
 	}

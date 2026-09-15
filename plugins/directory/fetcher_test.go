@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -201,6 +202,37 @@ func TestFetcher_EnsureThrottlesWhileCacheStaysEmpty(t *testing.T) {
 	f.Ensure(srv.URL + "/index.json")
 	if got := hits.Load(); got != 2 {
 		t.Errorf("Ensure should retry once the retry window has elapsed, got %d hits", got)
+	}
+}
+
+// TestFetcher_EnsureConcurrentBurstFetchesOnce covers the first-contact case:
+// many requests arriving at once on an empty cache must produce one fetch,
+// not one per request.
+func TestFetcher_EnsureConcurrentBurstFetchesOnce(t *testing.T) {
+	var hits atomic.Int32
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release // hold the first fetch open while the burst arrives
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	f := NewFetcher(srv.Client())
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f.Ensure(srv.URL + "/index.json")
+		}()
+	}
+	// Give the goroutines time to reach Ensure, then let the fetch finish.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if got := hits.Load(); got != 1 {
+		t.Errorf("a concurrent burst on an empty cache should fetch once, got %d", got)
 	}
 }
 
