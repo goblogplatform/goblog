@@ -10,6 +10,7 @@ import (
 	"goblog/mail"
 	gplugin "goblog/plugin"
 	"goblog/plugins/analytics"
+	"goblog/plugins/directory"
 	scholarplugin "goblog/plugins/scholar"
 	"goblog/plugins/socialicons"
 	"goblog/tools"
@@ -201,6 +202,10 @@ func (g *goblog) loginHandler(c *gin.Context) {
 }
 
 func main() {
+	// Subcommands run and exit before any .env or database work.
+	if len(os.Args) > 1 && os.Args[1] == "validate-plugin" {
+		os.Exit(runValidatePlugin(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	log.Println("Starting blog version: ", Version)
 	var sessionKey string
 	var db *gorm.DB = nil
@@ -296,6 +301,9 @@ func main() {
 	registry.Register(analytics.New())
 	registry.Register(socialicons.New())
 	registry.Register(scholarplugin.New())
+	dir := directory.New()
+	dir.SetUserAgent("goblog-directory/" + Version)
+	registry.Register(dir)
 	if os.Getenv("ENABLE_DYNAMIC_PLUGINS") == "true" {
 		gplugin.LoadDynamicPlugins(registry, "plugins/dynamic")
 	}

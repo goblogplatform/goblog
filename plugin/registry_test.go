@@ -4,6 +4,7 @@ import (
 	"goblog/plugin"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -155,5 +156,83 @@ func TestGetAllSettings(t *testing.T) {
 	}
 	if groups[0].CurrentValues["api_key"] != "default123" {
 		t.Fatalf("expected current value 'default123', got %q", groups[0].CurrentValues["api_key"])
+	}
+}
+
+// pagePlugin owns a page and uses SubPath: "" renders a template, "data.json"
+// writes JSON itself, anything else is declined.
+type pagePlugin struct {
+	plugin.BasePlugin
+}
+
+func (p *pagePlugin) Name() string        { return "pager" }
+func (p *pagePlugin) DisplayName() string { return "Pager" }
+func (p *pagePlugin) Version() string     { return "1.0.0" }
+func (p *pagePlugin) Settings() []plugin.SettingDefinition {
+	return []plugin.SettingDefinition{{Key: "enabled", Type: "text", DefaultValue: "true", Label: "Enabled"}}
+}
+func (p *pagePlugin) Pages() []plugin.PageDefinition {
+	return []plugin.PageDefinition{{PageType: "pager", Title: "Pager", Slug: "pager"}}
+}
+func (p *pagePlugin) RenderPage(ctx *plugin.HookContext, pageType string) (string, gin.H) {
+	switch ctx.SubPath {
+	case "":
+		return "page_content.html", gin.H{"plugin_content": "root"}
+	case "data.json":
+		ctx.GinContext.JSON(http.StatusOK, gin.H{"ok": true})
+		return "", nil
+	}
+	return "", nil
+}
+
+func TestRenderPluginPage_SubPathsAndRawResponses(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}); err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	reg.Register(&pagePlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	gin.SetMode(gin.TestMode)
+	newCtx := func(path string) (*gin.Context, *httptest.ResponseRecorder) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, path, nil)
+		return c, w
+	}
+
+	// The page itself: template + data, SubPath is empty.
+	c, _ := newCtx("/pager")
+	tmpl, data, handled := reg.RenderPluginPage(c, "pager", "")
+	if !handled || tmpl != "page_content.html" || data["plugin_content"] != "root" {
+		t.Errorf("root: handled=%v tmpl=%q data=%v", handled, tmpl, data)
+	}
+
+	// A sub-path the plugin answers by writing the response: handled, no template.
+	c, w := newCtx("/pager/data.json")
+	tmpl, _, handled = reg.RenderPluginPage(c, "pager", "data.json")
+	if !handled || tmpl != "" {
+		t.Errorf("data.json: handled=%v tmpl=%q", handled, tmpl)
+	}
+	if !strings.Contains(w.Body.String(), `"ok":true`) || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+		t.Errorf("data.json: body=%q content-type=%q", w.Body.String(), w.Header().Get("Content-Type"))
+	}
+
+	// A sub-path the plugin declines: not handled, nothing written.
+	c, w = newCtx("/pager/nope")
+	if _, _, handled = reg.RenderPluginPage(c, "pager", "nope"); handled || w.Body.Len() != 0 {
+		t.Errorf("nope: handled=%v body=%q", handled, w.Body.String())
+	}
+
+	// Disabled plugin: never called.
+	reg.UpdateSetting("pager", "enabled", "false")
+	c, _ = newCtx("/pager")
+	if _, _, handled = reg.RenderPluginPage(c, "pager", ""); handled {
+		t.Error("disabled plugin should not handle its page")
 	}
 }

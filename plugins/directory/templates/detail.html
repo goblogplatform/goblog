@@ -1,0 +1,27 @@
+<p><a href="{{ .Base }}">&larr; All plugins</a></p>
+<h2>{{ .Entry.DisplayName }} <small>v{{ .Entry.Version }}</small></h2>
+<p>{{ .Entry.Description }}</p>
+<dl>
+  <dt>Version</dt><dd>{{ .Entry.Version }}{{ if .Entry.ReleasedAt }} <small>(released {{ date .Entry.ReleasedAt }})</small>{{ end }}</dd>
+  <dt>Author</dt><dd>{{ .Entry.Author }}</dd>
+  <dt>License</dt><dd>{{ .Entry.License }}</dd>
+  <dt>Source</dt><dd><a href="{{ .Entry.SourceURL }}">{{ .Entry.SourceURL }}</a></dd>
+  <dt>Requires</dt><dd>goblog {{ .Entry.MinGoblogVersion }} or newer ({{ .Entry.InstallType }} plugin)</dd>
+  <dt>Download</dt><dd><a href="{{ .Entry.DownloadURL }}">{{ .Entry.DownloadURL }}</a><br><small>sha256 <code>{{ .Entry.SHA256 }}</code></small></dd>
+</dl>
+{{ if .Notice }}<div class="alert alert-warning" role="alert">{{ .Notice }}</div>{{ end }}
+{{ if .Detail }}
+<h2>README</h2>
+<div class="plugin-readme">{{ .Detail.ReadmeHTML }}</div>
+{{ if .Detail.ChangelogHTML }}
+<h2>Changelog</h2>
+<div class="plugin-changelog">{{ .Detail.ChangelogHTML }}</div>
+{{ end }}
+{{ if .Detail.Releases }}
+<h2>Releases</h2>
+{{ range .Detail.Releases }}
+<h3><a href="{{ .URL }}">v{{ .Version }}</a>{{ if .ReleasedAt }} <small>{{ date .ReleasedAt }}</small>{{ end }}</h3>
+<div class="plugin-release-notes">{{ .NotesHTML }}</div>
+{{ end }}
+{{ end }}
+{{ end }}

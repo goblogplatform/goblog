@@ -41,7 +41,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 
 ### Plugins
 - Plugin system for injecting template data / HTML, scheduled jobs, settings, and whole pages
-- Built-in plugins: `analytics`, `socialicons`, `scholar` (research page; Google Scholar is blocked from most cloud IPs, so set its `source` setting to `semantic_scholar` when hosting in a datacenter)
+- Built-in plugins: `analytics`, `socialicons`, `scholar` (research page; Google Scholar is blocked from most cloud IPs, so set its `source` setting to `semantic_scholar` when hosting in a datacenter), `directory` (the plugin directory that runs [goblog.live/plugins](https://goblog.live/plugins); off by default)
 - Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
 
 ### Infrastructure
@@ -141,7 +141,7 @@ A plugin implements the `plugin.Plugin` interface (`plugin/plugin.go`). Embed `p
 | `TemplateHead(ctx)` / `TemplateFooter(ctx)` | Return raw HTML injected into `<head>` / before `</body>` on every rendered page. Escape anything that came from settings or the request. |
 | `TemplateData(ctx)` | Returns data made available to templates as `.plugins.<name>`. |
 | `ScheduledJobs()` | Periodic background jobs (`Name`, `Interval`, `Run(db, settings)`), started at boot. |
-| `Pages()` / `RenderPage(ctx, pageType)` | Own a page type: it gets a slug, an optional nav entry, and you choose the template and data when it is visited. `plugins/scholar` is the example. |
+| `Pages()` / `RenderPage(ctx, pageType)` | Own a page type: it gets a slug, an optional nav entry, and you choose the template and data when it is visited. The plugin also owns everything under its slug: `ctx.SubPath` is `""` for `/research`, `"2024"` for `/research/2024`. Return a template name to render it inside the theme, or write the response yourself (e.g. `ctx.GinContext.JSON(...)`) and return `""`; returning `""` without writing anything gives a 404. `plugins/scholar` is the simplest example, `plugins/directory` uses sub-paths. |
 | `OnInit(db)` | Runs once at startup, after settings are seeded. |
 
 `ctx` is a `*plugin.HookContext` carrying the Gin context, the DB, the plugin's own settings, the template being rendered, and the existing template data. `plugins/socialicons` is the smallest complete example.
@@ -176,6 +176,24 @@ docker run -p 7000:7000 -e ENABLE_DYNAMIC_PLUGINS=true \
   -v $PWD/plugins/dynamic:/go/src/github.com/compscidr/goblog/plugins/dynamic \
   compscidr/goblog:latest
 ```
+
+#### Checking a plugin file
+`goblog validate-plugin <file.go>` loads a single file through the same interpreter and prints its identity as JSON (exit 1 with the load error on stderr if it fails):
+```bash
+./goblog validate-plugin plugins/dynamic/hello.go.example
+# {"name":"hello","display_name":"Hello (example)","version":"1.0.0"}
+```
+With the Docker image (its entrypoint is a shell command, so override it):
+```bash
+docker run --rm --network none -v "$PWD:/p" --entrypoint /go/src/github.com/compscidr/goblog/goblog \
+  compscidr/goblog:latest validate-plugin /p/plugin.go
+```
+This is what the [plugin directory](https://goblog.live/plugins) registry runs on every submission.
+
+### Plugin directory
+[goblog.live/plugins](https://goblog.live/plugins) lists published dynamic plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`). Plugins are individual GitHub repositories with releases; the curated list and the build that produces the index live in [goblogplatform/plugins](https://github.com/goblogplatform/plugins), which also documents how to submit one.
+
+The pages are rendered by the built-in `directory` plugin, which any goblog can turn on under **Admin → Settings → Plugin Directory** (`enabled` = `true`). It fetches `index_url` every `refresh_minutes`, keeps the last good copy if the registry is unreachable, and serves `/plugins`, `/plugins/<name>` and `/plugins/index.json`. Only point `index_url` at a registry you trust: its README, changelog and release-note HTML is shown as-is.
 
 ## Testing
 ```bash

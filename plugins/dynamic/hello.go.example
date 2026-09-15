@@ -6,6 +6,9 @@
 //   3. every page now ends with a greeting; change the text under
 //      Admin -> Settings -> "Hello (example)".
 //
+// The same plugin, packaged the way the plugin directory expects (manifest,
+// README, tagged releases), is at github.com/goblogplatform/goblog-plugin-hello.
+//
 // Dynamic plugins are ordinary Go source files interpreted at startup by
 // Yaegi. They must be `package main` and define `func NewPlugin() plugin.Plugin`.
 // The interpreter exposes the Go standard library and the goblog/plugin

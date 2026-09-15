@@ -8,6 +8,7 @@ import (
 	"goblog/admin"
 	"goblog/auth"
 	"goblog/blog"
+	"goblog/plugin"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -1207,5 +1208,89 @@ func TestSubmitComment_RedirectIsSameSiteOnly(t *testing.T) {
 		if !strings.HasPrefix(loc, "/?comment_error=") {
 			t.Errorf("redirect %q: expected a same-site fallback, got %s", bad, loc)
 		}
+	}
+}
+
+// subPathPlugin owns the "dir" page and answers "" (listing) and "index.json"
+// (raw JSON); everything else is declined.
+type subPathPlugin struct {
+	plugin.BasePlugin
+}
+
+func (p *subPathPlugin) Name() string        { return "dir" }
+func (p *subPathPlugin) DisplayName() string { return "Dir" }
+func (p *subPathPlugin) Version() string     { return "1.0.0" }
+func (p *subPathPlugin) Settings() []plugin.SettingDefinition {
+	return []plugin.SettingDefinition{{Key: "enabled", Type: "text", DefaultValue: "true", Label: "Enabled"}}
+}
+func (p *subPathPlugin) Pages() []plugin.PageDefinition {
+	return []plugin.PageDefinition{{PageType: "dir", Title: "Dir", Slug: "dir"}}
+}
+func (p *subPathPlugin) RenderPage(ctx *plugin.HookContext, pageType string) (string, gin.H) {
+	switch ctx.SubPath {
+	case "":
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": "<p>LISTING</p>"}
+	case "index.json":
+		ctx.GinContext.Data(http.StatusOK, "application/json", []byte(`[{"name":"x"}]`))
+		return "", nil
+	}
+	return "", nil
+}
+
+// TestPluginPageSubPaths covers issue #552: a plugin-owned page also owns
+// everything under its slug, while built-in pages keep single-segment slugs.
+func TestPluginPageSubPaths(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Page{Title: "Dir", Slug: "dir", PageType: "dir", Enabled: true})
+	db.Create(&blog.Page{Title: "About", Slug: "about", PageType: blog.PageTypeAbout, Enabled: true, Content: "about"})
+
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+
+	reg := plugin.NewRegistry(db)
+	reg.Register(&subPathPlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	router.Use(plugin.Middleware(reg))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.NoRoute(b.NoRoute)
+
+	get := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := get("/dir"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "LISTING") {
+		t.Errorf("/dir: code=%d body has LISTING=%v", w.Code, strings.Contains(w.Body.String(), "LISTING"))
+	}
+	if w := get("/dir/index.json"); w.Code != http.StatusOK || w.Body.String() != `[{"name":"x"}]` || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+		t.Errorf("/dir/index.json: code=%d body=%q type=%q", w.Code, w.Body.String(), w.Header().Get("Content-Type"))
+	}
+	if w := get("/dir/nope"); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "404") {
+		t.Errorf("/dir/nope: expected a 404 page, got code=%d", w.Code)
+	}
+	// Built-in pages do not get sub-paths.
+	if w := get("/about"); w.Code != http.StatusOK {
+		t.Errorf("/about: code=%d", w.Code)
+	}
+	if w := get("/about/anything"); w.Code != http.StatusNotFound {
+		t.Errorf("/about/anything: expected 404, got %d", w.Code)
+	}
+	// A disabled plugin's page and sub-paths show the "not available" page.
+	reg.UpdateSetting("dir", "enabled", "false")
+	if w := get("/dir/index.json"); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "currently disabled") {
+		t.Errorf("/dir/index.json disabled: code=%d", w.Code)
 	}
 }
