@@ -257,6 +257,8 @@ Validated goblog image for CI: `compscidr/goblog:v0.2.7` (first release with
 ```
 plugin.go            # goblog's plugins/dynamic/hello.go.example, header rewritten for a standalone repo
 goblog-plugin.json   # name hello, display_name Hello, entry plugin.go, license Apache-2.0, min_goblog_version 0.2.6
+                     # (display_name is the directory label; the code's DisplayName() "Hello (example)" labels
+                     #  the admin settings group — only name and version must match the code)
 README.md            # what it does, install (copy into plugins/dynamic/, ENABLE_DYNAMIC_PLUGINS=true), settings
 CHANGELOG.md         # ## 1.0.0
 LICENSE              # Apache-2.0 (same as goblog)

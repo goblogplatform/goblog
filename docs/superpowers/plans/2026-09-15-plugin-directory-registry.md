@@ -92,6 +92,8 @@ If the default branch is not `main`, run `git checkout -b main`.
 Confirm the file still has `func (p *HelloPlugin) Name() string { return "hello" }` and `Version() string { return "1.0.0" }`.
 
 `goblog-plugin.json`:
+`display_name` is the directory label and is deliberately shorter than the code's `DisplayName()` ("Hello (example)", the admin settings label); the contract only requires `name` and `version` to match the code.
+
 ```json
 {
   "name": "hello",
@@ -1837,6 +1839,7 @@ At the root, at every release tag:
 ```
 
 - `name`: `^[a-z0-9-]+$`, unique across the registry, and equal to what your plugin's `Name()` returns.
+- `display_name`: the label shown in the directory. It need not equal your plugin's `DisplayName()`, which labels its settings group in the admin UI.
 - `license`: an SPDX identifier from the list in `internal/registry/manifest.go` (MIT, Apache-2.0, BSD-2/3-Clause, ISC, MPL-2.0, GPL/LGPL/AGPL `-only`/`-or-later`, Unlicense, 0BSD). Open an issue to add another.
 - `entry`: a `.go` file at the repository root; defaults to `plugin.go`.
 - `min_goblog_version`: plain semver (`0.2.6`, no `v`) — the oldest goblog your plugin works with.
