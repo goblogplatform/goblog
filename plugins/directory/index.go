@@ -18,6 +18,7 @@ type Entry struct {
 	InstallType      string `json:"install_type"`
 	ReleasedAt       string `json:"released_at"` // RFC 3339; shown as-is, never parsed
 	DetailURL        string `json:"detail_url"`
+	Stars            int    `json:"stars"` // GitHub stargazers, added by the registry build
 }
 
 // Release is one entry of a plugin's release history.
