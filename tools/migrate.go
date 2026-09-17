@@ -305,6 +305,7 @@ func seedDefaultSettings(db *gorm.DB) {
 		{Key: "robots_tag", Type: "text", Value: "index, follow"},
 		{Key: "site_url", Type: "text", Value: "https://www.example.com"},
 		{Key: "comments_require_login", Type: "checkbox", Value: "true"},
+		{Key: "plugin_directory_url", Type: "text", Value: "https://www.goblog.live/plugins/index.json"},
 	}
 	for _, s := range defaults {
 		db.Where("key = ?", s.Key).FirstOrCreate(&s)

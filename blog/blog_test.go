@@ -1294,3 +1294,25 @@ func TestPluginPageSubPaths(t *testing.T) {
 		t.Errorf("/dir/index.json disabled: code=%d", w.Code)
 	}
 }
+
+func TestSettingValue(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Setting{})
+	a := &Auth{}
+	b := blog.New(db, a, "test")
+	if got := b.SettingValue("plugin_directory_url", "default"); got != "default" {
+		t.Errorf("missing setting should return the default, got %q", got)
+	}
+	db.Create(&blog.Setting{Key: "plugin_directory_url", Type: "text", Value: "https://x.test/i.json"})
+	if got := b.SettingValue("plugin_directory_url", "default"); got != "https://x.test/i.json" {
+		t.Errorf("got %q", got)
+	}
+	db.Model(&blog.Setting{}).Where("key = ?", "plugin_directory_url").Update("value", "")
+	if got := b.SettingValue("plugin_directory_url", "default"); got != "default" {
+		t.Errorf("empty setting should return the default, got %q", got)
+	}
+	nodb := blog.New(nil, a, "test")
+	if got := nodb.SettingValue("plugin_directory_url", "default"); got != "default" {
+		t.Errorf("no db should return the default, got %q", got)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"goblog/blog"
 	"goblog/mail"
 	gplugin "goblog/plugin"
+	"goblog/plugin/installer"
 	"goblog/plugins/analytics"
 	"goblog/plugins/directory"
 	scholarplugin "goblog/plugins/scholar"
@@ -306,9 +307,20 @@ func main() {
 	dir := directory.New()
 	dir.SetUserAgent("goblog-directory/" + Version)
 	registry.Register(dir)
-	if os.Getenv("ENABLE_DYNAMIC_PLUGINS") == "true" {
+	dynamicEnabled := os.Getenv("ENABLE_DYNAMIC_PLUGINS") == "true"
+	if dynamicEnabled {
 		gplugin.LoadDynamicPlugins(registry, "plugins/dynamic")
 	}
+	pluginInstaller := &installer.Installer{
+		Dir:       "plugins/dynamic",
+		Registry:  registry,
+		Directory: directory.NewFetcher(nil),
+		Version:   Version,
+		Enabled:   dynamicEnabled,
+		IndexURL:  func() string { return _blog.SettingValue("plugin_directory_url", installer.DefaultIndexURL) },
+	}
+	pluginInstaller.Directory.SetUserAgent("goblog-installer/" + Version)
+	_admin.Installer = pluginInstaller
 	if db != nil {
 		if err := registry.Init(); err != nil {
 			log.Printf("Plugin init errors: %v", err)
@@ -410,6 +422,12 @@ func main() {
 	router.POST("/api/v1/upload", goblog._admin.UploadFile)
 	router.PATCH("/api/v1/settings", goblog._admin.UpdateSettings)
 	router.PATCH("/api/v1/plugin-settings", goblog._admin.UpdatePluginSettings)
+	router.GET("/api/v1/plugins/status", goblog._admin.PluginStatus)
+	router.GET("/api/v1/plugins/directory", goblog._admin.PluginDirectory)
+	router.POST("/api/v1/plugins/install", goblog._admin.InstallPlugin)
+	router.POST("/api/v1/plugins/update", goblog._admin.UpdatePlugin)
+	router.DELETE("/api/v1/plugins/:name", goblog._admin.UninstallPlugin)
+	router.POST("/api/v1/plugins/refresh", goblog._admin.RefreshPluginDirectory)
 	//if we use true here - it will override the home route and just show files
 	router.Use(static.Serve("/", static.LocalFile("www", false)))
 	if err != nil {
@@ -494,6 +512,7 @@ func (g *goblog) addRoutesInner() {
 	g.router.GET("/admin/pages", g._admin.AdminPages)
 	g.router.GET("/admin/comments", g._admin.AdminComments)
 	g.router.GET("/admin/users", g._admin.AdminUsers)
+	g.router.GET("/admin/plugins", g._admin.AdminPlugins)
 	g.router.GET("/admin/pages/:id", g._admin.AdminEditPage)
 	g.router.GET("/admin/post-types", g._admin.AdminPostTypes)
 	g.router.GET("/admin/post-types/:id", g._admin.AdminEditPostType)
