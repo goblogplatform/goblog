@@ -115,6 +115,18 @@ func allowedScheme(u *url.URL) bool {
 	return u.Scheme == "https" || (u.Scheme == "http" && (host == "127.0.0.1" || host == "localhost" || host == "::1"))
 }
 
+// safeURL returns u unchanged when it is an absolute http(s) URL, otherwise
+// "". Directory data such as source_url ends up in an href on the admin
+// page; a scheme like javascript: must never survive into that attribute.
+func safeURL(u string) string {
+	trimmed := strings.TrimSpace(u)
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return trimmed
+	}
+	return ""
+}
+
 // client returns an HTTP client that refuses to follow a redirect off
 // https (or off loopback, in tests) — a plugin download_url that 302s to a
 // plain-http host must not be able to smuggle the file in that way.
@@ -172,8 +184,24 @@ func (i *Installer) Status() Status {
 		st.IndexFetchedAt = i.Directory.FetchedAt().UTC().Format(time.RFC3339)
 	}
 
-	byName := make(map[string]directory.Entry, len(entries))
+	// Drop entries whose name would not pass the filesystem-safety check
+	// applied at install time; nothing derived from them (map keys, the
+	// Available list) should be trusted otherwise. Sanitize the URLs of the
+	// ones that remain — they render into href attributes on the admin page
+	// and must never carry a javascript: or other unsafe scheme.
+	validEntries := make([]directory.Entry, 0, len(entries))
 	for _, e := range entries {
+		if !directory.ValidName(e.Name) {
+			log.Printf("Installer: directory index entry %q has an invalid plugin name, skipping", e.Name)
+			continue
+		}
+		e.SourceURL = safeURL(e.SourceURL)
+		e.DownloadURL = safeURL(e.DownloadURL)
+		validEntries = append(validEntries, e)
+	}
+
+	byName := make(map[string]directory.Entry, len(validEntries))
+	for _, e := range validEntries {
 		byName[e.Name] = e
 	}
 	dynamic := map[string]plugin.DynamicInfo{}
@@ -194,7 +222,7 @@ func (i *Installer) Status() Status {
 		}
 		st.Installed = append(st.Installed, row)
 	}
-	for _, e := range entries {
+	for _, e := range validEntries {
 		if installed[e.Name] {
 			continue
 		}

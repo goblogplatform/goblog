@@ -169,6 +169,36 @@ func TestStatus(t *testing.T) {
 	}
 }
 
+// TestStatus_SkipsInvalidNamesAndSanitizesUnsafeURLs checks that Status()
+// applies the same name-safety rule as install-time lookup() to directory
+// entries (an entry with an invalid name must not reach the Available list
+// or any map keyed by it) and strips any source_url/download_url that is
+// not an absolute http(s) URL, since both render into admin-page attributes
+// (an href, a JS string literal) that untrusted directory data must not be
+// able to break out of.
+func TestStatus_SkipsInvalidNamesAndSanitizesUnsafeURLs(t *testing.T) {
+	f := newFixture(t)
+	inst := newInstaller(t, f)
+
+	bad := f.entry("bad name", "1.0.0", "/hello.go", "0.2.6", 5)
+	unsafe := f.entry("unsafe", "1.0.0", "/hello.go", "0.2.6", 1)
+	unsafe["source_url"] = "javascript:alert(1)"
+	f.entries = []map[string]any{bad, unsafe}
+
+	st := inst.Status()
+	for _, a := range st.Available {
+		if a.Name == "bad name" {
+			t.Fatalf("expected the invalid-name entry to be excluded: %+v", st.Available)
+		}
+	}
+	if len(st.Available) != 1 || st.Available[0].Name != "unsafe" {
+		t.Fatalf("available = %+v", st.Available)
+	}
+	if st.Available[0].SourceURL != "" {
+		t.Errorf("expected an unsafe source_url to be sanitized to empty, got %q", st.Available[0].SourceURL)
+	}
+}
+
 func TestStatus_DirectoryUnavailable(t *testing.T) {
 	f := newFixture(t)
 	inst := newInstaller(t, f)

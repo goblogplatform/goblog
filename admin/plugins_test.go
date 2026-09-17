@@ -241,4 +241,13 @@ func TestAdminPluginsPage(t *testing.T) {
 			t.Errorf("page missing %q", want)
 		}
 	}
+	// Directory/registry data (plugin names, URLs) must never be wired into
+	// the page as inline JS via onclick/onchange — only via data-* attributes
+	// read by a delegated listener, which the browser cannot mis-evaluate.
+	if strings.Contains(body, `onclick="pluginAction`) || strings.Contains(body, `onchange="toggleEnabled`) {
+		t.Errorf("page must not build inline onclick/onchange handlers from plugin data")
+	}
+	if !strings.Contains(body, "data-action=") {
+		t.Errorf("page missing data-action= driven controls")
+	}
 }
