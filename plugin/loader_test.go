@@ -106,3 +106,20 @@ func TestLoadDynamicPlugins_SkipsBrokenFiles(t *testing.T) {
 		t.Fatalf("expected no plugins from a missing directory, got %d", got)
 	}
 }
+
+func TestLoadDynamicPluginBytes(t *testing.T) {
+	src, err := os.ReadFile("../plugins/dynamic/hello.go.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := plugin.LoadDynamicPluginBytes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name() != "hello" || p.Version() != "1.0.0" {
+		t.Errorf("loaded %q %q", p.Name(), p.Version())
+	}
+	if _, err := plugin.LoadDynamicPluginBytes([]byte("package main\nfunc NewPlugin() int { return 1 }\n")); err == nil {
+		t.Error("NewPlugin returning a non-plugin should fail")
+	}
+}

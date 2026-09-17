@@ -15,7 +15,7 @@ type Info struct {
 // submitted plugin loads and that its Name and Version match the manifest
 // and release tag.
 func Validate(path string) (Info, error) {
-	p, err := loadPlugin(path)
+	p, err := LoadDynamicPlugin(path)
 	if err != nil {
 		return Info{}, err
 	}

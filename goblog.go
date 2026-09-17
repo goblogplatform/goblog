@@ -145,7 +145,9 @@ func (g *goblog) rootHandler(c *gin.Context) {
 			g._admin.UpdateDb(db)
 			g._wizard.UpdateDb(db)
 			g._registry.UpdateDb(db)
-			g._registry.Init()
+			if err := g._registry.Init(); err != nil {
+				log.Printf("Plugin init errors: %v", err)
+			}
 			g._registry.StartScheduledJobs()
 
 			if !isAuthConfigured() {
@@ -308,7 +310,9 @@ func main() {
 		gplugin.LoadDynamicPlugins(registry, "plugins/dynamic")
 	}
 	if db != nil {
-		registry.Init()
+		if err := registry.Init(); err != nil {
+			log.Printf("Plugin init errors: %v", err)
+		}
 		registry.StartScheduledJobs()
 	}
 
