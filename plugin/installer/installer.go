@@ -533,9 +533,13 @@ func (i *Installer) probeDirWritable() (bool, string) {
 		return false, err.Error()
 	}
 	name := f.Name()
-	f.Close()
-	if err := os.Remove(name); err != nil {
-		return false, err.Error()
+	closeErr := f.Close() // some filesystems report write/permission errors only here
+	removeErr := os.Remove(name)
+	if closeErr != nil {
+		return false, closeErr.Error()
+	}
+	if removeErr != nil {
+		return false, removeErr.Error()
 	}
 	return true, ""
 }
