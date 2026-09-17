@@ -9,8 +9,9 @@
 // The same plugin, packaged the way the plugin directory expects (manifest,
 // README, tagged releases), is at github.com/goblogplatform/goblog-plugin-hello.
 //
-// Dynamic plugins are ordinary Go source files interpreted at startup by
-// Yaegi. They must be `package main` and define `func NewPlugin() plugin.Plugin`.
+// Dynamic plugins are ordinary Go source files interpreted at startup (or
+// when installed from Admin -> Plugins) by Yaegi. They must be `package
+// main` and define `func NewPlugin() plugin.Plugin`.
 // The interpreter exposes the Go standard library and the goblog/plugin
 // package; third-party packages such as gin or gorm are not available. That
 // means a dynamic plugin can implement Name/DisplayName/Version, Settings,

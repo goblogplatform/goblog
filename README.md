@@ -155,7 +155,7 @@ registry.Register(myplugin.New())
 They have full access to `gin`, `gorm`, and any module dependency, and are part of the release binary. Use this for anything that ships with goblog.
 
 ### Dynamic plugins
-Loaded at startup from `plugins/dynamic/*.go` by the embedded [Yaegi](https://github.com/traefik/yaegi) Go interpreter — no rebuild, so they work with the Docker image. Enable with:
+Loaded at startup (or when installed from Admin → Plugins) from `plugins/dynamic/*.go` by the embedded [Yaegi](https://github.com/traefik/yaegi) Go interpreter — no rebuild, so they work with the Docker image. Enable with:
 ```bash
 ENABLE_DYNAMIC_PLUGINS=true ./goblog
 ```
@@ -181,9 +181,9 @@ docker run -p 7000:7000 -e ENABLE_DYNAMIC_PLUGINS=true \
 #### Installing from the directory
 **Admin → Plugins** lists what is installed and lets you browse and search the [plugin directory](https://www.goblog.live/plugins), install a plugin with one click, update it when the directory has a newer release, or uninstall it. Requirements:
 - `ENABLE_DYNAMIC_PLUGINS=true`, and `plugins/dynamic/` writable by goblog. With Docker, bind-mount that directory (as above) — otherwise installed plugins vanish with the container.
-- The directory URL is the `plugin_directory_url` setting (default `https://www.goblog.live/plugins/index.json`); point it elsewhere to run a private directory.
+- The directory URL is the `plugin_directory_url` setting (default `https://www.goblog.live/plugins/index.json`); point it elsewhere to run a private directory. `plugin_directory_url` is a trust decision: whatever it points at can offer code that runs inside goblog once you click Install.
 
-Install downloads the plugin's `.go` file, verifies its sha256 against the directory index, loads it, checks that its name and version match, and only then writes it to `plugins/dynamic/` and starts it — no restart. Updates keep the plugin's settings; uninstall removes both. Plugins run as Go code inside goblog: install only from sources you trust.
+Install downloads the plugin's `.go` file, verifies its sha256 against the directory index, loads it, checks that its name and version match, and only then writes it to `plugins/dynamic/` and starts it — no restart. Updates keep the plugin's settings; uninstall removes both. Plugins run as Go code inside goblog: install only from sources you trust. After an update the previous version's interpreter stays in memory until goblog restarts; this is bounded and harmless.
 
 #### Checking a plugin file
 `goblog validate-plugin <file.go>` loads a single file through the same interpreter and prints its identity as JSON (exit 1 with the load error on stderr if it fails):
