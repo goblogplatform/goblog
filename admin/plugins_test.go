@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -215,4 +216,29 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func sha256hex(b []byte) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
+}
+
+func adminFromHarness(h *pluginsHarness) *admin.Admin { return &h.ad }
+
+func TestAdminPluginsPage(t *testing.T) {
+	h := newPluginsHarness(t)
+	h.auth.On("IsAdmin", mock.Anything).Return(true)
+	h.auth.On("IsLoggedIn", mock.Anything).Return(true)
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	h.router.SetHTMLTemplate(tmpl)
+	h.router.GET("/admin/plugins", func(c *gin.Context) { adminFromHarness(h).AdminPlugins(c) })
+
+	w := h.do("GET", "/admin/plugins", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("page: %d %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{`id="tab-installed"`, `id="tab-browse"`, `/api/v1/plugins/status`, `href="/admin/plugins"`, "ENABLE_DYNAMIC_PLUGINS"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
 }
