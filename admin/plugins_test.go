@@ -114,6 +114,9 @@ func TestPluginAPI_StatusDirectoryInstallUninstall(t *testing.T) {
 	if !st.DynamicEnabled || len(st.Available) != 2 || st.Available[0].Name != "hello" {
 		t.Errorf("status = %+v", st)
 	}
+	if !st.DirWritable {
+		t.Errorf("expected the happy-path plugins/dynamic/ (a t.TempDir()) to be writable, got status = %+v", st)
+	}
 
 	// Directory search + sort.
 	w = h.do("GET", "/api/v1/plugins/directory?q=other", "")

@@ -47,7 +47,7 @@
 
 <script>
 (function () {
-  var state = { status: null, dynamicEnabled: false };
+  var state = { status: null, dynamicEnabled: false, dirWritable: false };
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (ch) {
@@ -108,15 +108,16 @@
 
   function renderBrowse(list) {
     var cards = list.map(function (p) {
-      var disabled = !state.dynamicEnabled || !p.compatible;
-      var reason = !state.dynamicEnabled ? "dynamic plugins are disabled" : (p.reason || "");
+      var disabled = !state.dynamicEnabled || !state.dirWritable || !p.compatible;
+      var reason = !state.dynamicEnabled ? "dynamic plugins are disabled" : (!state.dirWritable ? "plugins/dynamic/ is not writable" : (p.reason || ""));
       var source = httpURL(p.source_url);
       var sourceLink = source ? '<a href="' + esc(source) + '" target="_blank" rel="noopener" class="me-2">Source</a>' : '';
       var dirName = safeName(p.name);
       var dirLink = dirName ? '<a href="https://www.goblog.live/plugins/' + esc(dirName) + '" target="_blank" rel="noopener">Directory page</a>' : '';
+      var minVer = p.min_goblog_version ? ' · requires goblog ≥ ' + esc(p.min_goblog_version) : '';
       return '<div class="col-md-6"><div class="card h-100"><div class="card-body">' +
         '<h5 class="card-title mb-1">' + esc(p.display_name) + ' <small class="text-muted">v' + esc(p.version) + '</small></h5>' +
-        '<p class="mb-1 small text-muted">by ' + esc(p.author) + ' · ★ ' + esc(p.stars) + ' · ' + esc(p.license) + ' · requires goblog ≥ ' + esc(p.min_goblog_version) + '</p>' +
+        '<p class="mb-1 small text-muted">by ' + esc(p.author) + ' · ★ ' + esc(p.stars) + ' · ' + esc(p.license) + minVer + '</p>' +
         '<p class="card-text">' + esc(p.description) + '</p>' +
         sourceLink + dirLink +
         '</div><div class="card-footer d-flex justify-content-between align-items-center">' +
@@ -129,8 +130,17 @@
 
   function loadStatus() {
     return api("GET", "/api/v1/plugins/status").then(function (st) {
-      state.status = st; state.dynamicEnabled = st.dynamic_enabled;
-      document.getElementById("plugins-disabled").hidden = st.dynamic_enabled;
+      state.status = st; state.dynamicEnabled = st.dynamic_enabled; state.dirWritable = st.dir_writable;
+      var disabledEl = document.getElementById("plugins-disabled");
+      if (!st.dynamic_enabled) {
+        disabledEl.innerHTML = 'Installing plugins needs <code>ENABLE_DYNAMIC_PLUGINS=true</code> and a writable, persisted <code>plugins/dynamic/</code> directory (bind-mount it with Docker). See the README under <em>Dynamic plugins</em>. You can still browse the directory.';
+        disabledEl.hidden = false;
+      } else if (!st.dir_writable) {
+        disabledEl.innerHTML = 'Dynamic plugins are enabled but <code>plugins/dynamic/</code> is not writable: ' + esc(st.dir_error || "") + '. Fix the directory permissions (or the Docker bind mount) to install plugins.';
+        disabledEl.hidden = false;
+      } else {
+        disabledEl.hidden = true;
+      }
       var ie = document.getElementById("plugins-index-error");
       ie.hidden = !st.index_error;
       document.getElementById("plugins-index-error-text").textContent = st.index_error || "";
@@ -159,11 +169,18 @@
     btn.disabled = true;
     var label = btn.innerHTML;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> ' + label;
+    function restore() { btn.disabled = false; btn.innerHTML = label; }
     var p = action === "uninstall"
       ? api("DELETE", "/api/v1/plugins/" + encodeURIComponent(name))
       : api("POST", "/api/v1/plugins/" + action, { name: name });
-    p.then(loadStatus).catch(function (e) {
-      btn.disabled = false; btn.innerHTML = label;
+    p.then(function () {
+      // loadStatus() swallows its own errors (see its .catch above) so it
+      // always resolves; restore the button on both branches here rather
+      // than relying on a single .then, so a loadStatus() hiccup after a
+      // successful action can never leave the button stuck spinning.
+      return loadStatus().then(restore, restore);
+    }, function (e) {
+      restore();
       if (errEl) { errEl.textContent = e.message; } else { showError(e.message); }
     });
   }

@@ -536,6 +536,68 @@ func TestInstall_RefusesRedirectOffHTTPS(t *testing.T) {
 	}
 }
 
+// TestStatus_StaleIndexRefetchesWithoutExplicitRefresh checks that ensureIndex
+// forces a refresh once the cached index is older than staleAfter, not just
+// when the configured URL changes — otherwise Fetcher.Ensure only ever fetches
+// once (while the cache is empty) and "update available" / new directory
+// entries would only ever appear after an operator clicks the manual refresh.
+func TestStatus_StaleIndexRefetchesWithoutExplicitRefresh(t *testing.T) {
+	f := newFixture(t)
+	inst := newInstaller(t, f)
+
+	orig := staleAfter
+	staleAfter = 0
+	t.Cleanup(func() { staleAfter = orig })
+
+	inst.Status()
+	inst.Status()
+	if n := f.hits.Load(); n != 2 {
+		t.Errorf("with staleAfter=0 two Status() calls should each refresh, got %d hits", n)
+	}
+}
+
+// TestStatus_FreshIndexDoesNotRefetch is the control for the test above: with
+// the default staleAfter, a second Status() call right after the first must
+// not re-fetch the index.
+func TestStatus_FreshIndexDoesNotRefetch(t *testing.T) {
+	f := newFixture(t)
+	inst := newInstaller(t, f)
+
+	inst.Status()
+	inst.Status()
+	if n := f.hits.Load(); n != 1 {
+		t.Errorf("a fresh cache should not be refetched, got %d hits", n)
+	}
+}
+
+// TestStatus_DirWritability checks that Status() probes plugins/dynamic/ for
+// writability and surfaces the result, and that Install fails with ErrWrite
+// (rather than a generic error) when the directory cannot be written to.
+func TestStatus_DirWritability(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission checks do not apply")
+	}
+	f := newFixture(t)
+	inst := newInstaller(t, f)
+	dir := inst.Dir
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0755) })
+
+	st := inst.Status()
+	if st.DirWritable {
+		t.Error("expected DirWritable to be false for a read-only directory")
+	}
+	if st.DirError == "" {
+		t.Error("expected DirError to be set for a read-only directory")
+	}
+
+	if _, err := inst.Install(context.Background(), "hello"); !errors.Is(err, ErrWrite) {
+		t.Errorf("expected ErrWrite installing into a read-only directory, got %v", err)
+	}
+}
+
 func TestStatus_IndexURLChangeRefetchesWithoutExplicitRefresh(t *testing.T) {
 	f1 := newFixture(t)
 	inst := newInstaller(t, f1)

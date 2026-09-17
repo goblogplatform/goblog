@@ -29,6 +29,14 @@ const DefaultIndexURL = "https://www.goblog.live/plugins/index.json"
 // maxPluginBytes caps a plugin download.
 const maxPluginBytes = 1 << 20
 
+// staleAfter is how long a cached directory index is served before
+// ensureIndex forces a refresh even though something is already cached.
+// Without this, Fetcher.Ensure only ever fetches once (when the cache is
+// empty), so "update available" and new directory entries would only ever
+// appear after an operator clicks the manual ↻ refresh. A package-level var
+// so tests can force it to 0 and observe every Status() call refreshing.
+var staleAfter = time.Hour
+
 // Typed errors; the admin API maps them to 4xx responses with their text.
 var (
 	ErrDynamicDisabled      = errors.New("dynamic plugins are disabled: start goblog with ENABLE_DYNAMIC_PLUGINS=true and a writable plugins/dynamic/ directory")
@@ -42,6 +50,7 @@ var (
 	ErrDirectoryUnavailable = errors.New("the plugin directory index is unavailable")
 	ErrUpToDate             = errors.New("plugin is already at the directory's version")
 	ErrDownload             = errors.New("could not download the plugin")
+	ErrWrite                = errors.New("could not write to the plugins/dynamic directory; check that it exists and goblog can write to it")
 )
 
 // Installer wires the directory index, the plugin registry and the
@@ -99,6 +108,8 @@ type Status struct {
 	DynamicEnabled bool        `json:"dynamic_enabled"`
 	IndexFetchedAt string      `json:"index_fetched_at,omitempty"`
 	IndexError     string      `json:"index_error,omitempty"`
+	DirWritable    bool        `json:"dir_writable"`
+	DirError       string      `json:"dir_error,omitempty"`
 }
 
 // Result reports a successful install or update.
@@ -156,7 +167,11 @@ func (i *Installer) Refresh() error {
 // ensureIndex makes sure the directory index reflects indexURL. When the
 // configured URL has changed since the last call, it forces a fresh fetch
 // (an operator pointing at a different registry should not wait out
-// Ensure's throttle for stale-empty caches); otherwise it defers to Ensure.
+// Ensure's throttle for stale-empty caches). Otherwise, once something is
+// cached, Fetcher.Ensure would never fetch again on its own, so a cache
+// older than staleAfter is also refreshed here (errors are logged; the old
+// copy stays in place and is still served). A fresh-empty cache defers to
+// Ensure's own throttled fetch-and-retry behaviour.
 func (i *Installer) ensureIndex(indexURL string) {
 	i.urlMu.Lock()
 	changed := indexURL != i.lastURL
@@ -165,6 +180,12 @@ func (i *Installer) ensureIndex(indexURL string) {
 	if changed {
 		if err := i.Directory.Refresh(indexURL); err != nil {
 			log.Printf("Installer: fetching directory index at %s: %v", indexURL, err)
+		}
+		return
+	}
+	if fetchedAt := i.Directory.FetchedAt(); !fetchedAt.IsZero() && time.Since(fetchedAt) > staleAfter {
+		if err := i.Directory.Refresh(indexURL); err != nil {
+			log.Printf("Installer: refreshing stale directory index at %s: %v", indexURL, err)
 		}
 		return
 	}
@@ -182,6 +203,9 @@ func (i *Installer) Status() Status {
 		st.IndexError = "could not fetch the plugin directory index"
 	} else {
 		st.IndexFetchedAt = i.Directory.FetchedAt().UTC().Format(time.RFC3339)
+	}
+	if i.Enabled {
+		st.DirWritable, st.DirError = i.probeDirWritable()
 	}
 
 	// Drop entries whose name would not pass the filesystem-safety check
@@ -310,7 +334,7 @@ func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 	}
 	path := filepath.Join(i.Dir, e.Name+".go")
 	if err := writeAtomic(path, src); err != nil {
-		return Result{}, fmt.Errorf("write %s: %w", path, err)
+		return Result{}, fmt.Errorf("%w: %v", ErrWrite, err)
 	}
 	if err := i.register(p, path); err != nil {
 		// A concurrent RegisterDynamic under the same name won the race;
@@ -340,6 +364,9 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if _, ok := parseVersion(d.Version); !ok {
+		return Result{}, fmt.Errorf("%w: installed version %q is not semver", ErrUpToDate, d.Version)
+	}
 	if !newer(e.Version, d.Version) {
 		return Result{}, fmt.Errorf("%w: %s is at v%s; the directory has v%s", ErrUpToDate, name, d.Version, e.Version)
 	}
@@ -356,7 +383,7 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 	}
 	prev := d.Path + ".prev"
 	if err := os.Rename(d.Path, prev); err != nil {
-		return Result{}, fmt.Errorf("back up %s: %w", d.Path, err)
+		return Result{}, fmt.Errorf("%w: %v", ErrWrite, err)
 	}
 	rollback := func(cause error) (Result, error) {
 		i.Registry.Unregister(name) // no-op if the new plugin never registered
@@ -366,6 +393,12 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 		}
 		if old != nil {
 			if err := i.Registry.RegisterDynamic(old, d.Path); err == nil {
+				// InitPlugin deliberately re-runs OnInit for the restored
+				// previous version, so any scheduled jobs it starts there
+				// come back up. Dynamic plugins loaded through Yaegi can't
+				// override OnInit today (it names gorm types the
+				// interpreter doesn't expose), so this is a no-op for them
+				// in practice, but it still matters if that ever changes.
 				if err := i.Registry.InitPlugin(name); err != nil {
 					log.Printf("Update %s: re-initialising previous version failed: %v", name, err)
 				}
@@ -377,7 +410,7 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 		return rollback(err)
 	}
 	if err := writeAtomic(d.Path, src); err != nil {
-		return rollback(fmt.Errorf("write %s: %w", d.Path, err))
+		return rollback(fmt.Errorf("%w: %v", ErrWrite, err))
 	}
 	if err := i.register(p, d.Path); err != nil {
 		return rollback(err)
@@ -402,7 +435,7 @@ func (i *Installer) Uninstall(name string) error {
 		return err
 	}
 	if err := os.Remove(d.Path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove %s: %w", d.Path, err)
+		return fmt.Errorf("%w: %v", ErrWrite, err)
 	}
 	i.Registry.DeleteSettings(name)
 	log.Printf("Uninstalled plugin %s", name)
@@ -479,12 +512,32 @@ func (i *Installer) download(ctx context.Context, rawURL string) ([]byte, error)
 	}
 	src, err := io.ReadAll(io.LimitReader(resp.Body, maxPluginBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("download: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrDownload, err)
 	}
 	if len(src) > maxPluginBytes {
 		return nil, fmt.Errorf("%w: file is larger than %d bytes", ErrLoad, maxPluginBytes)
 	}
 	return src, nil
+}
+
+// probeDirWritable creates i.Dir if needed and proves goblog can write to
+// it by creating and removing a temp file, without leaving anything behind.
+// Surfacing this in Status lets the admin page explain an otherwise-generic
+// write failure (e.g. a read-only bind mount) before anyone clicks Install.
+func (i *Installer) probeDirWritable() (bool, string) {
+	if err := os.MkdirAll(i.Dir, 0755); err != nil {
+		return false, err.Error()
+	}
+	f, err := os.CreateTemp(i.Dir, ".probe-*")
+	if err != nil {
+		return false, err.Error()
+	}
+	name := f.Name()
+	f.Close()
+	if err := os.Remove(name); err != nil {
+		return false, err.Error()
+	}
+	return true, ""
 }
 
 // writeAtomic writes via a temp file in the same directory and renames it

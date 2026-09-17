@@ -44,6 +44,8 @@ func installerStatus(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, installer.ErrDownload):
 		return http.StatusBadGateway
+	case errors.Is(err, installer.ErrWrite):
+		return http.StatusInsufficientStorage
 	}
 	return 0
 }
