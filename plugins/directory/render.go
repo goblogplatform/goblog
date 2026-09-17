@@ -30,7 +30,13 @@ var templates = template.Must(template.New("").Funcs(template.FuncMap{
 // sub-path is not a plugin page.
 var namePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
-func validName(name string) bool { return namePattern.MatchString(name) }
+func validName(name string) bool { return ValidName(name) }
+
+// ValidName reports whether name follows the registry's plugin name rule
+// (lowercase letters, digits and hyphens). Callers that pass a plugin name
+// to the filesystem (the installer, when it derives a file path) must check
+// this before doing so.
+func ValidName(name string) bool { return namePattern.MatchString(name) }
 
 // basePath is the page's URL prefix ("/plugins"), taken from the request so
 // links keep working if the admin renames the page's slug.

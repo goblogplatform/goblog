@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -63,12 +64,23 @@ func newFixture(t *testing.T) *fixture {
 			w.Write(f.helloV2)
 		case "/badname.go":
 			w.Write(f.badName)
+		case "/redirect":
+			http.Redirect(w, r, "http://example.invalid/x.go", http.StatusFound)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+// capitalize upper-cases the first byte; good enough for the plugin names
+// used in these fixtures.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func (f *fixture) entry(name, version, file, minVersion string, stars int) map[string]any {
@@ -86,7 +98,7 @@ func (f *fixture) entry(name, version, file, minVersion string, stars int) map[s
 		sha = strings.Repeat("0", 64)
 	}
 	return map[string]any{
-		"name": name, "display_name": strings.Title(name), "description": "d", "version": version,
+		"name": name, "display_name": capitalize(name), "description": "d", "version": version,
 		"author": "a", "license": "MIT", "source_url": "https://github.com/x/" + name,
 		"download_url": f.srv.URL + file, "sha256": sha, "min_goblog_version": minVersion,
 		"install_type": "dynamic", "released_at": "2026-09-15T00:00:00Z",
@@ -151,6 +163,9 @@ func TestStatus(t *testing.T) {
 	}
 	if st.Available[0].Stars != 3 {
 		t.Errorf("stars should come through, got %d", st.Available[0].Stars)
+	}
+	if n := f.hits.Load(); n != 1 {
+		t.Errorf("Status should make exactly one index request, got %d", n)
 	}
 }
 
@@ -292,11 +307,14 @@ func TestUpdateAndRollback(t *testing.T) {
 	if !kept {
 		t.Error("settings must survive an update")
 	}
-	if _, err := inst.Update(ctx, "hello"); err == nil {
-		t.Error("updating when already at the index version should fail")
+	if _, err := inst.Update(ctx, "hello"); !errors.Is(err, ErrUpToDate) {
+		t.Errorf("updating when already at the index version should be ErrUpToDate, got %v", err)
 	}
 
 	// Rollback: the index advertises 1.2.0 but serves a file whose Version() is 1.1.0.
+	// This is rejected in fetchAndCheck before anything is touched on disk or in
+	// the registry, so it does not exercise the rename→unregister→rollback path;
+	// TestUpdate_RollbackOnRegisterFailure below does, via hookBeforeRegister.
 	bad := f.entry("hello", "1.2.0", "/hello-v2.go", "0.2.6", 0)
 	f.entries = []map[string]any{bad}
 	if err := inst.Refresh(); err != nil {
@@ -343,6 +361,166 @@ func TestUninstall(t *testing.T) {
 	inst.Registry.Register(&compiledPlugin{})
 	if err := inst.Uninstall("scholar"); !errors.Is(err, ErrNotInstalled) {
 		t.Errorf("uninstalling compiled-in: %v", err)
+	}
+}
+
+func TestInstall_HookFailure(t *testing.T) {
+	f := newFixture(t)
+	inst := newInstaller(t, f)
+	inst.hookBeforeRegister = func(plugin.Plugin) error { return errors.New("simulated init failure") }
+
+	if _, err := inst.Install(context.Background(), "hello"); !errors.Is(err, ErrLoad) {
+		t.Errorf("expected ErrLoad, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inst.Dir, "hello.go")); err == nil {
+		t.Error("nothing should be written when the register hook fails")
+	}
+	if len(inst.Registry.Dynamic()) != 0 {
+		t.Error("nothing should be registered when the register hook fails")
+	}
+}
+
+func TestUpdate_RollbackOnRegisterFailure(t *testing.T) {
+	f := newFixture(t)
+	inst := newInstaller(t, f)
+	ctx := context.Background()
+	if _, err := inst.Install(ctx, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	inst.Registry.UpdateSetting("hello", "message", "keep me")
+
+	// Index now offers 1.1.0.
+	f.entries = []map[string]any{f.entry("hello", "1.1.0", "/hello-v2.go", "0.2.6", 0)}
+	if err := inst.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Dynamic plugins loaded through Yaegi can't be made to fail OnInit on
+	// demand, so this simulates the failure that would normally come from
+	// RegisterDynamic/InitPlugin, to exercise the rename→unregister→write→
+	// register→rollback sequence end to end.
+	inst.hookBeforeRegister = func(plugin.Plugin) error { return errors.New("simulated init failure") }
+	if _, err := inst.Update(ctx, "hello"); !errors.Is(err, ErrLoad) {
+		t.Errorf("expected ErrLoad, got %v", err)
+	}
+
+	path := filepath.Join(inst.Dir, "hello.go")
+	if b, err := os.ReadFile(path); err != nil || string(b) != string(f.helloV1) {
+		t.Fatalf("hello.go should hold the 1.0.0 bytes after rollback: %v", err)
+	}
+	if _, err := os.Stat(path + ".prev"); err == nil {
+		t.Error("no .prev file should remain after a rolled-back update")
+	}
+	dyn := inst.Registry.Dynamic()
+	if len(dyn) != 1 || dyn[0].Version != "1.0.0" {
+		t.Errorf("the previous plugin must be registered again after rollback, got %+v", dyn)
+	}
+	kept := false
+	for _, g := range inst.Registry.GetAllSettings() {
+		if g.PluginName == "hello" && g.CurrentValues["message"] == "keep me" {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Error("settings must survive a rolled-back update")
+	}
+
+	// Clearing the hook lets a subsequent update through.
+	inst.hookBeforeRegister = nil
+	res, err := inst.Update(ctx, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Version != "1.1.0" {
+		t.Errorf("update after clearing the hook should succeed, got %+v", res)
+	}
+}
+
+func TestInstall_ConcurrentSameName(t *testing.T) {
+	f := newFixture(t)
+	inst := newInstaller(t, f)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	results := make([]error, 2)
+	for idx := range results {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			_, err := inst.Install(ctx, "hello")
+			results[idx] = err
+		}(idx)
+	}
+	wg.Wait()
+
+	successes, already := 0, 0
+	for _, err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrAlreadyInstalled):
+			already++
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || already != 1 {
+		t.Errorf("expected exactly one success and one ErrAlreadyInstalled, got %d successes, %d already-installed: %+v", successes, already, results)
+	}
+	if _, err := os.Stat(filepath.Join(inst.Dir, "hello.go")); err != nil {
+		t.Errorf("file should exist after concurrent installs: %v", err)
+	}
+	if dyn := inst.Registry.Dynamic(); len(dyn) != 1 {
+		t.Errorf("expected exactly one dynamic entry, got %+v", dyn)
+	}
+}
+
+func TestInstall_InvalidName(t *testing.T) {
+	f := newFixture(t)
+	inst := newInstaller(t, f)
+	if _, err := inst.Install(context.Background(), "../x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+	entries, _ := os.ReadDir(inst.Dir)
+	if len(entries) != 0 {
+		t.Errorf("nothing should be written for an invalid name, got %v", entries)
+	}
+}
+
+func TestInstall_RefusesRedirectOffHTTPS(t *testing.T) {
+	f := newFixture(t)
+	inst := newInstaller(t, f)
+	e := f.entry("redir", "1.0.0", "/hello.go", "0.2.6", 0)
+	e["download_url"] = f.srv.URL + "/redirect"
+	f.entries = []map[string]any{e}
+	if err := inst.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := inst.Install(context.Background(), "redir")
+	if err == nil || !strings.Contains(err.Error(), "https") {
+		t.Errorf("expected an https-related error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inst.Dir, "redir.go")); err == nil {
+		t.Error("nothing should be written when the download redirects off https")
+	}
+}
+
+func TestStatus_IndexURLChangeRefetchesWithoutExplicitRefresh(t *testing.T) {
+	f1 := newFixture(t)
+	inst := newInstaller(t, f1)
+	st := inst.Status()
+	if len(st.Available) == 0 {
+		t.Fatal("expected entries from the first index")
+	}
+
+	f2 := newFixture(t)
+	f2.entries = []map[string]any{f2.entry("other", "1.0.0", "/hello.go", "0.2.6", 0)}
+	inst.IndexURL = func() string { return f2.srv.URL + "/index.json" }
+
+	st = inst.Status()
+	if len(st.Available) != 1 || st.Available[0].Name != "other" {
+		t.Errorf("expected the second index's entries without an explicit Refresh, got %+v", st.Available)
 	}
 }
 

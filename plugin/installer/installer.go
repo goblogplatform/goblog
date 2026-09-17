@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"goblog/plugin"
@@ -39,18 +40,36 @@ var (
 	ErrNotFound             = errors.New("this plugin is not in the directory")
 	ErrLoad                 = errors.New("the plugin failed to load")
 	ErrDirectoryUnavailable = errors.New("the plugin directory index is unavailable")
+	ErrUpToDate             = errors.New("plugin is already at the directory's version")
+	ErrDownload             = errors.New("could not download the plugin")
 )
 
 // Installer wires the directory index, the plugin registry and the
 // plugins/dynamic directory together.
 type Installer struct {
-	Dir       string             // plugins/dynamic
+	Dir       string // plugins/dynamic
 	Registry  *plugin.Registry
 	Directory *directory.Fetcher // own instance; not the directory plugin's
 	Version   string             // running goblog version, e.g. "v0.2.7" or "development"
 	Client    *http.Client       // downloads; nil → 30s timeout default
 	Enabled   bool               // ENABLE_DYNAMIC_PLUGINS
 	IndexURL  func() string      // current plugin_directory_url setting
+
+	// mu serializes Install/Update/Uninstall so two callers acting on the
+	// same (or different) plugin names cannot interleave writes to the
+	// dynamic directory or the registry. Status and Refresh do not take it.
+	mu sync.Mutex
+
+	// urlMu guards lastURL, the index URL last fetched by ensureIndex.
+	urlMu   sync.Mutex
+	lastURL string
+
+	// hookBeforeRegister is a test-only seam: when set, register() calls it
+	// before touching the registry and, on error, fails the install/update
+	// as if the plugin had failed to load. Dynamic plugins loaded through
+	// Yaegi cannot be made to fail OnInit on demand, so tests use this hook
+	// to exercise the rollback path instead.
+	hookBeforeRegister func(p plugin.Plugin) error
 }
 
 // Installed is a registered plugin as shown on the Installed tab.
@@ -89,11 +108,29 @@ type Result struct {
 	Message string `json:"message"`
 }
 
+// allowedScheme is the download_url rule: HTTPS, or plain HTTP to loopback
+// (for tests only). Applied to both the initial request and any redirect.
+func allowedScheme(u *url.URL) bool {
+	host := u.Hostname()
+	return u.Scheme == "https" || (u.Scheme == "http" && (host == "127.0.0.1" || host == "localhost" || host == "::1"))
+}
+
+// client returns an HTTP client that refuses to follow a redirect off
+// https (or off loopback, in tests) — a plugin download_url that 302s to a
+// plain-http host must not be able to smuggle the file in that way.
 func (i *Installer) client() *http.Client {
-	if i.Client != nil {
-		return i.Client
+	base := i.Client
+	if base == nil {
+		base = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	c := *base
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if !allowedScheme(req.URL) {
+			return fmt.Errorf("redirected to %s: download_url must be https", req.URL)
+		}
+		return nil
+	}
+	return &c
 }
 
 // Refresh re-fetches the index now.
@@ -104,11 +141,29 @@ func (i *Installer) Refresh() error {
 	return nil
 }
 
+// ensureIndex makes sure the directory index reflects indexURL. When the
+// configured URL has changed since the last call, it forces a fresh fetch
+// (an operator pointing at a different registry should not wait out
+// Ensure's throttle for stale-empty caches); otherwise it defers to Ensure.
+func (i *Installer) ensureIndex(indexURL string) {
+	i.urlMu.Lock()
+	changed := indexURL != i.lastURL
+	i.lastURL = indexURL
+	i.urlMu.Unlock()
+	if changed {
+		if err := i.Directory.Refresh(indexURL); err != nil {
+			log.Printf("Installer: fetching directory index at %s: %v", indexURL, err)
+		}
+		return
+	}
+	i.Directory.Ensure(indexURL)
+}
+
 // Status lists installed plugins (with update info for dynamic ones) and the
 // directory entries that are not installed, sorted by stars then name.
 func (i *Installer) Status() Status {
 	indexURL := i.IndexURL()
-	i.Directory.Ensure(indexURL)
+	i.ensureIndex(indexURL)
 	_, entries, ok := i.Directory.Index()
 	st := Status{DirectoryURL: indexURL, DynamicEnabled: i.Enabled, Installed: []Installed{}, Available: []Available{}}
 	if !ok {
@@ -162,15 +217,23 @@ func (i *Installer) Status() Status {
 }
 
 // lookup finds an index entry and applies the checks that do not need the
-// file: dynamic, compatible.
+// file: name validity, dynamic, compatible.
 func (i *Installer) lookup(name string) (directory.Entry, error) {
-	i.Directory.Ensure(i.IndexURL())
+	if !directory.ValidName(name) {
+		return directory.Entry{}, ErrNotFound
+	}
+	i.ensureIndex(i.IndexURL())
 	if _, _, ok := i.Directory.Index(); !ok {
 		return directory.Entry{}, ErrDirectoryUnavailable
 	}
 	e, ok := i.Directory.Entry(name)
 	if !ok {
 		return directory.Entry{}, ErrNotFound
+	}
+	// Defensive: the index says this name, but never let anything that
+	// wouldn't pass ValidName reach a filesystem path.
+	if !directory.ValidName(e.Name) {
+		return directory.Entry{}, fmt.Errorf("%w: invalid plugin name %q", ErrLoad, e.Name)
 	}
 	if e.InstallType != "dynamic" {
 		return directory.Entry{}, ErrNotDynamic
@@ -201,6 +264,8 @@ func (i *Installer) dynamic(name string) (plugin.DynamicInfo, bool) {
 
 // Install downloads, verifies, writes, loads and registers a directory plugin.
 func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	if !i.Enabled {
 		return Result{}, ErrDynamicDisabled
 	}
@@ -220,7 +285,11 @@ func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 		return Result{}, fmt.Errorf("write %s: %w", path, err)
 	}
 	if err := i.register(p, path); err != nil {
-		os.Remove(path)
+		// A concurrent RegisterDynamic under the same name won the race;
+		// that plugin owns the file now, so it must not be removed.
+		if !errors.Is(err, ErrAlreadyInstalled) {
+			os.Remove(path)
+		}
 		return Result{}, err
 	}
 	log.Printf("Installed plugin %s v%s from %s", e.Name, e.Version, e.DownloadURL)
@@ -230,6 +299,8 @@ func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 // Update replaces an installed dynamic plugin with the index version. If the
 // new file fails to load, the previous file and plugin are restored.
 func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	if !i.Enabled {
 		return Result{}, ErrDynamicDisabled
 	}
@@ -242,7 +313,7 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 		return Result{}, err
 	}
 	if !newer(e.Version, d.Version) {
-		return Result{}, fmt.Errorf("%s is already at v%s; the directory has v%s", name, d.Version, e.Version)
+		return Result{}, fmt.Errorf("%w: %s is at v%s; the directory has v%s", ErrUpToDate, name, d.Version, e.Version)
 	}
 	src, p, err := i.fetchAndCheck(ctx, e)
 	if err != nil {
@@ -263,6 +334,7 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 		i.Registry.Unregister(name) // no-op if the new plugin never registered
 		if err := os.Rename(prev, d.Path); err != nil {
 			log.Printf("Update %s: restoring %s failed: %v", name, d.Path, err)
+			cause = fmt.Errorf("%w; restoring the previous file also failed: %v", cause, err)
 		}
 		if old != nil {
 			if err := i.Registry.RegisterDynamic(old, d.Path); err == nil {
@@ -289,6 +361,8 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 
 // Uninstall unregisters a dynamic plugin, deletes its file and its settings.
 func (i *Installer) Uninstall(name string) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	if !i.Enabled {
 		return ErrDynamicDisabled
 	}
@@ -333,6 +407,15 @@ func (i *Installer) fetchAndCheck(ctx context.Context, e directory.Entry) ([]byt
 }
 
 func (i *Installer) register(p plugin.Plugin, path string) error {
+	if i.hookBeforeRegister != nil {
+		if err := i.hookBeforeRegister(p); err != nil {
+			return fmt.Errorf("%w: %v", ErrLoad, err)
+		}
+	}
+	if i.isRegistered(p.Name()) {
+		// Someone else registered this name first; they own the file now.
+		return ErrAlreadyInstalled
+	}
 	if err := i.Registry.RegisterDynamic(p, path); err != nil {
 		return fmt.Errorf("%w: %v", ErrLoad, err)
 	}
@@ -350,8 +433,7 @@ func (i *Installer) download(ctx context.Context, rawURL string) ([]byte, error)
 	if err != nil {
 		return nil, fmt.Errorf("%w: bad download_url: %v", ErrLoad, err)
 	}
-	host := u.Hostname()
-	if u.Scheme != "https" && !(u.Scheme == "http" && (host == "127.0.0.1" || host == "localhost" || host == "::1")) {
+	if !allowedScheme(u) {
 		return nil, fmt.Errorf("%w: download_url must be https", ErrLoad)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -361,11 +443,11 @@ func (i *Installer) download(ctx context.Context, rawURL string) ([]byte, error)
 	req.Header.Set("User-Agent", "goblog-installer/"+i.Version)
 	resp, err := i.client().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("download: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrDownload, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download: %s returned HTTP %d", rawURL, resp.StatusCode)
+		return nil, fmt.Errorf("%w: %s returned HTTP %d", ErrDownload, rawURL, resp.StatusCode)
 	}
 	src, err := io.ReadAll(io.LimitReader(resp.Body, maxPluginBytes+1))
 	if err != nil {
@@ -401,5 +483,9 @@ func writeAtomic(path string, data []byte) error {
 		os.Remove(tmpName)
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
