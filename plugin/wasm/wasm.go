@@ -6,6 +6,7 @@ package wasm
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	extism "github.com/extism/go-sdk"
 	"github.com/gin-gonic/gin"
+	"github.com/tetratelabs/wazero"
 	"gorm.io/gorm"
 )
 
@@ -41,6 +43,10 @@ const (
 // ErrNoIdentity is returned when a module has no identity export.
 var ErrNoIdentity = errors.New("wasm plugin: missing identity export")
 
+// compilationCache is shared by every instance so a module is compiled once
+// per process (validate, install and boot all load the same bytes).
+var compilationCache = wazero.NewCompilationCache()
+
 func init() {
 	// The SDK's log level is process-wide and defaults to Off, which would
 	// silently drop everything plugins log. Info and above reach Logf.
@@ -57,6 +63,7 @@ type Plugin struct {
 	settings          []plugin.SettingDefinition
 	pages             []plugin.PageDefinition
 	jobs              []jobDef
+	exports           map[string]bool // export presence, read once at load
 	hasEnabledSetting bool
 	closedLogged      bool // "instance closed" warning already emitted (under mu)
 }
@@ -89,10 +96,18 @@ func LoadBytes(data []byte, opts Options) (*Plugin, error) {
 		AllowedHosts: opts.AllowedHosts,
 		Memory:       &extism.ManifestMemory{MaxPages: memoryPages, MaxHttpResponseBytes: maxHTTPResponseBytes},
 		// Non-zero so the runtime is built with close-on-context-done; the
-		// effective timeout is set per call.
+		// effective timeout is set per call (see call).
 		Timeout: uint64(callTimeout / time.Millisecond),
 	}
-	ext, err := extism.NewPlugin(context.Background(), manifest, extism.PluginConfig{EnableWasi: true}, hostFunctions(p))
+	config := extism.PluginConfig{
+		EnableWasi: true,
+		// The SDK layers close-on-context-done and the memory limit on top.
+		RuntimeConfig: wazero.NewRuntimeConfig().WithCompilationCache(compilationCache),
+		// Real clock, sleep and randomness: wazero's defaults are a fake
+		// clock starting in 2022, a no-op sleep and a fixed-seed RNG.
+		ModuleConfig: wazero.NewModuleConfig().WithSysWalltime().WithSysNanotime().WithSysNanosleep().WithRandSource(rand.Reader),
+	}
+	ext, err := extism.NewPlugin(context.Background(), manifest, config, hostFunctions(p))
 	if err != nil {
 		return nil, fmt.Errorf("wasm plugin: %w", err)
 	}
@@ -100,7 +115,11 @@ func LoadBytes(data []byte, opts Options) (*Plugin, error) {
 	ext.SetLogger(func(level extism.LogLevel, msg string) {
 		p.opts.Logf("plugin %s: %s: %s", p.displayForLog(), level, msg)
 	})
-	if !ext.FunctionExists("identity") {
+	p.exports = map[string]bool{}
+	for _, name := range []string{"identity", "settings", "pages", "jobs", "template_head", "template_footer", "template_data", "render_page", "run_job", "on_init"} {
+		p.exports[name] = ext.FunctionExists(name)
+	}
+	if !p.exports["identity"] {
 		ext.Close(context.Background())
 		return nil, ErrNoIdentity
 	}
@@ -163,20 +182,20 @@ func (p *Plugin) AllowedHosts() []string { return p.opts.AllowedHosts }
 // call runs an export under the mutex with the given timeout. A non-zero
 // exit or a runtime error is returned as error; output is the raw bytes.
 //
-// After a timeout wazero closes the module for good: every later call fails
-// with "module is closed". That is reported once, clearly; the caller keeps
+// The timeout has one mechanism: ext.Timeout, which CallWithContext turns
+// into a context deadline that wazero (built with close-on-context-done)
+// enforces by closing the module. After that every later call fails with
+// "module is closed". That is reported once, clearly; the caller keeps
 // declining until the plugin is reinstalled or goblog restarts.
 func (p *Plugin) call(name string, input []byte, timeout time.Duration) ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.ext.Timeout = timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	code, out, err := p.ext.CallWithContext(ctx, name, input)
+	code, out, err := p.ext.CallWithContext(context.Background(), name, input)
 	if err != nil {
 		if err.Error() == "module is closed" && !p.closedLogged {
 			p.closedLogged = true
-			p.opts.Logf("plugin %s: instance closed after a timeout; reinstall or restart to recover", p.displayForLog())
+			p.opts.Logf("plugin %s: instance closed (timeout or exit); reinstall or restart to recover", p.displayForLog())
 		}
 		return nil, err
 	}
@@ -209,7 +228,7 @@ func (p *Plugin) callJSON(name string, input any, out any, timeout time.Duration
 
 // optionalJSON is callJSON for load-time exports that may be absent.
 func (p *Plugin) optionalJSON(name string, out any) error {
-	if !p.ext.FunctionExists(name) {
+	if !p.exports[name] {
 		return nil
 	}
 	return p.callJSON(name, nil, out, callTimeout)
@@ -268,7 +287,7 @@ func (p *Plugin) ScheduledJobs() []plugin.ScheduledJob {
 }
 
 func (p *Plugin) stringHook(name string, ctx *plugin.HookContext) string {
-	if !p.enabled(ctx.Settings) || !p.ext.FunctionExists(name) {
+	if !p.enabled(ctx.Settings) || !p.exports[name] {
 		return ""
 	}
 	in, _ := json.Marshal(makeCtx(ctx))
@@ -288,7 +307,7 @@ func (p *Plugin) TemplateFooter(ctx *plugin.HookContext) string {
 }
 
 func (p *Plugin) TemplateData(ctx *plugin.HookContext) gin.H {
-	if !p.enabled(ctx.Settings) || !p.ext.FunctionExists("template_data") {
+	if !p.enabled(ctx.Settings) || !p.exports["template_data"] {
 		return nil
 	}
 	var data map[string]any
@@ -304,7 +323,7 @@ func (p *Plugin) TemplateData(ctx *plugin.HookContext) gin.H {
 
 // OnInit calls on_init with the plugin's default settings (see initInput).
 func (p *Plugin) OnInit(_ *gorm.DB) error {
-	if !p.ext.FunctionExists("on_init") {
+	if !p.exports["on_init"] {
 		return nil
 	}
 	settings := map[string]string{}
@@ -327,7 +346,7 @@ func (p *Plugin) RenderPage(ctx *plugin.HookContext, pageType string) (string, g
 			owned = true
 		}
 	}
-	if !owned || !p.ext.FunctionExists("render_page") {
+	if !owned || !p.exports["render_page"] {
 		return "", nil
 	}
 	var res renderResult
@@ -343,6 +362,11 @@ func (p *Plugin) RenderPage(ctx *plugin.HookContext, pageType string) (string, g
 		status := res.Raw.Status
 		if status == 0 {
 			status = 200
+		}
+		if status < 100 || status > 599 {
+			// net/http panics on codes outside this range.
+			p.opts.Logf("plugin %s: render_page returned invalid status %d", p.name, status)
+			return "", nil
 		}
 		ct := res.Raw.ContentType
 		if ct == "" {

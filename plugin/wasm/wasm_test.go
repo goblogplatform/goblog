@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -176,6 +177,49 @@ func TestRenderPage(t *testing.T) {
 	}
 }
 
+func TestRenderPage_RawStatus(t *testing.T) {
+	p := loadEcho(t, Options{})
+	settings := map[string]string{"enabled": "true"}
+
+	// A status outside 100..599 would panic inside net/http: decline instead.
+	ctx := hookCtx(settings, "/echo/raw-badstatus", "raw-badstatus")
+	if tmpl, _ := p.RenderPage(ctx, "echo"); tmpl != "" || ctx.GinContext.Writer.Written() {
+		t.Errorf("bad status: tmpl=%q written=%v", tmpl, ctx.GinContext.Writer.Written())
+	}
+	// Missing status/content_type default to 200 text/plain.
+	ctx = hookCtx(settings, "/echo/raw-defaults", "raw-defaults")
+	rec := httptest.NewRecorder()
+	ctx.GinContext, _ = gin.CreateTestContext(rec)
+	ctx.GinContext.Request = httptest.NewRequest(http.MethodGet, "/echo/raw-defaults", nil)
+	if tmpl, _ := p.RenderPage(ctx, "echo"); tmpl != "" {
+		t.Errorf("raw defaults: tmpl=%q", tmpl)
+	}
+	if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") || rec.Body.String() != "plain" {
+		t.Errorf("raw defaults: status=%d ct=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+}
+
+func TestClockAndRandom(t *testing.T) {
+	p := loadEcho(t, Options{})
+	settings := map[string]string{"enabled": "true"}
+	_, data := p.RenderPage(hookCtx(settings, "/echo/now", "now"), "echo")
+	got, _ := data["plugin_content"].(string)
+	unix, err := strconv.ParseInt(got, 10, 64)
+	if err != nil {
+		t.Fatalf("now = %q: %v", got, err)
+	}
+	if d := time.Since(time.Unix(unix, 0)); d < -120*time.Second || d > 120*time.Second {
+		t.Errorf("plugin clock is %v off the host clock (wazero fake clock?)", d)
+	}
+	_, d1 := p.RenderPage(hookCtx(settings, "/echo/rand", "rand"), "echo")
+	_, d2 := p.RenderPage(hookCtx(settings, "/echo/rand", "rand"), "echo")
+	r1, _ := d1["plugin_content"].(string)
+	r2, _ := d2["plugin_content"].(string)
+	if len(r1) != 32 || r1 == r2 {
+		t.Errorf("random bytes should differ between calls: %q %q", r1, r2)
+	}
+}
+
 func TestStoreHostFunctions(t *testing.T) {
 	st := newMemStore()
 	p := loadEcho(t, Options{Store: st})
@@ -183,7 +227,7 @@ func TestStoreHostFunctions(t *testing.T) {
 	ctx := hookCtx(settings, "/echo/store?v=1", "store")
 	_, data := p.RenderPage(ctx, "echo")
 	html, _ := data["plugin_content"].(string)
-	if html != `got=v-1 keys=["k"] after=[]` {
+	if html != `got=v-1 keys=["k"] after=[missing]` {
 		t.Errorf("store round trip = %q", html)
 	}
 	// Namespaced by plugin name.

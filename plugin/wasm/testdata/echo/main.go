@@ -3,8 +3,11 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
+	"time"
 
 	pdk "github.com/extism/go-pdk"
 )
@@ -21,10 +24,21 @@ func hostStoreDelete(uint64) uint64
 //go:wasmimport extism:host/user store_list
 func hostStoreList(uint64) uint64
 
-func storeGet(key string) string {
+// storeGetOK returns the value and whether the key exists: the host returns
+// offset 0 (Extism's null) for a missing key.
+func storeGetOK(key string) (string, bool) {
 	k := pdk.AllocateString(key)
 	defer k.Free()
-	return pdk.ParamString(hostStoreGet(k.Offset()))
+	ptr := hostStoreGet(k.Offset())
+	if ptr == 0 {
+		return "", false
+	}
+	return pdk.ParamString(ptr), true
+}
+
+func storeGet(key string) string {
+	v, _ := storeGetOK(key)
+	return v
 }
 
 func storeSet(key, value string) {
@@ -127,8 +141,21 @@ func renderPage() int32 {
 		got := storeGet("k")
 		keys := storeList("")
 		storeDelete("k")
-		after := storeGet("k")
+		after, found := storeGetOK("k")
+		if !found {
+			after = "missing"
+		}
 		return out(map[string]any{"html": "got=" + got + " keys=" + keys + " after=[" + after + "]"})
+	case "raw-badstatus":
+		return out(map[string]any{"raw": map[string]any{"status": 5, "body": "x"}})
+	case "raw-defaults":
+		return out(map[string]any{"raw": map[string]any{"body": "plain"}})
+	case "now":
+		return out(map[string]any{"html": itoa(int(time.Now().Unix()))})
+	case "rand":
+		b := make([]byte, 16)
+		rand.Read(b)
+		return out(map[string]any{"html": hex.EncodeToString(b)})
 	case "http":
 		req := pdk.NewHTTPRequest(pdk.MethodGet, c.Request.Query["url"])
 		resp := req.Send()

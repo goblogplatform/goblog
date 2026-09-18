@@ -20,6 +20,7 @@ require (
 
 require (
 	github.com/extism/go-sdk v1.7.1
+	github.com/tetratelabs/wazero v1.9.0
 	github.com/traefik/yaegi v0.16.1
 	gorm.io/driver/postgres v1.6.3
 )
@@ -66,7 +67,6 @@ require (
 	github.com/quic-go/quic-go v0.60.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/tetratelabs/wabin v0.0.0-20230304001439-f6f874872834 // indirect
-	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect
