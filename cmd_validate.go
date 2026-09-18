@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	gplugin "goblog/plugin"
+	"goblog/plugin/wasm"
 )
 
 // runValidatePlugin implements `goblog validate-plugin <file.go>`: it loads
@@ -17,7 +19,13 @@ func runValidatePlugin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "usage: goblog validate-plugin <file.go>")
 		return 2
 	}
-	info, err := gplugin.Validate(args[0])
+	var info gplugin.Info
+	var err error
+	if strings.HasSuffix(strings.ToLower(args[0]), ".wasm") {
+		info, err = wasm.Validate(args[0])
+	} else {
+		info, err = gplugin.Validate(args[0])
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid plugin: %v\n", err)
 		return 1

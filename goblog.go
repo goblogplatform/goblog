@@ -10,6 +10,7 @@ import (
 	"goblog/mail"
 	gplugin "goblog/plugin"
 	"goblog/plugin/installer"
+	"goblog/plugin/wasm"
 	"goblog/plugins/analytics"
 	"goblog/plugins/directory"
 	scholarplugin "goblog/plugins/scholar"
@@ -310,6 +311,9 @@ func main() {
 	dynamicEnabled := os.Getenv("ENABLE_DYNAMIC_PLUGINS") == "true"
 	if dynamicEnabled {
 		gplugin.LoadDynamicPlugins(registry, "plugins/dynamic")
+	}
+	if os.Getenv("ENABLE_WASM_PLUGINS") != "false" {
+		wasm.LoadWasmPlugins(registry, "plugins/wasm", registry.Store())
 	}
 	pluginInstaller := &installer.Installer{
 		Dir:       "plugins/dynamic",

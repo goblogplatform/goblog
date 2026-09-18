@@ -316,6 +316,9 @@ func TestUnregisterStopsOnlyThatPluginsJobs(t *testing.T) {
 	if len(dyn) != 1 || dyn[0].Name != "b" || dyn[0].Path != "/tmp/b.go" || dyn[0].DisplayName != "Job b" {
 		t.Errorf("Dynamic() = %+v", dyn)
 	}
+	if dyn[0].Runtime != "go" {
+		t.Errorf("runtime = %q", dyn[0].Runtime)
+	}
 
 	if err := reg.Unregister("b"); err != nil {
 		t.Fatal(err)

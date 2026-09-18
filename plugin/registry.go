@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +36,15 @@ type DynamicInfo struct {
 	DisplayName string `json:"display_name"`
 	Version     string `json:"version"`
 	Path        string `json:"path"`
+	Runtime     string `json:"runtime"`
+}
+
+// runtimeOf reports the runtime a dynamic plugin's source file loads under.
+func runtimeOf(path string) string {
+	if strings.HasSuffix(path, ".wasm") {
+		return "wasm"
+	}
+	return "go"
 }
 
 // Registry manages all registered plugins.
@@ -145,7 +155,7 @@ func (r *Registry) Dynamic() []DynamicInfo {
 	var out []DynamicInfo
 	for _, e := range r.entries {
 		if e.path != "" {
-			out = append(out, DynamicInfo{Name: e.plugin.Name(), DisplayName: e.plugin.DisplayName(), Version: e.plugin.Version(), Path: e.path})
+			out = append(out, DynamicInfo{Name: e.plugin.Name(), DisplayName: e.plugin.DisplayName(), Version: e.plugin.Version(), Path: e.path, Runtime: runtimeOf(e.path)})
 		}
 	}
 	return out
