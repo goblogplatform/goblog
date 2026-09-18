@@ -161,8 +161,8 @@ func (r *Registry) Init() error {
 	if db == nil {
 		return nil
 	}
-	// Create the plugin_settings table if it doesn't exist
-	db.AutoMigrate(&PluginSetting{})
+	// Create the plugin_settings and plugin_store tables if they don't exist
+	db.AutoMigrate(&PluginSetting{}, &PluginStoreEntry{})
 	var errs []error
 	for _, e := range entries {
 		if err := initPlugin(db, e.plugin); err != nil {
@@ -197,7 +197,7 @@ func (r *Registry) InitPlugin(name string) error {
 	if db == nil {
 		return errors.New("database is not ready")
 	}
-	db.AutoMigrate(&PluginSetting{})
+	db.AutoMigrate(&PluginSetting{}, &PluginStoreEntry{})
 	if err := initPlugin(db, e.plugin); err != nil {
 		return err
 	}
