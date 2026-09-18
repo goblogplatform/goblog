@@ -167,14 +167,15 @@ func newInstaller(t *testing.T, f *fixture) *Installer {
 		t.Fatal(err)
 	}
 	return &Installer{
-		Dir:       t.TempDir(),
-		WasmDir:   t.TempDir(),
-		Registry:  reg,
-		Directory: directory.NewFetcher(f.srv.Client()),
-		Version:   "v0.2.7",
-		Client:    f.srv.Client(),
-		Enabled:   true,
-		IndexURL:  func() string { return f.srv.URL + "/index.json" },
+		Dir:         t.TempDir(),
+		WasmDir:     t.TempDir(),
+		Registry:    reg,
+		Directory:   directory.NewFetcher(f.srv.Client()),
+		Version:     "v0.2.7",
+		Client:      f.srv.Client(),
+		Enabled:     true,
+		WasmEnabled: true,
+		IndexURL:    func() string { return f.srv.URL + "/index.json" },
 	}
 }
 
@@ -206,7 +207,7 @@ func TestStatus(t *testing.T) {
 	inst.Registry.Register(&compiledPlugin{})
 
 	st := inst.Status()
-	if !st.DynamicEnabled || st.DirectoryURL != f.srv.URL+"/index.json" || st.IndexError != "" || st.IndexFetchedAt == "" {
+	if !st.DynamicEnabled || !st.WasmEnabled || st.DirectoryURL != f.srv.URL+"/index.json" || st.IndexError != "" || st.IndexFetchedAt == "" {
 		t.Errorf("status = %+v", st)
 	}
 	if !st.DirWritable || st.DirError != "" {
@@ -435,12 +436,27 @@ func TestInstall_Refusals(t *testing.T) {
 		t.Error("nothing may be registered on a failed install")
 	}
 
+	// Installs are gated on the wasm runtime, not on the Yaegi flag.
 	inst.Enabled = false
-	if _, err := inst.Install(ctx, "hello"); !errors.Is(err, ErrDynamicDisabled) {
-		t.Errorf("disabled: %v", err)
+	f.entries = f.wasmEntries()
+	if err := inst.Refresh(); err != nil {
+		t.Fatal(err)
 	}
-	if st := inst.Status(); st.DynamicEnabled || len(st.Available) == 0 {
-		t.Error("Status should still list the directory when dynamic plugins are disabled")
+	if _, err := inst.Install(ctx, "echo"); err != nil {
+		t.Errorf("install with only ENABLE_DYNAMIC_PLUGINS off should work: %v", err)
+	}
+	inst.WasmEnabled = false
+	if _, err := inst.Install(ctx, "future"); !errors.Is(err, ErrWasmDisabled) {
+		t.Errorf("install while disabled: %v", err)
+	}
+	if _, err := inst.Update(ctx, "echo"); !errors.Is(err, ErrWasmDisabled) {
+		t.Errorf("update while disabled: %v", err)
+	}
+	if err := inst.Uninstall("echo"); !errors.Is(err, ErrWasmDisabled) {
+		t.Errorf("uninstall while disabled: %v", err)
+	}
+	if st := inst.Status(); st.DynamicEnabled || st.WasmEnabled || st.DirWritable || len(st.Available) == 0 {
+		t.Errorf("Status should still list the directory when wasm plugins are disabled: %+v", st)
 	}
 }
 
@@ -618,6 +634,29 @@ func TestUpdate_GoPluginToWasm(t *testing.T) {
 	}
 	if dyn := inst.Registry.Dynamic(); len(dyn) != 1 || dyn[0].Runtime != "go" || dyn[0].Version != "1.0.0" {
 		t.Errorf("the .go plugin must be registered again after rollback, got %+v", dyn)
+	}
+
+	// A stale module already sitting in WasmDir (e.g. dropped by an operator
+	// but never loaded) is restored, not deleted, when the migration rolls back.
+	if err := os.WriteFile(wasmPath, []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := wasm.WriteSidecar(wasmPath, []string{"stale.example.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inst.Update(ctx, "echo"); !errors.Is(err, ErrLoad) {
+		t.Errorf("expected ErrLoad, got %v", err)
+	}
+	if b, _ := os.ReadFile(wasmPath); string(b) != "stale" {
+		t.Errorf("a pre-existing module must be restored after a failed migration, got %q", b)
+	}
+	if hosts, _ := wasm.ReadSidecar(wasmPath); len(hosts) != 1 || hosts[0] != "stale.example.test" {
+		t.Errorf("a pre-existing sidecar must be restored after a failed migration, got %v", hosts)
+	}
+	for _, leftover := range []string{wasmPath + ".prev", wasm.SidecarPath(wasmPath) + ".prev"} {
+		if _, err := os.Stat(leftover); err == nil {
+			t.Errorf("no %s should remain after a rolled-back migration", filepath.Base(leftover))
+		}
 	}
 
 	inst.hookBeforeRegister = nil

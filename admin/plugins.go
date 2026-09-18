@@ -33,7 +33,7 @@ func installerStatus(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, installer.ErrAlreadyInstalled):
 		return http.StatusConflict
-	case errors.Is(err, installer.ErrDynamicDisabled):
+	case errors.Is(err, installer.ErrDynamicDisabled), errors.Is(err, installer.ErrWasmDisabled):
 		return http.StatusPreconditionFailed
 	case errors.Is(err, installer.ErrIncompatible), errors.Is(err, installer.ErrNotDynamic),
 		errors.Is(err, installer.ErrChecksum), errors.Is(err, installer.ErrLoad):

@@ -46,6 +46,7 @@ var staleAfter = time.Hour
 // Typed errors; the admin API maps them to 4xx responses with their text.
 var (
 	ErrDynamicDisabled      = errors.New("dynamic plugins are disabled: start goblog with ENABLE_DYNAMIC_PLUGINS=true and a writable plugins/dynamic/ directory")
+	ErrWasmDisabled         = errors.New("WebAssembly plugins are disabled: start goblog without ENABLE_WASM_PLUGINS=false and with a writable plugins/wasm/ directory")
 	ErrIncompatible         = errors.New("this plugin requires a newer goblog")
 	ErrChecksum             = errors.New("the downloaded file does not match the checksum in the directory index; the index may be stale, refresh and try again")
 	ErrNotDynamic           = errors.New("this plugin type cannot be installed from the directory")
@@ -62,14 +63,15 @@ var (
 // Installer wires the directory index, the plugin registry and the
 // plugins/wasm directory together.
 type Installer struct {
-	Dir       string // plugins/dynamic: previously installed Yaegi plugins (update/uninstall only)
-	WasmDir   string // plugins/wasm: where directory installs go
-	Registry  *plugin.Registry
-	Directory *directory.Fetcher // own instance; not the directory plugin's
-	Version   string             // running goblog version, e.g. "v0.2.7" or "development"
-	Client    *http.Client       // downloads; nil → 30s timeout default
-	Enabled   bool               // ENABLE_DYNAMIC_PLUGINS
-	IndexURL  func() string      // current plugin_directory_url setting
+	Dir         string // plugins/dynamic: previously installed Yaegi plugins (update/uninstall only)
+	WasmDir     string // plugins/wasm: where directory installs go
+	Registry    *plugin.Registry
+	Directory   *directory.Fetcher // own instance; not the directory plugin's
+	Version     string             // running goblog version, e.g. "v0.2.7" or "development"
+	Client      *http.Client       // downloads; nil → 30s timeout default
+	Enabled     bool               // ENABLE_DYNAMIC_PLUGINS (Yaegi); reported in Status only
+	WasmEnabled bool               // ENABLE_WASM_PLUGINS != "false"; gates Install/Update/Uninstall
+	IndexURL    func() string      // current plugin_directory_url setting
 
 	// mu serializes Install/Update/Uninstall so two callers acting on the
 	// same (or different) plugin names cannot interleave writes to the
@@ -114,6 +116,7 @@ type Status struct {
 	Available      []Available `json:"available"`
 	DirectoryURL   string      `json:"directory_url"`
 	DynamicEnabled bool        `json:"dynamic_enabled"`
+	WasmEnabled    bool        `json:"wasm_enabled"`
 	IndexFetchedAt string      `json:"index_fetched_at,omitempty"`
 	IndexError     string      `json:"index_error,omitempty"`
 	DirWritable    bool        `json:"dir_writable"` // WasmDir (Dir when WasmDir is unset)
@@ -206,13 +209,13 @@ func (i *Installer) Status() Status {
 	indexURL := i.IndexURL()
 	i.ensureIndex(indexURL)
 	_, entries, ok := i.Directory.Index()
-	st := Status{DirectoryURL: indexURL, DynamicEnabled: i.Enabled, Installed: []Installed{}, Available: []Available{}}
+	st := Status{DirectoryURL: indexURL, DynamicEnabled: i.Enabled, WasmEnabled: i.WasmEnabled, Installed: []Installed{}, Available: []Available{}}
 	if !ok {
 		st.IndexError = "could not fetch the plugin directory index"
 	} else {
 		st.IndexFetchedAt = i.Directory.FetchedAt().UTC().Format(time.RFC3339)
 	}
-	if i.Enabled {
+	if i.WasmEnabled {
 		st.DirWritable, st.DirError = i.probeDirWritable()
 	}
 
@@ -327,8 +330,8 @@ func (i *Installer) dynamic(name string) (plugin.DynamicInfo, bool) {
 func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if !i.Enabled {
-		return Result{}, ErrDynamicDisabled
+	if !i.WasmEnabled {
+		return Result{}, ErrWasmDisabled
 	}
 	e, err := i.lookup(name)
 	if err != nil {
@@ -366,8 +369,8 @@ func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if !i.Enabled {
-		return Result{}, ErrDynamicDisabled
+	if !i.WasmEnabled {
+		return Result{}, ErrWasmDisabled
 	}
 	d, ok := i.dynamic(name)
 	if !ok {
@@ -395,41 +398,36 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 		}
 	}
 	// A wasm plugin is updated in place, so its module and sidecar are set
-	// aside as .prev first. A .go plugin's file is untouched until the end.
+	// aside as .prev first. A .go plugin's file is untouched until the end;
+	// anything already sitting at the wasm path is set aside the same way.
 	path := d.Path
 	inPlace := d.Runtime == "wasm"
 	if !inPlace {
 		path = i.wasmPath(e.Name)
 	}
-	var backup *moduleBackup
-	if inPlace {
-		backup, err = backupModule(path)
-		if err != nil {
-			closePlugin(p)
-			return Result{}, fmt.Errorf("%w: %v", ErrWrite, err)
-		}
+	backup, err := backupModule(path)
+	if err != nil {
+		closePlugin(p)
+		return Result{}, fmt.Errorf("%w: %v", ErrWrite, err)
 	}
 	rollback := func(cause error) (Result, error) {
 		i.Registry.Unregister(name) // no-op if the new plugin never registered
 		closePlugin(p)
-		if inPlace {
-			if err := backup.restore(); err != nil {
-				log.Printf("Update %s: restoring %s failed: %v", name, path, err)
-				cause = fmt.Errorf("%w; restoring the previous file also failed: %v", cause, err)
-			}
-		} else {
-			removeModule(path)
+		if err := backup.restore(); err != nil {
+			log.Printf("Update %s: restoring %s failed: %v", name, path, err)
+			cause = fmt.Errorf("%w; restoring the previous file also failed: %v", cause, err)
 		}
 		if old != nil {
 			// The previous instance was never closed, so it is registered
 			// again as it was.
-			if err := i.Registry.RegisterDynamic(old, d.Path); err == nil {
+			if err := i.Registry.RegisterDynamic(old, d.Path); err != nil {
+				log.Printf("plugin %s: rollback could not re-register the previous version: %v", name, err)
+				closePlugin(old)
+			} else if err := i.Registry.InitPlugin(name); err != nil {
 				// InitPlugin deliberately re-runs OnInit for the restored
 				// previous version, so any scheduled jobs it starts there
 				// come back up.
-				if err := i.Registry.InitPlugin(name); err != nil {
-					log.Printf("Update %s: re-initialising previous version failed: %v", name, err)
-				}
+				log.Printf("Update %s: re-initialising previous version failed: %v", name, err)
 			}
 		}
 		return Result{}, cause
@@ -443,10 +441,11 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 	if err := i.register(p, path); err != nil {
 		return rollback(err)
 	}
-	if inPlace {
-		backup.discard()
-	} else if err := os.Remove(d.Path); err != nil && !os.IsNotExist(err) {
-		log.Printf("Update %s: removing the previous %s failed: %v", name, d.Path, err)
+	backup.discard()
+	if !inPlace {
+		if err := os.Remove(d.Path); err != nil && !os.IsNotExist(err) {
+			log.Printf("Update %s: removing the previous %s failed: %v", name, d.Path, err)
+		}
 	}
 	closePlugin(old)
 	log.Printf("Updated plugin %s to v%s from %s", e.Name, e.Version, e.DownloadURL)
@@ -458,8 +457,8 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 func (i *Installer) Uninstall(name string) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if !i.Enabled {
-		return ErrDynamicDisabled
+	if !i.WasmEnabled {
+		return ErrWasmDisabled
 	}
 	d, ok := i.dynamic(name)
 	if !ok {
@@ -511,6 +510,7 @@ func writeModule(path string, src []byte, allowedHosts []string) error {
 		return fmt.Errorf("%w: %v", ErrWrite, err)
 	}
 	if err := wasm.WriteSidecar(path, allowedHosts); err != nil {
+		os.Remove(wasm.SidecarPath(path)) // whatever a partial write left behind
 		return fmt.Errorf("%w: %v", ErrWrite, err)
 	}
 	if err := writeAtomic(path, src); err != nil {
@@ -526,51 +526,68 @@ func removeModule(path string) {
 	os.Remove(wasm.SidecarPath(path))
 }
 
-// moduleBackup is a module and its sidecar set aside as .prev while an
-// update replaces them.
+// moduleBackup is whatever was at a module path and its sidecar path, set
+// aside as .prev while an update writes there. Either file may be absent
+// (an operator-dropped module without a sidecar; a Yaegi plugin being
+// migrated, whose wasm path is normally empty); restore brings back exactly
+// what was there.
 type moduleBackup struct {
-	path       string
-	hadSidecar bool
+	path                  string
+	hadModule, hadSidecar bool
 }
 
-// backupModule renames path and its sidecar (if any) to .prev.
+// backupModule renames path and its sidecar, whichever exist, to .prev.
 func backupModule(path string) (*moduleBackup, error) {
 	b := &moduleBackup{path: path}
-	if err := os.Rename(path, path+".prev"); err != nil {
+	var err error
+	if b.hadModule, err = setAside(path); err != nil {
 		return nil, err
 	}
-	sidecar := wasm.SidecarPath(path)
-	switch err := os.Rename(sidecar, sidecar+".prev"); {
-	case err == nil:
-		b.hadSidecar = true
-	case os.IsNotExist(err): // operator-dropped module without a sidecar
-	default:
-		os.Rename(path+".prev", path)
+	if b.hadSidecar, err = setAside(wasm.SidecarPath(path)); err != nil {
+		if b.hadModule {
+			os.Rename(path+".prev", path)
+		}
 		return nil, err
 	}
 	return b, nil
 }
 
-// restore puts the .prev files back, replacing whatever the update wrote.
-func (b *moduleBackup) restore() error {
-	sidecar := wasm.SidecarPath(b.path)
-	var firstErr error
-	if err := os.Rename(b.path+".prev", b.path); err != nil {
-		firstErr = err
+// setAside renames path to path.prev and reports whether there was a file.
+func setAside(path string) (bool, error) {
+	switch err := os.Rename(path, path+".prev"); {
+	case err == nil:
+		return true, nil
+	case os.IsNotExist(err):
+		return false, nil
+	default:
+		return false, err
 	}
-	if b.hadSidecar {
-		if err := os.Rename(sidecar+".prev", sidecar); err != nil && firstErr == nil {
+}
+
+// restore puts back what was set aside, replacing whatever the update wrote;
+// a path that was empty before is emptied again.
+func (b *moduleBackup) restore() error {
+	var firstErr error
+	for _, f := range []struct {
+		path string
+		had  bool
+	}{{b.path, b.hadModule}, {wasm.SidecarPath(b.path), b.hadSidecar}} {
+		if !f.had {
+			os.Remove(f.path)
+			continue
+		}
+		if err := os.Rename(f.path+".prev", f.path); err != nil && firstErr == nil {
 			firstErr = err
 		}
-	} else {
-		os.Remove(sidecar)
 	}
 	return firstErr
 }
 
 // discard removes the .prev files after a successful update.
 func (b *moduleBackup) discard() {
-	os.Remove(b.path + ".prev")
+	if b.hadModule {
+		os.Remove(b.path + ".prev")
+	}
 	if b.hadSidecar {
 		os.Remove(wasm.SidecarPath(b.path) + ".prev")
 	}

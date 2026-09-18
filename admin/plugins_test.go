@@ -64,7 +64,7 @@ func newPluginsHarness(t *testing.T) *pluginsHarness {
 	reg.Init()
 	inst := &installer.Installer{
 		Dir: t.TempDir(), WasmDir: t.TempDir(), Registry: reg, Directory: directory.NewFetcher(srv.Client()),
-		Version: "v0.2.7", Client: rewritingClient(srv), Enabled: true,
+		Version: "v0.2.7", Client: rewritingClient(srv), Enabled: true, WasmEnabled: true,
 		IndexURL: func() string { return srv.URL + "/index.json" },
 	}
 	ad.Installer = inst
@@ -169,9 +169,9 @@ func TestPluginAPI_StatusDirectoryInstallUninstall(t *testing.T) {
 	}
 
 	// Disabled: 4xx with the message, status still fine.
-	h.inst.Enabled = false
+	h.inst.WasmEnabled = false
 	w = h.do("POST", "/api/v1/plugins/install", `{"name":"echo"}`)
-	if w.Code != http.StatusPreconditionFailed || !strings.Contains(w.Body.String(), "ENABLE_DYNAMIC_PLUGINS") {
+	if w.Code != http.StatusPreconditionFailed || !strings.Contains(w.Body.String(), "ENABLE_WASM_PLUGINS") {
 		t.Errorf("disabled: %d %s", w.Code, w.Body.String())
 	}
 	w = h.do("POST", "/api/v1/plugins/refresh", "")
