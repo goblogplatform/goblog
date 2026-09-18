@@ -20,7 +20,7 @@ require (
 
 require (
 	github.com/traefik/yaegi v0.16.1
-	gorm.io/driver/postgres v1.6.2
+	gorm.io/driver/postgres v1.6.3
 )
 
 require (
