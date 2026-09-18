@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -150,7 +151,14 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		if !ok {
 			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML}
 		}
-		html, err := renderListing(base, entries)
+		sorted := append([]Entry(nil), entries...)
+		sort.SliceStable(sorted, func(i, j int) bool {
+			if sorted[i].Stars != sorted[j].Stars {
+				return sorted[i].Stars > sorted[j].Stars
+			}
+			return sorted[i].Name < sorted[j].Name
+		})
+		html, err := renderListing(base, sorted)
 		if err != nil {
 			log.Printf("Directory plugin: render listing: %v", err)
 			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML}

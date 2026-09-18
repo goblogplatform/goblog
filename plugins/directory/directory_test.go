@@ -218,7 +218,10 @@ func TestRenderPage_ListingEscapesIndexStrings(t *testing.T) {
 	ctx, _ := newRenderCtx(t, "/plugins", "", map[string]string{"index_url": srv.URL + "/index.json"})
 	_, data := p.RenderPage(ctx, PageType)
 	html, _ := data["plugin_content"].(string)
-	if strings.Contains(html, "<script>") {
+	// The listing template has its own trusted <script> block (the Submit box),
+	// so check that the malicious payload itself was escaped rather than that no
+	// <script> tag appears anywhere in the page.
+	if strings.Contains(html, "<script>alert(1)</script>") {
 		t.Errorf("display_name must be escaped:\n%s", html)
 	}
 	if strings.Contains(html, `href="javascript:`) {
@@ -351,5 +354,31 @@ func TestRenderPage_DetailFetchFails(t *testing.T) {
 	html, _ := data["plugin_content"].(string)
 	if tmpl != "page_content.html" || !strings.Contains(html, "unavailable") || !strings.Contains(html, "Hello") {
 		t.Errorf("a listed plugin whose detail fails should still show its index entry with a notice, got %q", html)
+	}
+}
+
+func TestRenderPage_ListingSortsByStarsAndHasSubmitBox(t *testing.T) {
+	srv := newFixtureServer(t)
+	srv.index.Store(func(w http.ResponseWriter) {
+		w.Write([]byte(`[{"name":"alpha","display_name":"Alpha","version":"1","install_type":"dynamic","stars":2},
+		 {"name":"beta","display_name":"Beta","version":"1","install_type":"dynamic","stars":10},
+		 {"name":"gamma","display_name":"Gamma","version":"1","install_type":"dynamic","stars":2}]`))
+	})
+	p := New()
+	p.fetcher = NewFetcher(srv.Client())
+	ctx, _ := newRenderCtx(t, "/plugins", "", map[string]string{"index_url": srv.URL + "/index.json"})
+	_, data := p.RenderPage(ctx, PageType)
+	html, _ := data["plugin_content"].(string)
+	b, a, g := strings.Index(html, ">Beta<"), strings.Index(html, ">Alpha<"), strings.Index(html, ">Gamma<")
+	if !(b < a && a < g) {
+		t.Errorf("listing should be sorted by stars desc then name: beta=%d alpha=%d gamma=%d", b, a, g)
+	}
+	if !strings.Contains(html, "★ 10") {
+		t.Errorf("stars should be shown, got:\n%s", html)
+	}
+	for _, want := range []string{`id="submit-plugin-form"`, "issues/new?template=submit-plugin.yml", "CONTRACT.md"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("submit box missing %q", want)
+		}
 	}
 }

@@ -248,6 +248,19 @@ func (b *Blog) GetSettings() map[string]Setting {
 	return settingsMap
 }
 
+// SettingValue returns one site setting, or def when the database is not
+// ready, the setting is missing, or it is empty.
+func (b *Blog) SettingValue(key, def string) string {
+	if b.db == nil || *b.db == nil {
+		return def
+	}
+	var s Setting
+	if err := (*b.db).Where("key = ?", key).First(&s).Error; err != nil || s.Value == "" {
+		return def
+	}
+	return s.Value
+}
+
 func (b *Blog) SearchPosts(query string) []Post {
 	var posts []Post
 	escaped := strings.ReplaceAll(query, "!", "!!")

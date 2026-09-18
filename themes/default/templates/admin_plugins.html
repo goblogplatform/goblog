@@ -1,0 +1,212 @@
+{{ template "header.html" .}}
+<div class="container">
+    {{ template "admin_nav.html" . }}
+    <h1>Plugins</h1>
+    <p class="text-muted">Browse the <a href="https://www.goblog.live/plugins" target="_blank" rel="noopener">plugin directory</a> and install plugins with one click. Directory plugins are dynamic: they can add settings and head/footer HTML. Plugins that add pages or background jobs ship compiled into goblog.</p>
+
+    <div id="plugins-error" class="alert alert-danger" role="alert" hidden></div>
+    <div id="plugins-disabled" class="alert alert-warning" role="alert" hidden>
+        Installing plugins needs <code>ENABLE_DYNAMIC_PLUGINS=true</code> and a writable, persisted <code>plugins/dynamic/</code> directory (bind-mount it with Docker). See the README under <em>Dynamic plugins</em>. You can still browse the directory.
+    </div>
+    <div id="plugins-index-error" class="alert alert-warning" role="alert" hidden>
+        <span id="plugins-index-error-text"></span> — directory URL is set under <a href="/admin/settings">Settings → plugin_directory_url</a>.
+        <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="refreshDirectory()">Refresh</button>
+    </div>
+    <div id="plugins-trust" class="alert alert-info alert-dismissible" role="alert">
+        Plugins run as Go code inside goblog with the same access it has. Install only plugins from sources you trust.
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+
+    <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item"><button class="nav-link active" id="tab-installed" data-bs-toggle="tab" data-bs-target="#pane-installed" type="button" role="tab">Installed</button></li>
+        <li class="nav-item"><button class="nav-link" id="tab-browse" data-bs-toggle="tab" data-bs-target="#pane-browse" type="button" role="tab">Browse</button></li>
+    </ul>
+    <div class="tab-content">
+        <div class="tab-pane fade show active" id="pane-installed" role="tabpanel">
+            <table class="table align-middle">
+                <thead><tr><th>Plugin</th><th>Version</th><th>Type</th><th>Enabled</th><th></th></tr></thead>
+                <tbody id="installed-rows"><tr><td colspan="5" class="text-muted">Loading…</td></tr></tbody>
+            </table>
+        </div>
+        <div class="tab-pane fade" id="pane-browse" role="tabpanel">
+            <div class="row g-2 mb-3">
+                <div class="col-md-8"><input type="search" id="browse-q" class="form-control" placeholder="Search plugins by name, description or author" oninput="scheduleBrowse()"></div>
+                <div class="col-md-3">
+                    <select id="browse-sort" class="form-select" onchange="loadBrowse()">
+                        <option value="stars">Most stars</option>
+                        <option value="name">Name</option>
+                        <option value="newest">Newest release</option>
+                    </select>
+                </div>
+                <div class="col-md-1 d-grid"><button type="button" class="btn btn-outline-secondary" onclick="refreshDirectory()" title="Refresh the directory index" aria-label="Refresh the directory index">↻</button></div>
+            </div>
+            <div id="browse-cards" class="row g-3"><div class="col-12 text-muted">Loading…</div></div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+  var state = { status: null, dynamicEnabled: false, dirWritable: false };
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
+  }
+  function showError(msg) {
+    var el = document.getElementById("plugins-error");
+    el.textContent = msg; el.hidden = !msg;
+  }
+  function api(method, path, body) {
+    return fetch(path, {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(function (resp) {
+      return resp.json().catch(function () { return {}; }).then(function (data) {
+        if (!resp.ok) { throw new Error(data.message || (typeof data === "string" ? data : "Request failed (" + resp.status + ")")); }
+        return data;
+      });
+    });
+  }
+
+  // httpURL returns u when it is an absolute http(s) URL, otherwise null —
+  // directory data must never reach an href with an unchecked scheme (e.g.
+  // javascript:). The server already sanitizes source_url/download_url in
+  // Status(), but a browse search result or a misbehaving directory should
+  // not be trusted twice on just the server side.
+  function httpURL(u) {
+    return /^https?:\/\//i.test(u || "") ? u : null;
+  }
+  // safeName matches the same [a-z0-9-]+ rule the server enforces on plugin
+  // names, so a directory page link is only ever built from a name we know
+  // is a plain slug.
+  function safeName(n) {
+    return /^[a-z0-9-]+$/.test(n || "") ? n : null;
+  }
+
+  function renderInstalled(st) {
+    var rows = st.installed.map(function (p) {
+      var actions = "";
+      if (p.dynamic && p.update_available) {
+        actions += '<button type="button" class="btn btn-sm btn-primary me-1" data-action="update" data-name="' + esc(p.name) + '">Update to v' + esc(p.latest_version) + '</button>';
+      }
+      if (p.dynamic) {
+        actions += '<button type="button" class="btn btn-sm btn-outline-danger me-1" data-action="uninstall" data-name="' + esc(p.name) + '">Uninstall</button>';
+      }
+      actions += '<a class="btn btn-sm btn-link" href="/admin/settings#plugin-body-' + esc(p.name) + '">Settings</a>';
+      return '<tr id="installed-' + esc(p.name) + '">' +
+        '<td><strong>' + esc(p.display_name) + '</strong><br><small class="text-muted">' + esc(p.name) + '</small></td>' +
+        '<td>v' + esc(p.version) + '</td>' +
+        '<td>' + (p.dynamic ? '<span class="badge text-bg-secondary">dynamic</span>' : '<span class="badge text-bg-light">built-in</span>') + '</td>' +
+        '<td><div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-toggle-enabled data-name="' + esc(p.name) + '" ' + (p.enabled ? "checked" : "") + '></div></td>' +
+        '<td class="text-end">' + actions + '<div class="small text-danger row-error"></div></td></tr>';
+    });
+    document.getElementById("installed-rows").innerHTML = rows.join("") || '<tr><td colspan="5" class="text-muted">No plugins registered.</td></tr>';
+  }
+
+  function renderBrowse(list) {
+    var cards = list.map(function (p) {
+      var disabled = !state.dynamicEnabled || !state.dirWritable || !p.compatible;
+      var reason = !state.dynamicEnabled ? "dynamic plugins are disabled" : (!state.dirWritable ? "plugins/dynamic/ is not writable" : (p.reason || ""));
+      var source = httpURL(p.source_url);
+      var sourceLink = source ? '<a href="' + esc(source) + '" target="_blank" rel="noopener" class="me-2">Source</a>' : '';
+      var dirName = safeName(p.name);
+      var dirLink = dirName ? '<a href="https://www.goblog.live/plugins/' + esc(dirName) + '" target="_blank" rel="noopener">Directory page</a>' : '';
+      var minVer = p.min_goblog_version ? ' · requires goblog ≥ ' + esc(p.min_goblog_version) : '';
+      return '<div class="col-md-6"><div class="card h-100"><div class="card-body">' +
+        '<h5 class="card-title mb-1">' + esc(p.display_name) + ' <small class="text-muted">v' + esc(p.version) + '</small></h5>' +
+        '<p class="mb-1 small text-muted">by ' + esc(p.author) + ' · ★ ' + esc(p.stars) + ' · ' + esc(p.license) + minVer + '</p>' +
+        '<p class="card-text">' + esc(p.description) + '</p>' +
+        sourceLink + dirLink +
+        '</div><div class="card-footer d-flex justify-content-between align-items-center">' +
+        '<span class="small text-muted">' + esc(reason) + '</span>' +
+        '<button type="button" class="btn btn-sm btn-primary" data-action="install" data-name="' + esc(p.name) + '" ' + (disabled ? "disabled" : "") + '>Install</button>' +
+        '</div><div class="small text-danger px-3 pb-2 row-error"></div></div></div>';
+    });
+    document.getElementById("browse-cards").innerHTML = cards.join("") || '<div class="col-12 text-muted">No plugins match.</div>';
+  }
+
+  function loadStatus() {
+    return api("GET", "/api/v1/plugins/status").then(function (st) {
+      state.status = st; state.dynamicEnabled = st.dynamic_enabled; state.dirWritable = st.dir_writable;
+      var disabledEl = document.getElementById("plugins-disabled");
+      if (!st.dynamic_enabled) {
+        disabledEl.innerHTML = 'Installing plugins needs <code>ENABLE_DYNAMIC_PLUGINS=true</code> and a writable, persisted <code>plugins/dynamic/</code> directory (bind-mount it with Docker). See the README under <em>Dynamic plugins</em>. You can still browse the directory.';
+        disabledEl.hidden = false;
+      } else if (!st.dir_writable) {
+        disabledEl.innerHTML = 'Dynamic plugins are enabled but <code>plugins/dynamic/</code> is not writable: ' + esc(st.dir_error || "") + '. Fix the directory permissions (or the Docker bind mount) to install plugins.';
+        disabledEl.hidden = false;
+      } else {
+        disabledEl.hidden = true;
+      }
+      var ie = document.getElementById("plugins-index-error");
+      ie.hidden = !st.index_error;
+      document.getElementById("plugins-index-error-text").textContent = st.index_error || "";
+      renderInstalled(st);
+      return loadBrowse();
+    }).catch(function (e) { showError(e.message); });
+  }
+
+  var browseTimer = null;
+  window.scheduleBrowse = function () { clearTimeout(browseTimer); browseTimer = setTimeout(loadBrowse, 200); };
+  window.loadBrowse = function () {
+    var q = encodeURIComponent(document.getElementById("browse-q").value);
+    var sort = document.getElementById("browse-sort").value;
+    return api("GET", "/api/v1/plugins/directory?q=" + q + "&sort=" + sort).then(renderBrowse).catch(function (e) { showError(e.message); });
+  };
+  window.refreshDirectory = function () {
+    showError("");
+    api("POST", "/api/v1/plugins/refresh").then(loadStatus).catch(function (e) { showError(e.message); });
+  };
+  function pluginAction(action, name, btn) {
+    if (action === "uninstall" && !confirm("Uninstall " + name + "? Its file and settings will be removed.")) { return; }
+    showError("");
+    var container = btn.closest("tr, .card");
+    var errEl = container ? container.querySelector(".row-error") : null;
+    if (errEl) { errEl.textContent = ""; }
+    btn.disabled = true;
+    var label = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> ' + label;
+    function restore() { btn.disabled = false; btn.innerHTML = label; }
+    var p = action === "uninstall"
+      ? api("DELETE", "/api/v1/plugins/" + encodeURIComponent(name))
+      : api("POST", "/api/v1/plugins/" + action, { name: name });
+    p.then(function () {
+      // loadStatus() swallows its own errors (see its .catch above) so it
+      // always resolves; restore the button on both branches here rather
+      // than relying on a single .then, so a loadStatus() hiccup after a
+      // successful action can never leave the button stuck spinning.
+      return loadStatus().then(restore, restore);
+    }, function (e) {
+      restore();
+      if (errEl) { errEl.textContent = e.message; } else { showError(e.message); }
+    });
+  }
+  function toggleEnabled(name, enabled, input) {
+    api("PATCH", "/api/v1/plugin-settings", [{ key: name + ".enabled", value: enabled ? "true" : "false" }])
+      .catch(function (e) { input.checked = !enabled; showError(e.message); });
+  }
+
+  // Delegated listeners: the Installed/Browse markup is rebuilt wholesale on
+  // every refresh, so bind once on the stable containers instead of via
+  // inline handlers carrying directory data (name/URL strings) into an HTML
+  // attribute that the browser would entity-decode before evaluating.
+  document.getElementById("installed-rows").addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-action]");
+    if (btn) { pluginAction(btn.dataset.action, btn.dataset.name, btn); }
+  });
+  document.getElementById("installed-rows").addEventListener("change", function (e) {
+    var input = e.target.closest("[data-toggle-enabled]");
+    if (input) { toggleEnabled(input.dataset.name, input.checked, input); }
+  });
+  document.getElementById("browse-cards").addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-action]");
+    if (btn) { pluginAction(btn.dataset.action, btn.dataset.name, btn); }
+  });
+
+  loadStatus();
+})();
+</script>
+{{ template "footer.html" .}}

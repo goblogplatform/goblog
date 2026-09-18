@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -18,20 +20,34 @@ type PluginSettingsGroup struct {
 	CurrentValues map[string]string
 }
 
+// entry is one registered plugin with its lifecycle state.
+type entry struct {
+	plugin  Plugin
+	path    string        // source file for dynamic plugins; "" for compiled-in
+	stop    chan struct{} // closed by Unregister/Stop; ends this plugin's jobs
+	stopped bool
+	started bool // jobs running
+}
+
+// DynamicInfo describes a plugin loaded from a file at runtime.
+type DynamicInfo struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Version     string `json:"version"`
+	Path        string `json:"path"`
+}
+
 // Registry manages all registered plugins.
 type Registry struct {
-	plugins []Plugin
+	entries []*entry
+	plugins []Plugin // derived from entries; rebuilt on every change
 	db      *gorm.DB
 	mu      sync.RWMutex
-	stopCh  chan struct{}
 }
 
 // NewRegistry creates a plugin registry.
 func NewRegistry(db *gorm.DB) *Registry {
-	return &Registry{
-		db:     db,
-		stopCh: make(chan struct{}),
-	}
+	return &Registry{db: db}
 }
 
 // UpdateDb updates the database reference (used after wizard setup).
@@ -45,8 +61,72 @@ func (r *Registry) UpdateDb(db *gorm.DB) {
 func (r *Registry) Register(p Plugin) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.plugins = append(r.plugins, p)
+	r.addLocked(p, "")
+}
+
+// RegisterDynamic adds a plugin loaded from path at runtime. It fails when a
+// plugin with the same Name() is already registered, since names key
+// settings and pages.
+func (r *Registry) RegisterDynamic(p Plugin, path string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.findLocked(p.Name()) != nil {
+		return fmt.Errorf("a plugin named %q is already registered", p.Name())
+	}
+	r.addLocked(p, path)
+	return nil
+}
+
+func (r *Registry) addLocked(p Plugin, path string) {
+	r.entries = append(r.entries, &entry{plugin: p, path: path, stop: make(chan struct{})})
+	r.rebuildLocked()
 	log.Printf("Plugin registered: %s v%s", p.DisplayName(), p.Version())
+}
+
+// Unregister removes a plugin and stops its scheduled jobs. Its settings are
+// kept so a reinstall or update keeps the operator's configuration; use
+// DeleteSettings to remove them. Yaegi cannot unload code, so a dynamic
+// plugin's interpreter stays in memory until restart.
+func (r *Registry) Unregister(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, e := range r.entries {
+		if e.plugin.Name() != name {
+			continue
+		}
+		e.closeStopLocked()
+		r.entries = append(append([]*entry(nil), r.entries[:i]...), r.entries[i+1:]...)
+		r.rebuildLocked()
+		log.Printf("Plugin unregistered: %s", name)
+		return nil
+	}
+	return fmt.Errorf("plugin %q is not registered", name)
+}
+
+func (e *entry) closeStopLocked() {
+	if !e.stopped {
+		e.stopped = true
+		close(e.stop)
+	}
+}
+
+func (r *Registry) findLocked(name string) *entry {
+	for _, e := range r.entries {
+		if e.plugin.Name() == name {
+			return e
+		}
+	}
+	return nil
+}
+
+// rebuildLocked refreshes the derived plugins slice; existing readers keep
+// iterating their own copy.
+func (r *Registry) rebuildLocked() {
+	plugins := make([]Plugin, len(r.entries))
+	for i, e := range r.entries {
+		plugins[i] = e.plugin
+	}
+	r.plugins = plugins
 }
 
 // Plugins returns the list of registered plugins.
@@ -58,66 +138,135 @@ func (r *Registry) Plugins() []Plugin {
 	return result
 }
 
-// Init seeds plugin settings and calls OnInit for all plugins.
-func (r *Registry) Init() error {
+// Dynamic lists the plugins that were loaded from files at runtime.
+func (r *Registry) Dynamic() []DynamicInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if r.db == nil {
+	var out []DynamicInfo
+	for _, e := range r.entries {
+		if e.path != "" {
+			out = append(out, DynamicInfo{Name: e.plugin.Name(), DisplayName: e.plugin.DisplayName(), Version: e.plugin.Version(), Path: e.path})
+		}
+	}
+	return out
+}
+
+// Init seeds plugin settings and calls OnInit for every plugin. A plugin
+// that fails does not stop the others; the failures are returned joined.
+func (r *Registry) Init() error {
+	r.mu.RLock()
+	entries := append([]*entry(nil), r.entries...)
+	db := r.db
+	r.mu.RUnlock()
+	if db == nil {
 		return nil
 	}
 	// Create the plugin_settings table if it doesn't exist
-	r.db.AutoMigrate(&PluginSetting{})
-	for _, p := range r.plugins {
-		for _, s := range p.Settings() {
-			setting := PluginSetting{
-				PluginName: p.Name(),
-				Key:        s.Key,
-				Value:      s.DefaultValue,
-			}
-			r.db.Where("plugin_name = ? AND key = ?", p.Name(), s.Key).FirstOrCreate(&setting)
+	db.AutoMigrate(&PluginSetting{})
+	var errs []error
+	for _, e := range entries {
+		if err := initPlugin(db, e.plugin); err != nil {
+			log.Printf("Plugin %s init error: %v", e.plugin.Name(), err)
+			errs = append(errs, err)
 		}
-		if err := p.OnInit(r.db); err != nil {
-			log.Printf("Plugin %s init error: %v", p.Name(), err)
-			return err
-		}
+	}
+	return errors.Join(errs...)
+}
+
+func initPlugin(db *gorm.DB, p Plugin) error {
+	for _, s := range p.Settings() {
+		setting := PluginSetting{PluginName: p.Name(), Key: s.Key, Value: s.DefaultValue}
+		db.Where("plugin_name = ? AND key = ?", p.Name(), s.Key).FirstOrCreate(&setting)
+	}
+	if err := p.OnInit(db); err != nil {
+		return fmt.Errorf("plugin %s: %w", p.Name(), err)
 	}
 	return nil
 }
 
+// InitPlugin seeds settings, runs OnInit and starts the scheduled jobs of one
+// plugin — what a hot install needs after RegisterDynamic.
+func (r *Registry) InitPlugin(name string) error {
+	r.mu.RLock()
+	e := r.findLocked(name)
+	db := r.db
+	r.mu.RUnlock()
+	if e == nil {
+		return fmt.Errorf("plugin %q is not registered", name)
+	}
+	if db == nil {
+		return errors.New("database is not ready")
+	}
+	db.AutoMigrate(&PluginSetting{})
+	if err := initPlugin(db, e.plugin); err != nil {
+		return err
+	}
+	r.startJobs(e)
+	return nil
+}
+
 // StartScheduledJobs launches goroutines for all plugin scheduled jobs.
+// Plugins whose jobs are already running are left alone.
 func (r *Registry) StartScheduledJobs() {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, p := range r.plugins {
-		for _, job := range p.ScheduledJobs() {
-			go func(p Plugin, job ScheduledJob) {
-				ticker := time.NewTicker(job.Interval)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ticker.C:
-						r.mu.RLock()
-						db := r.db
-						r.mu.RUnlock()
-						if db == nil {
-							continue
-						}
-						settings := r.getPluginSettings(p.Name())
-						if err := job.Run(db, settings); err != nil {
-							log.Printf("Plugin %s job %s error: %v", p.Name(), job.Name, err)
-						}
-					case <-r.stopCh:
-						return
-					}
-				}
-			}(p, job)
-		}
+	entries := append([]*entry(nil), r.entries...)
+	r.mu.RUnlock()
+	for _, e := range entries {
+		r.startJobs(e)
 	}
 }
 
-// Stop gracefully shuts down scheduled jobs.
+func (r *Registry) startJobs(e *entry) {
+	r.mu.Lock()
+	if e.started || e.stopped {
+		r.mu.Unlock()
+		return
+	}
+	e.started = true
+	r.mu.Unlock()
+	for _, job := range e.plugin.ScheduledJobs() {
+		go func(p Plugin, job ScheduledJob, stop <-chan struct{}) {
+			ticker := time.NewTicker(job.Interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					r.mu.RLock()
+					db := r.db
+					r.mu.RUnlock()
+					if db == nil {
+						continue
+					}
+					settings := r.getPluginSettings(p.Name())
+					if err := job.Run(db, settings); err != nil {
+						log.Printf("Plugin %s job %s error: %v", p.Name(), job.Name, err)
+					}
+				case <-stop:
+					return
+				}
+			}
+		}(e.plugin, job, e.stop)
+	}
+}
+
+// Stop gracefully shuts down every plugin's scheduled jobs.
 func (r *Registry) Stop() {
-	close(r.stopCh)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.entries {
+		e.closeStopLocked()
+	}
+}
+
+// DeleteSettings removes a plugin's stored settings (uninstall).
+func (r *Registry) DeleteSettings(name string) {
+	r.mu.RLock()
+	db := r.db
+	r.mu.RUnlock()
+	if db == nil {
+		return
+	}
+	db.Where("plugin_name = ?", name).Delete(&PluginSetting{})
 }
 
 // getPluginSettings returns a plugin's settings as a simple key→value map.

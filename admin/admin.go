@@ -6,6 +6,7 @@ import (
 	"goblog/auth"
 	"goblog/blog"
 	gplugin "goblog/plugin"
+	"goblog/plugin/installer"
 	"log"
 	"net/http"
 	"net/url"
@@ -30,7 +31,8 @@ type Admin struct {
 	auth          auth.IAuth
 	b             *blog.Blog
 	version       string
-	OnThemeChange func(theme string) // callback to reload templates when theme changes
+	OnThemeChange func(theme string)   // callback to reload templates when theme changes
+	Installer     *installer.Installer // plugin directory install/update; nil when not wired
 }
 
 // New constructs an Admin API

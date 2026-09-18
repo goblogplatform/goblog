@@ -33,44 +33,50 @@ func LoadDynamicPlugins(registry *Registry, dir string) {
 		}
 
 		path := filepath.Join(dir, entry.Name())
-		p, err := loadPlugin(path)
+		p, err := LoadDynamicPlugin(path)
 		if err != nil {
 			log.Printf("Warning: failed to load plugin %s: %v", entry.Name(), err)
 			continue
 		}
-		registry.Register(p)
+		if err := registry.RegisterDynamic(p, path); err != nil {
+			log.Printf("Warning: skipping plugin %s: %v", entry.Name(), err)
+		}
 	}
 }
 
-func loadPlugin(path string) (Plugin, error) {
+// LoadDynamicPlugin loads one plugin source file through the interpreter.
+func LoadDynamicPlugin(path string) (Plugin, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	p, err := LoadDynamicPluginBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return p, nil
+}
 
+// LoadDynamicPluginBytes interprets plugin source and calls its NewPlugin().
+// The source runs as Go code inside this process; only load what you trust.
+func LoadDynamicPluginBytes(src []byte) (Plugin, error) {
 	i := interp.New(interp.Options{})
 	if err := i.Use(stdlib.Symbols); err != nil {
 		return nil, err
 	}
-	// Export the plugin package symbols so dynamic plugins can use them
 	if err := i.Use(Symbols); err != nil {
 		return nil, err
 	}
-
-	_, err = i.Eval(string(src))
-	if err != nil {
+	if _, err := i.Eval(string(src)); err != nil {
 		return nil, err
 	}
-
 	v, err := i.Eval("NewPlugin()")
 	if err != nil {
 		return nil, err
 	}
-
 	p, ok := v.Interface().(Plugin)
 	if !ok {
-		return nil, fmt.Errorf("%s: NewPlugin() did not return a plugin.Plugin", path)
+		return nil, fmt.Errorf("NewPlugin() did not return a plugin.Plugin")
 	}
-
 	return p, nil
 }

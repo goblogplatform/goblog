@@ -1,11 +1,14 @@
 package plugin_test
 
 import (
+	"errors"
 	"goblog/plugin"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -235,4 +238,153 @@ func TestRenderPluginPage_SubPathsAndRawResponses(t *testing.T) {
 	if _, _, handled = reg.RenderPluginPage(c, "pager", ""); handled {
 		t.Error("disabled plugin should not handle its page")
 	}
+}
+
+// jobPlugin counts how often its 10ms job runs.
+type jobPlugin struct {
+	plugin.BasePlugin
+	name string
+	runs atomic.Int32
+}
+
+func (p *jobPlugin) Name() string        { return p.name }
+func (p *jobPlugin) DisplayName() string { return "Job " + p.name }
+func (p *jobPlugin) Version() string     { return "1.0.0" }
+func (p *jobPlugin) ScheduledJobs() []plugin.ScheduledJob {
+	return []plugin.ScheduledJob{{Name: "tick", Interval: 10 * time.Millisecond, Run: func(*gorm.DB, map[string]string) error {
+		p.runs.Add(1)
+		return nil
+	}}}
+}
+
+// failInitPlugin fails OnInit.
+type failInitPlugin struct{ plugin.BasePlugin }
+
+func (failInitPlugin) Name() string          { return "failing" }
+func (failInitPlugin) DisplayName() string   { return "Failing" }
+func (failInitPlugin) Version() string       { return "0.0.1" }
+func (failInitPlugin) OnInit(*gorm.DB) error { return errors.New("boom") }
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+func newTestRegistry(t *testing.T) *plugin.Registry {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plugin.NewRegistry(db)
+}
+
+func hasPlugin(reg *plugin.Registry, name string) bool {
+	for _, p := range reg.Plugins() {
+		if p.Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
+func TestUnregisterStopsOnlyThatPluginsJobs(t *testing.T) {
+	reg := newTestRegistry(t)
+	a, b := &jobPlugin{name: "a"}, &jobPlugin{name: "b"}
+	reg.Register(a)
+	if err := reg.RegisterDynamic(b, "/tmp/b.go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RegisterDynamic(&jobPlugin{name: "b"}, "/tmp/b2.go"); err == nil {
+		t.Error("registering a second plugin named b should fail")
+	}
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	reg.StartScheduledJobs()
+	reg.StartScheduledJobs() // idempotent
+	waitFor(t, "both jobs to run", func() bool { return a.runs.Load() > 0 && b.runs.Load() > 0 })
+
+	dyn := reg.Dynamic()
+	if len(dyn) != 1 || dyn[0].Name != "b" || dyn[0].Path != "/tmp/b.go" || dyn[0].DisplayName != "Job b" {
+		t.Errorf("Dynamic() = %+v", dyn)
+	}
+
+	if err := reg.Unregister("b"); err != nil {
+		t.Fatal(err)
+	}
+	if hasPlugin(reg, "b") || len(reg.Dynamic()) != 0 {
+		t.Error("b should be gone after Unregister")
+	}
+	time.Sleep(30 * time.Millisecond)
+	n := b.runs.Load()
+	time.Sleep(50 * time.Millisecond)
+	if b.runs.Load() != n {
+		t.Error("b's job kept running after Unregister")
+	}
+	an := a.runs.Load()
+	waitFor(t, "a's job to keep running", func() bool { return a.runs.Load() > an })
+
+	if err := reg.Unregister("nope"); err == nil {
+		t.Error("unregistering an unknown plugin should fail")
+	}
+	reg.Stop()
+	time.Sleep(30 * time.Millisecond)
+	an = a.runs.Load()
+	time.Sleep(50 * time.Millisecond)
+	if a.runs.Load() != an {
+		t.Error("a's job kept running after Stop")
+	}
+}
+
+func TestInitContinuesPastFailingPlugin(t *testing.T) {
+	reg := newTestRegistry(t)
+	reg.Register(failInitPlugin{})
+	reg.Register(&testPlugin{})
+	err := reg.Init()
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected the failing plugin's error, got %v", err)
+	}
+	for _, g := range reg.GetAllSettings() {
+		if g.PluginName == "test" && g.CurrentValues["api_key"] == "default123" {
+			return
+		}
+	}
+	t.Error("the plugin registered after the failing one should still have its settings seeded")
+}
+
+func TestInitPluginAndDeleteSettings(t *testing.T) {
+	reg := newTestRegistry(t)
+	reg.Register(&testPlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	reg.StartScheduledJobs()
+
+	late := &jobPlugin{name: "late"}
+	if err := reg.RegisterDynamic(late, "late.go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.InitPlugin("late"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "late plugin's job", func() bool { return late.runs.Load() > 0 })
+	if err := reg.InitPlugin("nope"); err == nil {
+		t.Error("InitPlugin on an unknown plugin should fail")
+	}
+
+	reg.DeleteSettings("test")
+	for _, g := range reg.GetAllSettings() {
+		if g.PluginName == "test" && len(g.CurrentValues) != 0 {
+			t.Errorf("settings for test should be deleted, got %v", g.CurrentValues)
+		}
+	}
+	reg.Stop()
 }
