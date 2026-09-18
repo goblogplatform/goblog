@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"goblog/blog"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -188,10 +190,61 @@ func initPlugin(db *gorm.DB, p Plugin) error {
 		setting := PluginSetting{PluginName: p.Name(), Key: s.Key, Value: s.DefaultValue}
 		db.Where("plugin_name = ? AND key = ?", p.Name(), s.Key).FirstOrCreate(&setting)
 	}
+	ensurePages(db, p)
 	if err := p.OnInit(db); err != nil {
 		return fmt.Errorf("plugin %s: %w", p.Name(), err)
 	}
 	return nil
+}
+
+// ensurePages creates a blog.Page row for each page a plugin declares via
+// Pages() that doesn't have one yet, keyed by page_type. Compiled-in plugins
+// with real database access (e.g. plugins/directory) can and do create their
+// own page row from OnInit; wasm plugins are sandboxed and Yaegi plugins
+// cannot implement a gorm-typed OnInit at all, so neither can do this for
+// itself. This mirrors what plugins/directory's own OnInit does, and runs
+// before OnInit so a plugin's own (redundant but harmless) page-creation
+// logic just finds the page already there. A slug already used by a
+// different page type is left alone and logged, same as directory.OnInit.
+func ensurePages(db *gorm.DB, p Plugin) {
+	if db == nil {
+		return
+	}
+	for _, pd := range p.Pages() {
+		if pd.PageType == "" || pd.Slug == "" {
+			continue
+		}
+		var existing blog.Page
+		err := db.Where("page_type = ?", pd.PageType).First(&existing).Error
+		if err == nil {
+			continue // already has a page
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("Plugin %s: query page for page_type %q: %v", p.Name(), pd.PageType, err)
+			continue
+		}
+		var bySlug blog.Page
+		if err := db.Where("slug = ?", pd.Slug).First(&bySlug).Error; err == nil {
+			log.Printf("Plugin %s: page slug %q is already used by a %q page; rename it and restart to create the %q page", p.Name(), pd.Slug, bySlug.PageType, pd.PageType)
+			continue
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("Plugin %s: query page slug %q: %v", p.Name(), pd.Slug, err)
+			continue
+		}
+		page := blog.Page{
+			Title:     pd.Title,
+			Slug:      pd.Slug,
+			PageType:  pd.PageType,
+			ShowInNav: pd.ShowInNav,
+			NavOrder:  pd.NavOrder,
+			Enabled:   true,
+		}
+		if err := db.Create(&page).Error; err != nil {
+			log.Printf("Plugin %s: create page %q: %v", p.Name(), pd.Slug, err)
+			continue
+		}
+		log.Printf("Plugin %s: created page %q", p.Name(), pd.Slug)
+	}
 }
 
 // InitPlugin seeds settings, runs OnInit and starts the scheduled jobs of one

@@ -201,7 +201,7 @@ func TestRenderPage_Listing(t *testing.T) {
 		t.Fatalf("tmpl=%q data=%v", tmpl, data)
 	}
 	html, _ := data["plugin_content"].(string)
-	for _, want := range []string{`href="/plugins/hello"`, "Hello", "Says hi", "1.0.0", "Jason", "GPL-3.0", "dynamic", `href="/plugins/index.json"`, `href="https://github.com/goblogplatform/goblog-plugin-hello"`} {
+	for _, want := range []string{`href="/plugins/hello"`, "Hello", "Says hi", "1.0.0", "Jason", "GPL-3.0", "dynamic", `href="/plugins/index.json"`, `href="https://github.com/goblogplatform/goblog-plugin-hello"`, "wasm", "api.example.test"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("listing missing %q in:\n%s", want, html)
 		}
@@ -283,7 +283,7 @@ func TestRenderPage_Detail(t *testing.T) {
 		t.Fatalf("tmpl=%q title=%v", tmpl, data["title"])
 	}
 	html, _ := data["plugin_content"].(string)
-	for _, want := range []string{"<h1>Hello</h1>", "<p>First</p>", "abc", "0.2.6", `href="https://raw.githubusercontent.com/goblogplatform/goblog-plugin-hello/v1.0.0/plugin.go"`, `href="/plugins"`, "2026-09-14"} {
+	for _, want := range []string{"<h1>Hello</h1>", "<p>First</p>", "abc", "0.2.6", `href="https://raw.githubusercontent.com/goblogplatform/goblog-plugin-hello/v1.0.0/plugin.go"`, `href="/plugins"`, "2026-09-14", "wasm", "Talks to", "api.example.test"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("detail missing %q in:\n%s", want, html)
 		}
@@ -341,6 +341,21 @@ func TestRenderPage_DetailEscapesIndexStrings(t *testing.T) {
 	}
 	if !strings.Contains(html, "<b>ok</b>") {
 		t.Errorf("readme_html is trusted, sanitized-by-the-registry HTML and must pass through raw:\n%s", html)
+	}
+}
+
+func TestRenderPage_DetailNoNetwork(t *testing.T) {
+	srv := newFixtureServer(t)
+	srv.index.Store(func(w http.ResponseWriter) {
+		w.Write([]byte(`[{"name":"nonet","display_name":"NoNet","description":"x","version":"1","install_type":"wasm","runtime":"wasm","detail_url":""}]`))
+	})
+	p := New()
+	p.fetcher = NewFetcher(srv.Client())
+	ctx, _ := newRenderCtx(t, "/plugins/nonet", "nonet", map[string]string{"index_url": srv.URL + "/index.json"})
+	_, data := p.RenderPage(ctx, PageType)
+	html, _ := data["plugin_content"].(string)
+	if !strings.Contains(html, "No network access") {
+		t.Errorf("expected 'No network access' when allowed_hosts is empty, got:\n%s", html)
 	}
 }
 

@@ -4,7 +4,7 @@ Install them from your own goblog under <strong>Admin → Plugins</strong>.</p>
 {{ if .Entries }}
 <table class="table">
   <thead>
-    <tr><th>Plugin</th><th>Description</th><th>Version</th><th>Author</th><th>License</th><th>Type</th><th>Stars</th></tr>
+    <tr><th>Plugin</th><th>Description</th><th>Version</th><th>Author</th><th>License</th><th>Type</th><th>Runtime</th><th>Talks to</th><th>Stars</th></tr>
   </thead>
   <tbody>
   {{ range .Entries }}
@@ -15,6 +15,8 @@ Install them from your own goblog under <strong>Admin → Plugins</strong>.</p>
       <td>{{ .Author }}</td>
       <td>{{ .License }}</td>
       <td>{{ .InstallType }}</td>
+      <td>{{ .Runtime }}</td>
+      <td>{{ talksTo .AllowedHosts }}</td>
       <td>★ {{ .Stars }}</td>
     </tr>
   {{ end }}

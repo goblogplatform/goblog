@@ -239,7 +239,7 @@ func TestAdminPluginsPage(t *testing.T) {
 		t.Fatalf("page: %d %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	for _, want := range []string{`id="tab-installed"`, `id="tab-browse"`, `/api/v1/plugins/status`, `href="/admin/plugins"`, "ENABLE_DYNAMIC_PLUGINS"} {
+	for _, want := range []string{`id="tab-installed"`, `id="tab-browse"`, `/api/v1/plugins/status`, `href="/admin/plugins"`, "WebAssembly", "Talks to"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}

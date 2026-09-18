@@ -24,6 +24,13 @@ var templates = template.Must(template.New("").Funcs(template.FuncMap{
 		}
 		return s
 	},
+	// talksTo summarizes a wasm plugin's declared allowed_hosts for display.
+	"talksTo": func(hosts []string) string {
+		if len(hosts) == 0 {
+			return "No network access"
+		}
+		return strings.Join(hosts, ", ")
+	},
 }).ParseFS(templateFS, "templates/*.html"))
 
 // namePattern is the registry's rule for plugin names; anything else in a

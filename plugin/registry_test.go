@@ -2,6 +2,7 @@ package plugin_test
 
 import (
 	"errors"
+	"goblog/blog"
 	"goblog/plugin"
 	"net/http"
 	"net/http/httptest"
@@ -237,6 +238,70 @@ func TestRenderPluginPage_SubPathsAndRawResponses(t *testing.T) {
 	c, _ = newCtx("/pager")
 	if _, _, handled = reg.RenderPluginPage(c, "pager", ""); handled {
 		t.Error("disabled plugin should not handle its page")
+	}
+}
+
+// TestInit_CreatesPageForPluginsThatCannotTouchTheDB covers wasm plugins
+// (sandboxed) and Yaegi plugins (can't implement a gorm-typed OnInit): they
+// declare a page via Pages() but cannot create the blog.Page row themselves,
+// so the registry must do it, the same way plugins/directory's own OnInit
+// does for itself.
+func TestInit_CreatesPageForPluginsThatCannotTouchTheDB(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	reg.Register(&pagePlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	var page blog.Page
+	if err := db.Where("page_type = ?", "pager").First(&page).Error; err != nil {
+		t.Fatalf("expected a page row for the plugin's declared page, got: %v", err)
+	}
+	if page.Slug != "pager" || page.Title != "Pager" || !page.Enabled {
+		t.Errorf("page = %+v", page)
+	}
+
+	// Idempotent: re-running Init (as a hot install's InitPlugin does) must
+	// not create a duplicate.
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	db.Model(&blog.Page{}).Where("page_type = ?", "pager").Count(&count)
+	if count != 1 {
+		t.Errorf("expected exactly one page row after a second Init, got %d", count)
+	}
+}
+
+// TestInit_LeavesSlugCollisionToTheOperator mirrors
+// directory.TestOnInit_SlugCollision: a slug already used by a different
+// page type is left alone rather than erroring out plugin init.
+func TestInit_LeavesSlugCollisionToTheOperator(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&blog.Page{Title: "Mine", Slug: "pager", PageType: "custom", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	reg.Register(&pagePlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	db.Model(&blog.Page{}).Where("page_type = ?", "pager").Count(&count)
+	if count != 0 {
+		t.Errorf("expected the pre-existing page to be left alone, got %d pager-typed pages", count)
 	}
 }
 
