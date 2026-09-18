@@ -41,13 +41,17 @@ func hostNote(host string) string {
 		return "any host"
 	case strings.Contains(h, "*"):
 		return "wildcard"
-	case h == "localhost", h == "::1",
+	case h == "localhost", h == "::1", h == "0.0.0.0",
 		strings.HasPrefix(h, "127."), strings.HasPrefix(h, "10."),
-		strings.HasPrefix(h, "192.168."), strings.HasPrefix(h, "169.254."):
+		strings.HasPrefix(h, "192.168."), strings.HasPrefix(h, "169.254."),
+		rfc1918Class16.MatchString(h), strings.HasPrefix(h, "fd"), strings.HasPrefix(h, "fe80:"):
 		return "local network"
 	}
 	return ""
 }
+
+// rfc1918Class16 matches 172.16.0.0/12.
+var rfc1918Class16 = regexp.MustCompile(`^172\.(1[6-9]|2[0-9]|3[01])\.`)
 
 // namePattern is the registry's rule for plugin names; anything else in a
 // sub-path is not a plugin page.

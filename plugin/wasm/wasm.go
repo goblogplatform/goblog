@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,6 +73,8 @@ type Plugin struct {
 	hasEnabledSetting bool
 	closed            bool      // Close() was called (under mu)
 	closedLogged      bool      // "instance closed" warning already emitted (under mu)
+	instanceClosed    bool      // the wazero module is closed (timeout/exit); re-create before use (under mu)
+	closedByDeadline  bool      // instanceClosed was caused by the last call's own deadline (under mu)
 	reinstantiatedAt  time.Time // last time call re-created the instance (under mu)
 }
 
@@ -221,18 +224,55 @@ func (p *Plugin) call(name string, input []byte, timeout time.Duration) ([]byte,
 	if p.closed {
 		return nil, errClosed
 	}
-	out, err := p.callLocked(name, input, timeout)
-	if err == nil || err.Error() != "module is closed" {
+	if p.instanceClosed && !p.reviveLocked() {
+		return nil, errClosed
+	}
+	out, err := p.runLocked(name, input, timeout)
+	if err == nil || !p.instanceClosed || p.closedByDeadline {
+		// Success, an ordinary plugin error, or this very call closed the
+		// instance by running into its deadline: the next call re-creates it
+		// (retrying a call that just timed out would only time out again).
 		return out, err
 	}
+	// The instance was already closed before this call ran (guest exit or a
+	// closure the previous call did not observe): re-create and retry once.
+	if !p.reviveLocked() {
+		return nil, errClosed
+	}
+	return p.runLocked(name, input, timeout)
+}
+
+// runLocked calls an export and records, structurally rather than by error
+// text, whether the instance is now closed: wazero closes the module when the
+// call runs into its deadline (close-on-context-done) or the guest exits.
+// The error wording is only a secondary hint, so a runtime wording change
+// cannot strand the plugin.
+func (p *Plugin) runLocked(name string, input []byte, timeout time.Duration) ([]byte, error) {
+	start := time.Now()
+	out, err := p.callLocked(name, input, timeout)
+	if err == nil {
+		return out, nil
+	}
+	p.closedByDeadline = time.Since(start) >= timeout
+	if p.closedByDeadline || strings.Contains(strings.ToLower(err.Error()), "closed") {
+		p.instanceClosed = true
+	}
+	return nil, err
+}
+
+// reviveLocked re-creates a closed instance, honouring the back-off; when it
+// cannot, the closed state is reported once.
+func (p *Plugin) reviveLocked() bool {
 	if p.reinstantiateLocked() {
-		return p.callLocked(name, input, timeout)
+		p.instanceClosed = false
+		p.closedByDeadline = false
+		return true
 	}
 	if !p.closedLogged {
 		p.closedLogged = true
 		p.opts.Logf("plugin %s: instance closed (timeout or exit); it is re-created at most once per %s", p.displayForLog(), reinstantiateBackoff)
 	}
-	return nil, err
+	return false
 }
 
 func (p *Plugin) callLocked(name string, input []byte, timeout time.Duration) ([]byte, error) {

@@ -45,7 +45,7 @@ var staleAfter = time.Hour
 
 // Typed errors; the admin API maps them to 4xx responses with their text.
 var (
-	ErrWasmDisabled         = errors.New("WebAssembly plugins are disabled: start goblog without ENABLE_WASM_PLUGINS=false and with a writable plugins/wasm/ directory")
+	ErrWasmDisabled         = errors.New("WebAssembly plugins are disabled (ENABLE_WASM_PLUGINS=false); remove that setting and make plugins/wasm/ writable to install plugins")
 	ErrIncompatible         = errors.New("this plugin requires a newer goblog")
 	ErrChecksum             = errors.New("the downloaded file does not match the checksum in the directory index; the index may be stale, refresh and try again")
 	ErrNotDynamic           = errors.New("this plugin type cannot be installed from the directory")

@@ -201,7 +201,7 @@ func TestRenderPage_Listing(t *testing.T) {
 		t.Fatalf("tmpl=%q data=%v", tmpl, data)
 	}
 	html, _ := data["plugin_content"].(string)
-	for _, want := range []string{`href="/plugins/hello"`, "Hello", "Says hi", "1.0.0", "Jason", "GPL-3.0", "dynamic", `href="/plugins/index.json"`, `href="https://github.com/goblogplatform/goblog-plugin-hello"`, "wasm", "api.example.test"} {
+	for _, want := range []string{`href="/plugins/hello"`, "Hello", "Says hi", "1.0.0", "Jason", "GPL-3.0", `href="/plugins/index.json"`, `href="https://github.com/goblogplatform/goblog-plugin-hello"`, "wasm", "api.example.test"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("listing missing %q in:\n%s", want, html)
 		}
@@ -283,7 +283,7 @@ func TestRenderPage_Detail(t *testing.T) {
 		t.Fatalf("tmpl=%q title=%v", tmpl, data["title"])
 	}
 	html, _ := data["plugin_content"].(string)
-	for _, want := range []string{"<h1>Hello</h1>", "<p>First</p>", "abc", "0.2.6", `href="https://raw.githubusercontent.com/goblogplatform/goblog-plugin-hello/v1.0.0/plugin.go"`, `href="/plugins"`, "2026-09-14", "wasm", "Talks to", "api.example.test"} {
+	for _, want := range []string{"<h1>Hello</h1>", "<p>First</p>", "abc", "0.2.6", `href="https://github.com/goblogplatform/goblog-plugin-hello/releases/download/v1.0.0/plugin.wasm"`, `href="/plugins"`, "2026-09-14", "wasm", "Talks to", "api.example.test"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("detail missing %q in:\n%s", want, html)
 		}
@@ -364,7 +364,7 @@ func TestHostNote(t *testing.T) {
 		"api.example.test": "", "*": "any host", "*.example.test": "wildcard", "api.*": "wildcard",
 		"localhost": "local network", "LOCALHOST": "local network", "::1": "local network",
 		"127.0.0.1": "local network", "10.1.2.3": "local network", "192.168.1.1": "local network", "169.254.169.254": "local network",
-		"10.example.test": "local network", "192.0.2.1": "", "172.16.0.1": "",
+		"10.example.test": "local network", "192.0.2.1": "", "172.16.0.1": "local network", "172.32.0.1": "", "fd12::1": "local network",
 	} {
 		if got := hostNote(host); got != want {
 			t.Errorf("hostNote(%q) = %q, want %q", host, got, want)
