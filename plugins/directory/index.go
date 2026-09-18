@@ -5,20 +5,22 @@ import "html/template"
 // Entry is one plugin in index.json: the latest release of a plugin as
 // published by the registry (github.com/goblogplatform/plugins).
 type Entry struct {
-	Name             string `json:"name"`
-	DisplayName      string `json:"display_name"`
-	Description      string `json:"description"`
-	Version          string `json:"version"`
-	Author           string `json:"author"`
-	License          string `json:"license"`
-	SourceURL        string `json:"source_url"`
-	DownloadURL      string `json:"download_url"`
-	SHA256           string `json:"sha256"`
-	MinGoblogVersion string `json:"min_goblog_version"`
-	InstallType      string `json:"install_type"`
-	ReleasedAt       string `json:"released_at"` // RFC 3339; shown as-is, never parsed
-	DetailURL        string `json:"detail_url"`
-	Stars            int    `json:"stars"` // GitHub stargazers, added by the registry build
+	Name             string   `json:"name"`
+	DisplayName      string   `json:"display_name"`
+	Description      string   `json:"description"`
+	Version          string   `json:"version"`
+	Author           string   `json:"author"`
+	License          string   `json:"license"`
+	SourceURL        string   `json:"source_url"`
+	DownloadURL      string   `json:"download_url"`
+	SHA256           string   `json:"sha256"`
+	MinGoblogVersion string   `json:"min_goblog_version"`
+	InstallType      string   `json:"install_type"`
+	ReleasedAt       string   `json:"released_at"` // RFC 3339; shown as-is, never parsed
+	DetailURL        string   `json:"detail_url"`
+	Stars            int      `json:"stars"`         // GitHub stargazers, added by the registry build
+	Runtime          string   `json:"runtime"`       // "wasm"; the only installable runtime
+	AllowedHosts     []string `json:"allowed_hosts"` // hosts the plugin may call
 }
 
 // Release is one entry of a plugin's release history.

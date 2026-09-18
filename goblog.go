@@ -317,6 +317,7 @@ func main() {
 	}
 	pluginInstaller := &installer.Installer{
 		Dir:       "plugins/dynamic",
+		WasmDir:   "plugins/wasm",
 		Registry:  registry,
 		Directory: directory.NewFetcher(nil),
 		Version:   Version,
