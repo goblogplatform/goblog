@@ -10,6 +10,7 @@ import (
 	"goblog/mail"
 	gplugin "goblog/plugin"
 	"goblog/plugin/installer"
+	"goblog/plugin/wasm"
 	"goblog/plugins/analytics"
 	"goblog/plugins/directory"
 	scholarplugin "goblog/plugins/scholar"
@@ -311,13 +312,19 @@ func main() {
 	if dynamicEnabled {
 		gplugin.LoadDynamicPlugins(registry, "plugins/dynamic")
 	}
+	wasmEnabled := os.Getenv("ENABLE_WASM_PLUGINS") != "false"
+	if wasmEnabled {
+		wasm.LoadWasmPlugins(registry, "plugins/wasm", registry.Store())
+	}
 	pluginInstaller := &installer.Installer{
-		Dir:       "plugins/dynamic",
-		Registry:  registry,
-		Directory: directory.NewFetcher(nil),
-		Version:   Version,
-		Enabled:   dynamicEnabled,
-		IndexURL:  func() string { return _blog.SettingValue("plugin_directory_url", installer.DefaultIndexURL) },
+		Dir:         "plugins/dynamic",
+		WasmDir:     "plugins/wasm",
+		Registry:    registry,
+		Directory:   directory.NewFetcher(nil),
+		Version:     Version,
+		Enabled:     dynamicEnabled,
+		WasmEnabled: wasmEnabled,
+		IndexURL:    func() string { return _blog.SettingValue("plugin_directory_url", installer.DefaultIndexURL) },
 	}
 	pluginInstaller.Directory.SetUserAgent("goblog-installer/" + Version)
 	_admin.Installer = pluginInstaller

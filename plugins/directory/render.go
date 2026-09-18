@@ -24,7 +24,34 @@ var templates = template.Must(template.New("").Funcs(template.FuncMap{
 		}
 		return s
 	},
+	// hostNote flags an allowed_hosts entry broader than one named host;
+	// the templates render it as a badge next to the entry.
+	"hostNote": hostNote,
 }).ParseFS(templateFS, "templates/*.html"))
+
+// hostNote returns a short warning for an allowed_hosts entry that is
+// broader than one named host — "*" (anything), another glob pattern, or an
+// address on this machine or its local network, which a sandboxed plugin
+// should rarely need — and "" for an ordinary host name. The admin plugins
+// page has the same rule in JavaScript.
+func hostNote(host string) string {
+	h := strings.ToLower(host)
+	switch {
+	case h == "*":
+		return "any host"
+	case strings.Contains(h, "*"):
+		return "wildcard"
+	case h == "localhost", h == "::1", h == "0.0.0.0",
+		strings.HasPrefix(h, "127."), strings.HasPrefix(h, "10."),
+		strings.HasPrefix(h, "192.168."), strings.HasPrefix(h, "169.254."),
+		rfc1918Class16.MatchString(h), strings.HasPrefix(h, "fd"), strings.HasPrefix(h, "fe80:"):
+		return "local network"
+	}
+	return ""
+}
+
+// rfc1918Class16 matches 172.16.0.0/12.
+var rfc1918Class16 = regexp.MustCompile(`^172\.(1[6-9]|2[0-9]|3[01])\.`)
 
 // namePattern is the registry's rule for plugin names; anything else in a
 // sub-path is not a plugin page.

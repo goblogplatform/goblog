@@ -31,4 +31,8 @@ goblog
 www/uploads/*
 !www/uploads/.keep
 
+# wasm plugin binaries (installed at runtime; keep the directory itself)
+plugins/wasm/*
+!plugins/wasm/.gitkeep
+
 .idea

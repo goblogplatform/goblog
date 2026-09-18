@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const fixtureIndex = `[{"name":"hello","display_name":"Hello","description":"Says hi","version":"1.0.0","author":"Jason","license":"GPL-3.0","source_url":"https://github.com/goblogplatform/goblog-plugin-hello","download_url":"https://raw.githubusercontent.com/goblogplatform/goblog-plugin-hello/v1.0.0/plugin.go","sha256":"abc","min_goblog_version":"0.2.6","install_type":"dynamic","released_at":"2026-09-14T00:00:00Z","detail_url":"DETAIL_URL"}]`
+const fixtureIndex = `[{"name":"hello","display_name":"Hello","description":"Says hi","version":"1.0.0","author":"Jason","license":"GPL-3.0","source_url":"https://github.com/goblogplatform/goblog-plugin-hello","download_url":"https://github.com/goblogplatform/goblog-plugin-hello/releases/download/v1.0.0/plugin.wasm","sha256":"abc","min_goblog_version":"0.2.6","install_type":"wasm","runtime":"wasm","allowed_hosts":["api.example.test"],"released_at":"2026-09-14T00:00:00Z","detail_url":"DETAIL_URL"}]`
 
 const fixtureDetail = `{"name":"hello","display_name":"Hello","version":"1.0.0","readme_html":"<h1>Hello</h1>","changelog_html":"","releases":[{"version":"1.0.0","released_at":"2026-09-14T00:00:00Z","notes_html":"<p>First</p>","url":"https://github.com/goblogplatform/goblog-plugin-hello/releases/tag/v1.0.0"}]}`
 

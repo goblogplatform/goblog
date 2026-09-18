@@ -37,4 +37,15 @@ func TestRunValidatePlugin(t *testing.T) {
 	if code := runValidatePlugin(nil, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "usage") {
 		t.Errorf("expected usage error and exit 2, got %d %q", code, errOut.String())
 	}
+
+	// .wasm files are validated through the wasm runtime.
+	out.Reset()
+	errOut.Reset()
+	if code := runValidatePlugin([]string{"plugin/wasm/testdata/echo.wasm"}, &out, &errOut); code != 0 {
+		t.Fatalf("wasm: exit %d, stderr %q", code, errOut.String())
+	}
+	json.Unmarshal(out.Bytes(), &info)
+	if info["name"] != "echo" || info["version"] != "1.2.3" || info["runtime"] != "wasm" {
+		t.Errorf("wasm identity: %v", info)
+	}
 }

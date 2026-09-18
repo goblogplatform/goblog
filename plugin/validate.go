@@ -7,6 +7,7 @@ type Info struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name"`
 	Version     string `json:"version"`
+	Runtime     string `json:"runtime,omitempty"`
 }
 
 // Validate loads a single dynamic plugin file through the Yaegi loader,

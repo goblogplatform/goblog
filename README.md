@@ -43,7 +43,8 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 - Plugin system for injecting template data / HTML, scheduled jobs, settings, and whole pages
 - Built-in plugins: `analytics`, `socialicons`, `scholar` (research page; Google Scholar is blocked from most cloud IPs, so set its `source` setting to `semantic_scholar` when hosting in a datacenter), `directory` (the plugin directory that runs [goblog.live/plugins](https://goblog.live/plugins); off by default)
 - Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
-- Install plugins from the [directory](https://www.goblog.live/plugins) with one click under **Admin → Plugins** (dynamic plugins; needs `ENABLE_DYNAMIC_PLUGINS=true`)
+- WebAssembly plugins (sandboxed, any language/dependencies) installable from the directory
+- Install plugins from the [directory](https://www.goblog.live/plugins) with one click under **Admin → Plugins**
 
 ### Infrastructure
 - SQLite (file-based, zero config), MySQL, or PostgreSQL
@@ -154,8 +155,65 @@ registry.Register(myplugin.New())
 ```
 They have full access to `gin`, `gorm`, and any module dependency, and are part of the release binary. Use this for anything that ships with goblog.
 
+### WebAssembly plugins
+The plugin directory installs sandboxed WebAssembly modules built with [Extism](https://extism.org/): any language with an Extism PDK, any dependencies, no goblog rebuild. A plugin has no filesystem access and can reach the network only at the hosts it declares.
+
+Every export takes and returns JSON through Extism's input/output. Only `identity` is mandatory; a missing export behaves like `BasePlugin`'s no-op.
+
+| Export | Input → Output | Mirrors |
+|---|---|---|
+| `identity` | → `{name, display_name, version}` | `Name/DisplayName/Version` |
+| `settings` | → `[{key, type, default, label, description}]` | `Settings()` |
+| `pages` | → `[{page_type, title, slug, show_in_nav, nav_order, description}]` | `Pages()` |
+| `jobs` | → `[{name, interval_seconds}]` (`interval_seconds` ≤ 0 → 1 h) | `ScheduledJobs()` |
+| `template_head` / `template_footer` | `ctx` → HTML string | same |
+| `template_data` | `ctx` → JSON object (`.plugins.<name>`) | `TemplateData` |
+| `render_page` | `ctx` → `{"html": "…"}` **or** `{"template": "x.html", "data": {…}}` **or** `{"raw": {"status", "content_type", "body"}}` | `RenderPage` |
+| `run_job` | `{"name", "settings"}` → `{}` | `ScheduledJob.Run` |
+| `on_init` | `{"settings": {k: v}}` (current values: defaults overlaid with what is stored) → `{}` | `OnInit` |
+
+`ctx` is `{"settings": {k: v}, "template": "…", "request": {"path", "sub_path", "query": {k: v}, "method"}}`.
+
+Host functions (Extism's `extism:host/user` namespace):
+
+| Function | Behaviour |
+|---|---|
+| `store_get(key) → value \| null` | per-plugin persistent KV (`plugin_store` table) |
+| `store_set(key, value)` | key ≤ 256 bytes, value ≤ 1 MB; errors otherwise |
+| `store_delete(key)` | |
+| `store_list(prefix) → [keys]` | |
+| logging | the Extism PDK's own logger (`pdk.Log`), prefixed with the plugin name — there is no separate `log` host function |
+| HTTP | Extism's built-in `http_request`, limited to the hosts in the plugin's `allowed_hosts`; none declared → no network |
+
+Limits: 10 s per `template_*`/`render_page` call, 120 s for `run_job`/`on_init`; 64 MB memory per plugin; one loaded instance per plugin, calls serialised behind a mutex. A call that hits its timeout closes the instance; the next call re-creates it from the module bytes and carries on, at most once per 30 s — a plugin that keeps timing out declines (empty hooks, 404 pages) in between. HTTP redirects are checked against `allowed_hosts` on every hop.
+
+Build one with the standard Go toolchain and [`github.com/extism/go-pdk`](https://github.com/extism/go-pdk):
+```bash
+GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugin.wasm .
+```
+[`plugin/wasm/testdata/echo/main.go`](plugin/wasm/testdata/echo/main.go) is the reference implementation of every export, including the store and an outbound HTTP call.
+
+An installed wasm plugin is `plugins/wasm/<name>.wasm` plus a `<name>.json` sidecar declaring its allowed hosts:
+```json
+{"allowed_hosts": ["api.example.test"]}
+```
+The installer writes this sidecar for directory installs; an operator dropping a `.wasm` file by hand can ship its own (no sidecar means no network access). Loading is on by default — set `ENABLE_WASM_PLUGINS=false` to turn it off.
+
+`goblog validate-plugin <file.go|file.wasm>` with a `.wasm` file loads the module with no store or network access, calls `identity`/`settings`/`pages`/`jobs`, and prints the identity as JSON:
+```bash
+./goblog validate-plugin plugin.wasm
+# {"name":"echo","display_name":"Echo","version":"1.2.3","runtime":"wasm"}
+```
+
+#### Installing from the directory
+**Admin → Plugins** lists what is installed and lets you browse and search the [plugin directory](https://www.goblog.live/plugins), install a plugin with one click, update it when the directory has a newer release, or uninstall it. WebAssembly is the only format the directory installs; requirements:
+- `plugins/wasm/` writable by goblog (WASM loading is on by default; set `ENABLE_WASM_PLUGINS=false` to disable it entirely). With Docker, bind-mount that directory (see below) — otherwise installed plugins vanish with the container.
+- The directory URL is the `plugin_directory_url` setting (default `https://www.goblog.live/plugins/index.json`); point it elsewhere to run a private directory. `plugin_directory_url` is a trust decision: whatever it points at can offer code that runs inside goblog once you click Install.
+
+Install downloads the plugin's `.wasm` asset, verifies its sha256 against the directory index, loads it, checks that its name and version match, and only then writes it (plus the `allowed_hosts` sidecar) to `plugins/wasm/` and starts it — no restart. Updates keep the plugin's settings; uninstall removes both files. Install only from sources you trust. A dynamic (`.go`) plugin installed before the directory went wasm-only can still be updated to a wasm release or uninstalled, just not reinstalled as `.go`.
+
 ### Dynamic plugins
-Loaded at startup (or when installed from Admin → Plugins) from `plugins/dynamic/*.go` by the embedded [Yaegi](https://github.com/traefik/yaegi) Go interpreter — no rebuild, so they work with the Docker image. Enable with:
+Yaegi plugins are the local/operator path for extending goblog without a rebuild — not a directory-installable format (see WebAssembly plugins above for that). Loaded at startup (or, for one previously installed from the directory, kept running) from `plugins/dynamic/*.go` by the embedded [Yaegi](https://github.com/traefik/yaegi) Go interpreter. Enable with:
 ```bash
 ENABLE_DYNAMIC_PLUGINS=true ./goblog
 ```
@@ -169,37 +227,33 @@ then edit the message under **Admin → Settings → Hello (example)**.
 Limits of the interpreted environment:
 - Available imports are the Go standard library and `goblog/plugin` (`Plugin`, `BasePlugin`, `HookContext`, `SettingDefinition`, `ScheduledJob`, `PageDefinition`). `gin` and `gorm` are **not** available, so the hooks that name their types — `TemplateData`, `ScheduledJobs`, `OnInit`, `RenderPage` — can't be implemented dynamically; write a compiled-in plugin for those.
 - A file that fails to load is logged and skipped; the rest still load.
-- Dynamic plugins run as ordinary Go code inside the goblog process with stdlib access. Only load files you control; `plugins/dynamic/` should be writable by the operator alone.
+- Dynamic plugins run as ordinary Go code inside the goblog process with stdlib access, unsandboxed. Only load files you control; `plugins/dynamic/` should be writable by the operator alone.
 
 With Docker, bind-mount the directory and set the flag:
 ```bash
 docker run -p 7000:7000 -e ENABLE_DYNAMIC_PLUGINS=true \
   -v $PWD/plugins/dynamic:/go/src/github.com/compscidr/goblog/plugins/dynamic \
+  -v $PWD/plugins/wasm:/go/src/github.com/compscidr/goblog/plugins/wasm \
   compscidr/goblog:latest
 ```
 
-#### Installing from the directory
-**Admin → Plugins** lists what is installed and lets you browse and search the [plugin directory](https://www.goblog.live/plugins), install a plugin with one click, update it when the directory has a newer release, or uninstall it. Requirements:
-- `ENABLE_DYNAMIC_PLUGINS=true`, and `plugins/dynamic/` writable by goblog. With Docker, bind-mount that directory (as above) — otherwise installed plugins vanish with the container.
-- The directory URL is the `plugin_directory_url` setting (default `https://www.goblog.live/plugins/index.json`); point it elsewhere to run a private directory. `plugin_directory_url` is a trust decision: whatever it points at can offer code that runs inside goblog once you click Install.
-
-Install downloads the plugin's `.go` file, verifies its sha256 against the directory index, loads it, checks that its name and version match, and only then writes it to `plugins/dynamic/` and starts it — no restart. Updates keep the plugin's settings; uninstall removes both. Plugins run as Go code inside goblog: install only from sources you trust. After an update the previous version's interpreter stays in memory until goblog restarts; this is bounded and harmless.
-
 #### Checking a plugin file
-`goblog validate-plugin <file.go>` loads a single file through the same interpreter and prints its identity as JSON (exit 1 with the load error on stderr if it fails):
+`goblog validate-plugin <file>` accepts either a Yaegi `.go` file or a wasm `.wasm` module, loads it in isolation, and prints its identity as JSON (exit 1 with the load error on stderr if it fails):
 ```bash
 ./goblog validate-plugin plugins/dynamic/hello.go.example
 # {"name":"hello","display_name":"Hello (example)","version":"1.0.0"}
+./goblog validate-plugin plugin.wasm
+# {"name":"echo","display_name":"Echo","version":"1.2.3","runtime":"wasm"}
 ```
 With the Docker image (its entrypoint is a shell command, so override it):
 ```bash
 docker run --rm --network none -v "$PWD:/p" --entrypoint /go/src/github.com/compscidr/goblog/goblog \
-  compscidr/goblog:latest validate-plugin /p/plugin.go
+  compscidr/goblog:latest validate-plugin /p/plugin.wasm
 ```
 This is what the [plugin directory](https://goblog.live/plugins) registry runs on every submission.
 
 ### Plugin directory
-[goblog.live/plugins](https://goblog.live/plugins) lists published dynamic plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`). Plugins are individual GitHub repositories with releases; the curated list and the build that produces the index live in [goblogplatform/plugins](https://github.com/goblogplatform/plugins), which also documents how to submit one.
+[goblog.live/plugins](https://goblog.live/plugins) lists published plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`, `runtime`, `allowed_hosts`). Plugins are individual GitHub repositories with releases; the curated list and the build that produces the index live in [goblogplatform/plugins](https://github.com/goblogplatform/plugins), which also documents how to submit one.
 
 The pages are rendered by the built-in `directory` plugin, which any goblog can turn on under **Admin → Settings → Plugin Directory** (`enabled` = `true`). It fetches `index_url` every `refresh_minutes`, keeps the last good copy if the registry is unreachable, and serves `/plugins`, `/plugins/<name>` and `/plugins/index.json`. Only point `index_url` at a registry you trust: its README, changelog and release-note HTML is shown as-is. The directory page also has a **Submit your plugin** box: paste your repository URL and it opens a pre-filled submission on GitHub.
 

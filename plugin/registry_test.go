@@ -2,6 +2,7 @@ package plugin_test
 
 import (
 	"errors"
+	"goblog/blog"
 	"goblog/plugin"
 	"net/http"
 	"net/http/httptest"
@@ -240,6 +241,143 @@ func TestRenderPluginPage_SubPathsAndRawResponses(t *testing.T) {
 	}
 }
 
+// TestInit_CreatesPageForPluginsThatCannotTouchTheDB covers wasm plugins
+// (sandboxed) and Yaegi plugins (can't implement a gorm-typed OnInit): they
+// declare a page via Pages() but cannot create the blog.Page row themselves,
+// so the registry must do it, the same way plugins/directory's own OnInit
+// does for itself.
+func TestInit_CreatesPageForPluginsThatCannotTouchTheDB(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	reg.Register(&pagePlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	var page blog.Page
+	if err := db.Where("page_type = ?", "pager").First(&page).Error; err != nil {
+		t.Fatalf("expected a page row for the plugin's declared page, got: %v", err)
+	}
+	if page.Slug != "pager" || page.Title != "Pager" || !page.Enabled {
+		t.Errorf("page = %+v", page)
+	}
+
+	// Idempotent: re-running Init (as a hot install's InitPlugin does) must
+	// not create a duplicate.
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	db.Model(&blog.Page{}).Where("page_type = ?", "pager").Count(&count)
+	if count != 1 {
+		t.Errorf("expected exactly one page row after a second Init, got %d", count)
+	}
+}
+
+// TestInit_LeavesSlugCollisionToTheOperator mirrors
+// directory.TestOnInit_SlugCollision: a slug already used by a different
+// page type is left alone rather than erroring out plugin init.
+func TestInit_LeavesSlugCollisionToTheOperator(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&blog.Page{Title: "Mine", Slug: "pager", PageType: "custom", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	reg.Register(&pagePlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	db.Model(&blog.Page{}).Where("page_type = ?", "pager").Count(&count)
+	if count != 0 {
+		t.Errorf("expected the pre-existing page to be left alone, got %d pager-typed pages", count)
+	}
+}
+
+// slugPlugin declares one page at an arbitrary slug.
+type slugPlugin struct {
+	plugin.BasePlugin
+	slug string
+}
+
+func (p *slugPlugin) Name() string        { return "slugger" }
+func (p *slugPlugin) DisplayName() string { return "Slugger" }
+func (p *slugPlugin) Version() string     { return "1.0.0" }
+func (p *slugPlugin) Pages() []plugin.PageDefinition {
+	return []plugin.PageDefinition{{PageType: "slugger", Title: "Slugger", Slug: p.slug}}
+}
+
+// TestInit_RefusesReservedAndMalformedSlugs: a plugin cannot claim a
+// top-level path goblog serves itself, nor one that is not a plain path
+// segment.
+func TestInit_RefusesReservedAndMalformedSlugs(t *testing.T) {
+	for _, slug := range []string{"admin", "api", "login", "logout", "search", "theme", "wizard", "Bad Slug", "a/b", "../x"} {
+		db, err := gorm.Open(sqlite.Open(":memory:"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+			t.Fatal(err)
+		}
+		reg := plugin.NewRegistry(db)
+		reg.Register(&slugPlugin{slug: slug})
+		if err := reg.Init(); err != nil {
+			t.Fatal(err)
+		}
+		var count int64
+		db.Model(&blog.Page{}).Where("page_type = ?", "slugger").Count(&count)
+		if count != 0 {
+			t.Errorf("slug %q: expected no page to be created, got %d", slug, count)
+		}
+	}
+}
+
+// TestDeletePages removes what ensurePages created (uninstall) and leaves
+// other pages alone.
+func TestDeletePages(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&blog.Page{Title: "About", Slug: "about", PageType: "about", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	reg.Register(&pagePlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.DeletePages(nil); err != nil {
+		t.Errorf("DeletePages(nil): %v", err)
+	}
+	if err := reg.DeletePages([]string{"pager"}); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	db.Model(&blog.Page{}).Where("page_type = ?", "pager").Count(&count)
+	if count != 0 {
+		t.Errorf("expected the plugin's page to be deleted, got %d", count)
+	}
+	db.Model(&blog.Page{}).Count(&count)
+	if count != 1 {
+		t.Errorf("expected the about page to survive, got %d pages", count)
+	}
+}
+
 // jobPlugin counts how often its 10ms job runs.
 type jobPlugin struct {
 	plugin.BasePlugin
@@ -315,6 +453,9 @@ func TestUnregisterStopsOnlyThatPluginsJobs(t *testing.T) {
 	dyn := reg.Dynamic()
 	if len(dyn) != 1 || dyn[0].Name != "b" || dyn[0].Path != "/tmp/b.go" || dyn[0].DisplayName != "Job b" {
 		t.Errorf("Dynamic() = %+v", dyn)
+	}
+	if dyn[0].Runtime != "go" {
+		t.Errorf("runtime = %q", dyn[0].Runtime)
 	}
 
 	if err := reg.Unregister("b"); err != nil {

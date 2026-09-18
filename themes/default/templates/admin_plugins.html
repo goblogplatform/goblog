@@ -2,18 +2,18 @@
 <div class="container">
     {{ template "admin_nav.html" . }}
     <h1>Plugins</h1>
-    <p class="text-muted">Browse the <a href="https://www.goblog.live/plugins" target="_blank" rel="noopener">plugin directory</a> and install plugins with one click. Directory plugins are dynamic: they can add settings and head/footer HTML. Plugins that add pages or background jobs ship compiled into goblog.</p>
+    <p class="text-muted">Browse the <a href="https://www.goblog.live/plugins" target="_blank" rel="noopener">plugin directory</a> and install plugins with one click. Directory plugins run sandboxed in WebAssembly and can add pages, background jobs, settings and head/footer HTML. They can only reach the hosts they declare.</p>
 
     <div id="plugins-error" class="alert alert-danger" role="alert" hidden></div>
     <div id="plugins-disabled" class="alert alert-warning" role="alert" hidden>
-        Installing plugins needs <code>ENABLE_DYNAMIC_PLUGINS=true</code> and a writable, persisted <code>plugins/dynamic/</code> directory (bind-mount it with Docker). See the README under <em>Dynamic plugins</em>. You can still browse the directory.
+        WebAssembly plugins are disabled (<code>ENABLE_WASM_PLUGINS=false</code>). Remove that setting (WASM is on by default) to install plugins from the directory. You can still browse it.
     </div>
     <div id="plugins-index-error" class="alert alert-warning" role="alert" hidden>
         <span id="plugins-index-error-text"></span> — directory URL is set under <a href="/admin/settings">Settings → plugin_directory_url</a>.
         <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="refreshDirectory()">Refresh</button>
     </div>
     <div id="plugins-trust" class="alert alert-info alert-dismissible" role="alert">
-        Plugins run as Go code inside goblog with the same access it has. Install only plugins from sources you trust.
+        Directory plugins run sandboxed in WebAssembly, with network access limited to the hosts they declare. Built-in and legacy Go plugins run as ordinary code inside goblog with the same access it has. Plugins add HTML to every page (head/footer hooks) and own their pages; install only plugins you trust.
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
 
@@ -47,7 +47,7 @@
 
 <script>
 (function () {
-  var state = { status: null, dynamicEnabled: false, dirWritable: false };
+  var state = { status: null, wasmEnabled: false, dirWritable: false };
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (ch) {
@@ -86,6 +86,26 @@
     return /^[a-z0-9-]+$/.test(n || "") ? n : null;
   }
 
+  // hostNote flags an allowed_hosts entry that is broader than one named
+  // host: "*" (anything), another glob pattern, or an address on this
+  // machine or its local network, which a sandboxed plugin should rarely
+  // need. Mirrors plugins/directory's hostNote.
+  function hostNote(h) {
+    h = String(h == null ? "" : h).toLowerCase();
+    if (h === "*") { return "any host"; }
+    if (h.indexOf("*") !== -1) { return "wildcard"; }
+    if (h === "localhost" || h === "::1" || h === "0.0.0.0" || /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|fd|fe80:)/.test(h)) { return "local network"; }
+    return "";
+  }
+
+  // runtimeBadge labels an installed row by how the plugin actually runs:
+  // sandboxed wasm, a locally-dropped Yaegi .go file, or compiled into goblog.
+  function runtimeBadge(p) {
+    if (p.runtime === "wasm") { return '<span class="badge text-bg-secondary">wasm</span>'; }
+    if (p.runtime === "go") { return '<span class="badge text-bg-secondary">go (local)</span>'; }
+    return '<span class="badge text-bg-light">built-in</span>';
+  }
+
   function renderInstalled(st) {
     var rows = st.installed.map(function (p) {
       var actions = "";
@@ -99,7 +119,7 @@
       return '<tr id="installed-' + esc(p.name) + '">' +
         '<td><strong>' + esc(p.display_name) + '</strong><br><small class="text-muted">' + esc(p.name) + '</small></td>' +
         '<td>v' + esc(p.version) + '</td>' +
-        '<td>' + (p.dynamic ? '<span class="badge text-bg-secondary">dynamic</span>' : '<span class="badge text-bg-light">built-in</span>') + '</td>' +
+        '<td>' + runtimeBadge(p) + '</td>' +
         '<td><div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-toggle-enabled data-name="' + esc(p.name) + '" aria-label="Enable ' + esc(p.display_name) + '" ' + (p.enabled ? "checked" : "") + '></div></td>' +
         '<td class="text-end">' + actions + '<div class="small text-danger row-error"></div></td></tr>';
     });
@@ -108,17 +128,23 @@
 
   function renderBrowse(list) {
     var cards = list.map(function (p) {
-      var disabled = !state.dynamicEnabled || !state.dirWritable || !p.compatible;
-      var reason = !state.dynamicEnabled ? "dynamic plugins are disabled" : (!state.dirWritable ? "plugins/dynamic/ is not writable" : (p.reason || ""));
+      var disabled = !state.wasmEnabled || !state.dirWritable || !p.compatible;
+      var reason = !state.wasmEnabled ? "WebAssembly plugins are disabled" : (!state.dirWritable ? "plugins/wasm/ is not writable" : (p.reason || ""));
       var source = httpURL(p.source_url);
       var sourceLink = source ? '<a href="' + esc(source) + '" target="_blank" rel="noopener" class="me-2">Source</a>' : '';
       var dirName = safeName(p.name);
       var dirLink = dirName ? '<a href="https://www.goblog.live/plugins/' + esc(dirName) + '" target="_blank" rel="noopener">Directory page</a>' : '';
       var minVer = p.min_goblog_version ? ' · requires goblog ≥ ' + esc(p.min_goblog_version) : '';
+      var hosts = (p.allowed_hosts || []).map(function (h) {
+        var note = hostNote(h);
+        return esc(h) + (note ? ' <span class="badge text-bg-warning">' + esc(note) + '</span>' : '');
+      }).join(", ");
+      var talksTo = hosts ? "Talks to: " + hosts : "No network access";
       return '<div class="col-md-6"><div class="card h-100"><div class="card-body">' +
         '<h5 class="card-title mb-1">' + esc(p.display_name) + ' <small class="text-muted">v' + esc(p.version) + '</small></h5>' +
         '<p class="mb-1 small text-muted">by ' + esc(p.author) + ' · ★ ' + esc(p.stars) + ' · ' + esc(p.license) + minVer + '</p>' +
         '<p class="card-text">' + esc(p.description) + '</p>' +
+        '<p class="small text-muted mb-1">' + talksTo + '</p>' +
         sourceLink + dirLink +
         '</div><div class="card-footer d-flex justify-content-between align-items-center">' +
         '<span class="small text-muted">' + esc(reason) + '</span>' +
@@ -130,13 +156,13 @@
 
   function loadStatus() {
     return api("GET", "/api/v1/plugins/status").then(function (st) {
-      state.status = st; state.dynamicEnabled = st.dynamic_enabled; state.dirWritable = st.dir_writable;
+      state.status = st; state.wasmEnabled = st.wasm_enabled; state.dirWritable = st.dir_writable;
       var disabledEl = document.getElementById("plugins-disabled");
-      if (!st.dynamic_enabled) {
-        disabledEl.innerHTML = 'Installing plugins needs <code>ENABLE_DYNAMIC_PLUGINS=true</code> and a writable, persisted <code>plugins/dynamic/</code> directory (bind-mount it with Docker). See the README under <em>Dynamic plugins</em>. You can still browse the directory.';
+      if (!st.wasm_enabled) {
+        disabledEl.innerHTML = 'WebAssembly plugins are disabled (<code>ENABLE_WASM_PLUGINS=false</code>). Remove that setting (WASM is on by default) to install plugins from the directory. You can still browse it.';
         disabledEl.hidden = false;
       } else if (!st.dir_writable) {
-        disabledEl.innerHTML = 'Dynamic plugins are enabled but <code>plugins/dynamic/</code> is not writable: ' + esc(st.dir_error || "") + '. Fix the directory permissions (or the Docker bind mount) to install plugins.';
+        disabledEl.innerHTML = '<code>plugins/wasm/</code> is not writable: ' + esc(st.dir_error || "") + '. Fix the directory permissions (or the Docker bind mount) to install plugins.';
         disabledEl.hidden = false;
       } else {
         disabledEl.hidden = true;

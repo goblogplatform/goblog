@@ -36,7 +36,7 @@ type pluginsHarness struct {
 
 func newPluginsHarness(t *testing.T) *pluginsHarness {
 	t.Helper()
-	src, err := os.ReadFile("../plugins/dynamic/hello.go.example")
+	src, err := os.ReadFile("../plugin/wasm/testdata/echo.wasm")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,9 +45,9 @@ func newPluginsHarness(t *testing.T) *pluginsHarness {
 		switch r.URL.Path {
 		case "/index.json":
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"name":"hello","display_name":"Hello","description":"Says hi","version":"1.0.0","author":"Jason","license":"MIT","source_url":"https://github.com/x/hello","download_url":"http://127.0.0.1/hello.go","sha256":"` + sha + `","min_goblog_version":"0.2.6","install_type":"dynamic","released_at":"2026-09-15T00:00:00Z","detail_url":"","stars":7},
+			w.Write([]byte(`[{"name":"echo","display_name":"Echo","description":"Says hi","version":"1.2.3","author":"Jason","license":"MIT","source_url":"https://github.com/x/echo","download_url":"http://127.0.0.1/echo.wasm","sha256":"` + sha + `","min_goblog_version":"0.2.6","install_type":"wasm","runtime":"wasm","allowed_hosts":[],"released_at":"2026-09-15T00:00:00Z","detail_url":"","stars":7},
 			{"name":"zeta","display_name":"Zeta","description":"Other thing","version":"0.1.0","author":"Someone","license":"MIT","source_url":"https://github.com/x/zeta","download_url":"https://example.test/z.go","sha256":"00","min_goblog_version":"0.1.0","install_type":"dynamic","released_at":"2026-01-01T00:00:00Z","detail_url":"","stars":1}]`))
-		case "/hello.go":
+		case "/echo.wasm":
 			w.Write(src)
 		default:
 			http.NotFound(w, r)
@@ -63,8 +63,8 @@ func newPluginsHarness(t *testing.T) *pluginsHarness {
 	reg := plugin.NewRegistry(db)
 	reg.Init()
 	inst := &installer.Installer{
-		Dir: t.TempDir(), Registry: reg, Directory: directory.NewFetcher(srv.Client()),
-		Version: "v0.2.7", Client: rewritingClient(srv), Enabled: true,
+		Dir: t.TempDir(), WasmDir: t.TempDir(), Registry: reg, Directory: directory.NewFetcher(srv.Client()),
+		Version: "v0.2.7", Client: rewritingClient(srv), Enabled: true, WasmEnabled: true,
 		IndexURL: func() string { return srv.URL + "/index.json" },
 	}
 	ad.Installer = inst
@@ -94,9 +94,9 @@ func TestPluginAPI_NonAdmin(t *testing.T) {
 	for _, c := range []struct{ m, p string }{
 		{"GET", "/api/v1/plugins/status"}, {"GET", "/api/v1/plugins/directory"},
 		{"POST", "/api/v1/plugins/install"}, {"POST", "/api/v1/plugins/update"},
-		{"DELETE", "/api/v1/plugins/hello"}, {"POST", "/api/v1/plugins/refresh"},
+		{"DELETE", "/api/v1/plugins/echo"}, {"POST", "/api/v1/plugins/refresh"},
 	} {
-		if w := h.do(c.m, c.p, `{"name":"hello"}`); w.Code != http.StatusUnauthorized {
+		if w := h.do(c.m, c.p, `{"name":"echo"}`); w.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s: expected 401, got %d", c.m, c.p, w.Code)
 		}
 	}
@@ -111,11 +111,11 @@ func TestPluginAPI_StatusDirectoryInstallUninstall(t *testing.T) {
 	}
 	var st installer.Status
 	json.Unmarshal(w.Body.Bytes(), &st)
-	if !st.DynamicEnabled || len(st.Available) != 2 || st.Available[0].Name != "hello" {
+	if !st.DynamicEnabled || len(st.Available) != 2 || st.Available[0].Name != "echo" {
 		t.Errorf("status = %+v", st)
 	}
 	if !st.DirWritable {
-		t.Errorf("expected the happy-path plugins/dynamic/ (a t.TempDir()) to be writable, got status = %+v", st)
+		t.Errorf("expected the happy-path plugins/wasm/ (a t.TempDir()) to be writable, got status = %+v", st)
 	}
 
 	// Directory search + sort.
@@ -127,21 +127,21 @@ func TestPluginAPI_StatusDirectoryInstallUninstall(t *testing.T) {
 	}
 	w = h.do("GET", "/api/v1/plugins/directory?sort=name", "")
 	json.Unmarshal(w.Body.Bytes(), &avail)
-	if len(avail) != 2 || avail[0].Name != "hello" || avail[1].Name != "zeta" {
+	if len(avail) != 2 || avail[0].Name != "echo" || avail[1].Name != "zeta" {
 		t.Errorf("sort=name = %+v", avail)
 	}
 	w = h.do("GET", "/api/v1/plugins/directory?sort=newest", "")
 	json.Unmarshal(w.Body.Bytes(), &avail)
-	if len(avail) != 2 || avail[0].Name != "hello" {
+	if len(avail) != 2 || avail[0].Name != "echo" {
 		t.Errorf("sort=newest = %+v", avail)
 	}
 
 	// Install.
-	w = h.do("POST", "/api/v1/plugins/install", `{"name":"hello"}`)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Installed Hello v1.0.0") {
+	w = h.do("POST", "/api/v1/plugins/install", `{"name":"echo"}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Installed Echo v1.2.3") {
 		t.Fatalf("install: %d %s", w.Code, w.Body.String())
 	}
-	w = h.do("POST", "/api/v1/plugins/install", `{"name":"hello"}`)
+	w = h.do("POST", "/api/v1/plugins/install", `{"name":"echo"}`)
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "already installed") {
 		t.Errorf("second install: %d %s", w.Code, w.Body.String())
 	}
@@ -153,25 +153,25 @@ func TestPluginAPI_StatusDirectoryInstallUninstall(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("missing name: %d", w.Code)
 	}
-	w = h.do("POST", "/api/v1/plugins/update", `{"name":"hello"}`)
+	w = h.do("POST", "/api/v1/plugins/update", `{"name":"echo"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("update at latest should be 400, got %d %s", w.Code, w.Body.String())
 	}
 
 	// Uninstall.
-	w = h.do("DELETE", "/api/v1/plugins/hello", "")
+	w = h.do("DELETE", "/api/v1/plugins/echo", "")
 	if w.Code != http.StatusOK {
 		t.Errorf("uninstall: %d %s", w.Code, w.Body.String())
 	}
-	w = h.do("DELETE", "/api/v1/plugins/hello", "")
+	w = h.do("DELETE", "/api/v1/plugins/echo", "")
 	if w.Code != http.StatusNotFound {
 		t.Errorf("second uninstall: %d", w.Code)
 	}
 
 	// Disabled: 4xx with the message, status still fine.
-	h.inst.Enabled = false
-	w = h.do("POST", "/api/v1/plugins/install", `{"name":"hello"}`)
-	if w.Code != http.StatusPreconditionFailed || !strings.Contains(w.Body.String(), "ENABLE_DYNAMIC_PLUGINS") {
+	h.inst.WasmEnabled = false
+	w = h.do("POST", "/api/v1/plugins/install", `{"name":"echo"}`)
+	if w.Code != http.StatusPreconditionFailed || !strings.Contains(w.Body.String(), "ENABLE_WASM_PLUGINS") {
 		t.Errorf("disabled: %d %s", w.Code, w.Body.String())
 	}
 	w = h.do("POST", "/api/v1/plugins/refresh", "")
@@ -197,7 +197,7 @@ func TestPluginAPI_NoInstaller(t *testing.T) {
 }
 
 // rewritingClient sends requests for the port-less loopback host used in the
-// fixture index (http://127.0.0.1/hello.go — plain HTTP is only accepted for
+// fixture index (http://127.0.0.1/echo.wasm — plain HTTP is only accepted for
 // loopback) to the fixture server's real port.
 func rewritingClient(srv *httptest.Server) *http.Client {
 	base := srv.Client()
@@ -239,7 +239,7 @@ func TestAdminPluginsPage(t *testing.T) {
 		t.Fatalf("page: %d %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	for _, want := range []string{`id="tab-installed"`, `id="tab-browse"`, `/api/v1/plugins/status`, `href="/admin/plugins"`, "ENABLE_DYNAMIC_PLUGINS"} {
+	for _, want := range []string{`id="tab-installed"`, `id="tab-browse"`, `/api/v1/plugins/status`, `href="/admin/plugins"`, "WebAssembly", "Talks to"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}

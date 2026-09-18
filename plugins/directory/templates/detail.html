@@ -7,6 +7,8 @@
   <dt>License</dt><dd>{{ .Entry.License }}</dd>
   <dt>Source</dt><dd><a href="{{ .Entry.SourceURL }}">{{ .Entry.SourceURL }}</a></dd>
   <dt>Requires</dt><dd>goblog {{ .Entry.MinGoblogVersion }} or newer ({{ .Entry.InstallType }} plugin)</dd>
+  <dt>Runtime</dt><dd>{{ .Entry.Runtime }}</dd>
+  <dt>Talks to</dt><dd>{{ if .Entry.AllowedHosts }}{{ range $i, $h := .Entry.AllowedHosts }}{{ if $i }}, {{ end }}{{ $h }}{{ with hostNote $h }} <span class="badge text-bg-warning">{{ . }}</span>{{ end }}{{ end }}{{ else }}No network access{{ end }}</dd>
   <dt>Download</dt><dd><a href="{{ .Entry.DownloadURL }}">{{ .Entry.DownloadURL }}</a><br><small>sha256 <code>{{ .Entry.SHA256 }}</code></small></dd>
 </dl>
 {{ if .Notice }}<div class="alert alert-warning" role="alert">{{ .Notice }}</div>{{ end }}
