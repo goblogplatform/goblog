@@ -16,7 +16,7 @@ Install them from your own goblog under <strong>Admin → Plugins</strong>.</p>
       <td>{{ .License }}</td>
       <td>{{ .InstallType }}</td>
       <td>{{ .Runtime }}</td>
-      <td>{{ talksTo .AllowedHosts }}</td>
+      <td>{{ if .AllowedHosts }}{{ range $i, $h := .AllowedHosts }}{{ if $i }}, {{ end }}{{ $h }}{{ with hostNote $h }} <span class="badge text-bg-warning">{{ . }}</span>{{ end }}{{ end }}{{ else }}No network access{{ end }}</td>
       <td>★ {{ .Stars }}</td>
     </tr>
   {{ end }}

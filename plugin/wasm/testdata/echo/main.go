@@ -189,7 +189,12 @@ func runJob() int32 {
 
 //go:wasmexport on_init
 func onInit() int32 {
+	var in struct {
+		Settings map[string]string `json:"settings"`
+	}
+	json.Unmarshal(pdk.Input(), &in)
 	storeSet("init", "1")
+	storeSet("init_greeting", in.Settings["greeting"])
 	return out(map[string]any{})
 }
 

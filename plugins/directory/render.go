@@ -24,14 +24,30 @@ var templates = template.Must(template.New("").Funcs(template.FuncMap{
 		}
 		return s
 	},
-	// talksTo summarizes a wasm plugin's declared allowed_hosts for display.
-	"talksTo": func(hosts []string) string {
-		if len(hosts) == 0 {
-			return "No network access"
-		}
-		return strings.Join(hosts, ", ")
-	},
+	// hostNote flags an allowed_hosts entry broader than one named host;
+	// the templates render it as a badge next to the entry.
+	"hostNote": hostNote,
 }).ParseFS(templateFS, "templates/*.html"))
+
+// hostNote returns a short warning for an allowed_hosts entry that is
+// broader than one named host — "*" (anything), another glob pattern, or an
+// address on this machine or its local network, which a sandboxed plugin
+// should rarely need — and "" for an ordinary host name. The admin plugins
+// page has the same rule in JavaScript.
+func hostNote(host string) string {
+	h := strings.ToLower(host)
+	switch {
+	case h == "*":
+		return "any host"
+	case strings.Contains(h, "*"):
+		return "wildcard"
+	case h == "localhost", h == "::1",
+		strings.HasPrefix(h, "127."), strings.HasPrefix(h, "10."),
+		strings.HasPrefix(h, "192.168."), strings.HasPrefix(h, "169.254."):
+		return "local network"
+	}
+	return ""
+}
 
 // namePattern is the registry's rule for plugin names; anything else in a
 // sub-path is not a plugin page.

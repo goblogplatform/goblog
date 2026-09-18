@@ -4,11 +4,65 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"sync"
 
 	"goblog/plugin"
 
 	extism "github.com/extism/go-sdk"
+	"github.com/gobwas/glob"
 )
+
+// Extism's http_request host function checks the request URL against the
+// plugin's allowed hosts and then sends it through http.DefaultClient,
+// which follows redirects without re-checking. A redirect from an allowed
+// host would otherwise reach any host. The SDK stores the plugin on the
+// request context (PluginCtxKey("plugin")), so a CheckRedirect on the
+// default client can re-apply the plugin's allow-list to every hop.
+var redirectCheckOnce sync.Once
+
+func init() {
+	installRedirectCheck()
+}
+
+// installRedirectCheck wraps http.DefaultClient once; a CheckRedirect set
+// by someone else is left alone.
+func installRedirectCheck() {
+	redirectCheckOnce.Do(func() {
+		if http.DefaultClient.CheckRedirect == nil {
+			http.DefaultClient.CheckRedirect = checkRedirect
+		}
+	})
+}
+
+// checkRedirect is net/http's default rule plus the plugin allow-list for
+// requests that originate from a wasm plugin.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if ext, ok := req.Context().Value(extism.PluginCtxKey("plugin")).(*extism.Plugin); ok {
+		if !hostAllowed(ext.AllowedHosts, req.URL.Hostname()) {
+			return fmt.Errorf("wasm plugin: redirect to %s is not an allowed host", req.URL.Hostname())
+		}
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
+}
+
+// hostAllowed mirrors the SDK's own matching in httpRequest: an entry
+// matches by equality or as a glob pattern.
+func hostAllowed(allowed []string, host string) bool {
+	for _, a := range allowed {
+		if a == host {
+			return true
+		}
+		if g, err := glob.Compile(a); err == nil && g.Match(host) {
+			return true
+		}
+	}
+	return false
+}
 
 // hostFunctions builds the store_* host functions (namespace
 // extism:host/user). They read the plugin's name through p at call time,

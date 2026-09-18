@@ -165,12 +165,12 @@ Every export takes and returns JSON through Extism's input/output. Only `identit
 | `identity` | → `{name, display_name, version}` | `Name/DisplayName/Version` |
 | `settings` | → `[{key, type, default, label, description}]` | `Settings()` |
 | `pages` | → `[{page_type, title, slug, show_in_nav, nav_order, description}]` | `Pages()` |
-| `jobs` | → `[{name, interval_seconds}]` | `ScheduledJobs()` |
+| `jobs` | → `[{name, interval_seconds}]` (`interval_seconds` ≤ 0 → 1 h) | `ScheduledJobs()` |
 | `template_head` / `template_footer` | `ctx` → HTML string | same |
 | `template_data` | `ctx` → JSON object (`.plugins.<name>`) | `TemplateData` |
 | `render_page` | `ctx` → `{"html": "…"}` **or** `{"template": "x.html", "data": {…}}` **or** `{"raw": {"status", "content_type", "body"}}` | `RenderPage` |
 | `run_job` | `{"name", "settings"}` → `{}` | `ScheduledJob.Run` |
-| `on_init` | → `{}` | `OnInit` |
+| `on_init` | `{"settings": {k: v}}` (current values: defaults overlaid with what is stored) → `{}` | `OnInit` |
 
 `ctx` is `{"settings": {k: v}, "template": "…", "request": {"path", "sub_path", "query": {k: v}, "method"}}`.
 
@@ -185,7 +185,7 @@ Host functions (Extism's `extism:host/user` namespace):
 | logging | the Extism PDK's own logger (`pdk.Log`), prefixed with the plugin name — there is no separate `log` host function |
 | HTTP | Extism's built-in `http_request`, limited to the hosts in the plugin's `allowed_hosts`; none declared → no network |
 
-Limits: 10 s per `template_*`/`render_page` call, 120 s for `run_job`/`on_init`; 64 MB memory per plugin; one loaded instance per plugin, calls serialised behind a mutex.
+Limits: 10 s per `template_*`/`render_page` call, 120 s for `run_job`/`on_init`; 64 MB memory per plugin; one loaded instance per plugin, calls serialised behind a mutex. A call that hits its timeout closes the instance; the next call re-creates it from the module bytes and carries on, at most once per 30 s — a plugin that keeps timing out declines (empty hooks, 404 pages) in between. HTTP redirects are checked against `allowed_hosts` on every hop.
 
 Build one with the standard Go toolchain and [`github.com/extism/go-pdk`](https://github.com/extism/go-pdk):
 ```bash
@@ -199,7 +199,7 @@ An installed wasm plugin is `plugins/wasm/<name>.wasm` plus a `<name>.json` side
 ```
 The installer writes this sidecar for directory installs; an operator dropping a `.wasm` file by hand can ship its own (no sidecar means no network access). Loading is on by default — set `ENABLE_WASM_PLUGINS=false` to turn it off.
 
-`goblog validate-plugin <file.wasm>` loads a module with no store or network access, calls `identity`/`settings`/`pages`/`jobs`, and prints the identity as JSON:
+`goblog validate-plugin <file.go|file.wasm>` with a `.wasm` file loads the module with no store or network access, calls `identity`/`settings`/`pages`/`jobs`, and prints the identity as JSON:
 ```bash
 ./goblog validate-plugin plugin.wasm
 # {"name":"echo","display_name":"Echo","version":"1.2.3","runtime":"wasm"}

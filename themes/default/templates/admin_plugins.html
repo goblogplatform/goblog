@@ -13,7 +13,7 @@
         <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="refreshDirectory()">Refresh</button>
     </div>
     <div id="plugins-trust" class="alert alert-info alert-dismissible" role="alert">
-        Directory plugins run sandboxed in WebAssembly, with network access limited to the hosts they declare. Built-in and legacy Go plugins run as ordinary code inside goblog with the same access it has. Install only plugins from sources you trust.
+        Directory plugins run sandboxed in WebAssembly, with network access limited to the hosts they declare. Built-in and legacy Go plugins run as ordinary code inside goblog with the same access it has. Plugins add HTML to every page (head/footer hooks) and own their pages; install only plugins you trust.
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
 
@@ -86,6 +86,18 @@
     return /^[a-z0-9-]+$/.test(n || "") ? n : null;
   }
 
+  // hostNote flags an allowed_hosts entry that is broader than one named
+  // host: "*" (anything), another glob pattern, or an address on this
+  // machine or its local network, which a sandboxed plugin should rarely
+  // need. Mirrors plugins/directory's hostNote.
+  function hostNote(h) {
+    h = String(h == null ? "" : h).toLowerCase();
+    if (h === "*") { return "any host"; }
+    if (h.indexOf("*") !== -1) { return "wildcard"; }
+    if (h === "localhost" || h === "::1" || /^(127\.|10\.|192\.168\.|169\.254\.)/.test(h)) { return "local network"; }
+    return "";
+  }
+
   // runtimeBadge labels an installed row by how the plugin actually runs:
   // sandboxed wasm, a locally-dropped Yaegi .go file, or compiled into goblog.
   function runtimeBadge(p) {
@@ -117,13 +129,16 @@
   function renderBrowse(list) {
     var cards = list.map(function (p) {
       var disabled = !state.wasmEnabled || !state.dirWritable || !p.compatible;
-      var reason = !state.wasmEnabled ? "WebAssembly plugins are disabled" : (!state.dirWritable ? "plugins/wasm/ is not writable" : (p.runtime !== "wasm" ? (p.reason || "") : ""));
+      var reason = !state.wasmEnabled ? "WebAssembly plugins are disabled" : (!state.dirWritable ? "plugins/wasm/ is not writable" : (p.reason || ""));
       var source = httpURL(p.source_url);
       var sourceLink = source ? '<a href="' + esc(source) + '" target="_blank" rel="noopener" class="me-2">Source</a>' : '';
       var dirName = safeName(p.name);
       var dirLink = dirName ? '<a href="https://www.goblog.live/plugins/' + esc(dirName) + '" target="_blank" rel="noopener">Directory page</a>' : '';
       var minVer = p.min_goblog_version ? ' · requires goblog ≥ ' + esc(p.min_goblog_version) : '';
-      var hosts = (p.allowed_hosts || []).map(esc).join(", ");
+      var hosts = (p.allowed_hosts || []).map(function (h) {
+        var note = hostNote(h);
+        return esc(h) + (note ? ' <span class="badge text-bg-warning">' + esc(note) + '</span>' : '');
+      }).join(", ");
       var talksTo = hosts ? "Talks to: " + hosts : "No network access";
       return '<div class="col-md-6"><div class="card h-100"><div class="card-body">' +
         '<h5 class="card-title mb-1">' + esc(p.display_name) + ' <small class="text-muted">v' + esc(p.version) + '</small></h5>' +

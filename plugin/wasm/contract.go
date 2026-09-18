@@ -52,8 +52,9 @@ type jobInput struct {
 	Settings map[string]string `json:"settings"`
 }
 
-// initInput is the input of on_init. The settings are the plugin's declared
-// defaults: the registry seeds them right before calling OnInit and the
+// initInput is the input of on_init. The settings are the plugin's current
+// values: its declared defaults overlaid with what is stored for it (the
+// registry seeds missing keys right before calling OnInit), since the
 // plugin has no other way to read them at that point.
 type initInput struct {
 	Settings map[string]string `json:"settings"`

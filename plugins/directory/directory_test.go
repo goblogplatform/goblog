@@ -359,6 +359,44 @@ func TestRenderPage_DetailNoNetwork(t *testing.T) {
 	}
 }
 
+func TestHostNote(t *testing.T) {
+	for host, want := range map[string]string{
+		"api.example.test": "", "*": "any host", "*.example.test": "wildcard", "api.*": "wildcard",
+		"localhost": "local network", "LOCALHOST": "local network", "::1": "local network",
+		"127.0.0.1": "local network", "10.1.2.3": "local network", "192.168.1.1": "local network", "169.254.169.254": "local network",
+		"10.example.test": "local network", "192.0.2.1": "", "172.16.0.1": "",
+	} {
+		if got := hostNote(host); got != want {
+			t.Errorf("hostNote(%q) = %q, want %q", host, got, want)
+		}
+	}
+}
+
+// TestRenderPage_DetailFlagsBroadHosts: broad allowed_hosts entries carry a
+// badge on the listing and detail pages, and the host text stays escaped.
+func TestRenderPage_DetailFlagsBroadHosts(t *testing.T) {
+	srv := newFixtureServer(t)
+	srv.index.Store(func(w http.ResponseWriter) {
+		w.Write([]byte(`[{"name":"broad","display_name":"Broad","description":"x","version":"1","install_type":"wasm","runtime":"wasm","allowed_hosts":["api.example.test","*","10.0.0.1","<b>x</b>"],"detail_url":""}]`))
+	})
+	p := New()
+	p.fetcher = NewFetcher(srv.Client())
+	settings := map[string]string{"index_url": srv.URL + "/index.json"}
+	for _, sub := range []string{"", "broad"} {
+		ctx, _ := newRenderCtx(t, "/plugins/"+sub, sub, settings)
+		_, data := p.RenderPage(ctx, PageType)
+		html, _ := data["plugin_content"].(string)
+		for _, want := range []string{"api.example.test", "* <span class=\"badge text-bg-warning\">any host</span>", "10.0.0.1 <span class=\"badge text-bg-warning\">local network</span>", "&lt;b&gt;x&lt;/b&gt;"} {
+			if !strings.Contains(html, want) {
+				t.Errorf("sub-path %q: missing %q in:\n%s", sub, want, html)
+			}
+		}
+		if strings.Contains(html, "<b>x</b>") {
+			t.Errorf("sub-path %q: host names must be escaped:\n%s", sub, html)
+		}
+	}
+}
+
 func TestRenderPage_DetailFetchFails(t *testing.T) {
 	srv := newFixtureServer(t)
 	srv.detail.Store(func(w http.ResponseWriter) { w.WriteHeader(http.StatusInternalServerError) })

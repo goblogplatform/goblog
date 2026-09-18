@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"goblog/plugin"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -257,7 +259,23 @@ func TestStoreHostFunctions(t *testing.T) {
 }
 
 func TestHTTPAllowedHosts(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("pong")) }))
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/redirect":
+			// Same server, different host name: reachable, but not on the
+			// plugin's allow-list. Without a redirect check the plugin would
+			// get "pong" from a host it was never allowed to talk to.
+			u, _ := url.Parse(srv.URL)
+			http.Redirect(w, r, "http://localhost:"+u.Port()+"/ping", http.StatusFound)
+		case "/redirect-invalid":
+			http.Redirect(w, r, "http://example.invalid/x", http.StatusFound)
+		case "/redirect-same":
+			http.Redirect(w, r, "/ping", http.StatusFound)
+		default:
+			w.Write([]byte("pong"))
+		}
+	}))
 	defer srv.Close()
 	settings := map[string]string{"enabled": "true"}
 
@@ -270,10 +288,85 @@ func TestHTTPAllowedHosts(t *testing.T) {
 	if tmpl, _ := denied.RenderPage(hookCtx(settings, "/echo/http?url="+srv.URL+"/ping", "http"), "echo"); tmpl != "" {
 		t.Errorf("no allowed hosts → request must fail and the page decline, got %q", tmpl)
 	}
+
+	// Redirects are re-checked against the allow-list on every hop.
+	for _, sub := range []string{"/redirect", "/redirect-invalid"} {
+		if tmpl, data := allowed.RenderPage(hookCtx(settings, "/echo/http?url="+srv.URL+sub, "http"), "echo"); tmpl != "" {
+			t.Errorf("%s: a redirect off the allowed hosts must fail and the page decline, got %q %v", sub, tmpl, data)
+		}
+	}
+	_, data = allowed.RenderPage(hookCtx(settings, "/echo/http?url="+srv.URL+"/redirect-same", "http"), "echo")
+	if html, _ := data["plugin_content"].(string); html != "status=200 body=pong" {
+		t.Errorf("redirect within the allowed host: %q", html)
+	}
+}
+
+func TestCheckRedirect(t *testing.T) {
+	if http.DefaultClient.CheckRedirect == nil {
+		t.Fatal("init should have installed the redirect check on http.DefaultClient")
+	}
+	for _, tc := range []struct {
+		allowed []string
+		host    string
+		ok      bool
+	}{
+		{[]string{"api.example.test"}, "api.example.test", true},
+		{[]string{"api.example.test"}, "evil.example.test", false},
+		{[]string{"*.example.test"}, "api.example.test", true},
+		{[]string{"*.example.test"}, "example.org", false},
+		{[]string{"*"}, "anything.example", true},
+		{nil, "api.example.test", false},
+	} {
+		if got := hostAllowed(tc.allowed, tc.host); got != tc.ok {
+			t.Errorf("hostAllowed(%v, %q) = %v, want %v", tc.allowed, tc.host, got, tc.ok)
+		}
+	}
+	// No plugin on the context: net/http's default 10-hop rule.
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/", nil)
+	if err := checkRedirect(req, make([]*http.Request, 9)); err != nil {
+		t.Errorf("9 hops without a plugin should be fine: %v", err)
+	}
+	if err := checkRedirect(req, make([]*http.Request, 10)); err == nil {
+		t.Error("10 hops should stop")
+	}
+}
+
+func TestOnInit_StoredSettings(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&plugin.PluginSetting{PluginName: "echo", Key: "greeting", Value: "custom"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	st := newMemStore()
+	p := loadEcho(t, Options{Store: st})
+	if err := p.OnInit(db); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := st.Get("echo", "init_greeting"); string(v) != "custom" {
+		t.Errorf("on_init should see the stored value, got greeting=%q", v)
+	}
+	// Without a db the declared defaults are what on_init gets.
+	if err := p.OnInit(nil); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := st.Get("echo", "init_greeting"); string(v) != "hi" {
+		t.Errorf("on_init without a db should see the default, got greeting=%q", v)
+	}
 }
 
 func TestTimeoutAndMemoryCap(t *testing.T) {
-	p := loadEcho(t, Options{})
+	var mu sync.Mutex
+	var logged []string
+	p := loadEcho(t, Options{Logf: func(f string, a ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		logged = append(logged, fmt.Sprintf(f, a...))
+	}})
 	settings := map[string]string{"enabled": "true"}
 	old := callTimeout
 	callTimeout = 300 * time.Millisecond
@@ -285,11 +378,50 @@ func TestTimeoutAndMemoryCap(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Error("timeout did not interrupt the plugin")
 	}
-	// After a timeout the instance is unusable; the adapter must report that
-	// clearly rather than hang or panic.
-	if tmpl, _ := p.RenderPage(hookCtx(settings, "/echo", ""), "echo"); tmpl != "" {
-		t.Log("instance recovered after timeout (acceptable)")
+	// The timeout closed the instance; the next call re-creates it and the
+	// plugin keeps working.
+	if tmpl, data := p.RenderPage(hookCtx(settings, "/echo", ""), "echo"); tmpl != "page_content.html" || data["plugin_content"] != "<h2>echo</h2>" {
+		t.Errorf("instance should have been re-created after the timeout, got %q %v", tmpl, data)
 	}
+	joined := strings.Join(logged, "\n")
+	if !strings.Contains(joined, "plugin echo: instance re-created after it was closed") {
+		t.Errorf("expected the re-creation to be logged, got:\n%s", joined)
+	}
+	// A second timeout inside the back-off window is not re-created: the
+	// plugin declines until the window passes, reported once.
+	if tmpl, _ := p.RenderPage(hookCtx(settings, "/echo/spin", "spin"), "echo"); tmpl != "" {
+		t.Error("second spin should be interrupted and decline")
+	}
+	for range 2 {
+		if tmpl, _ := p.RenderPage(hookCtx(settings, "/echo", ""), "echo"); tmpl != "" {
+			t.Errorf("within the back-off window the closed instance must decline, got %q", tmpl)
+		}
+	}
+	joined = strings.Join(logged, "\n")
+	if n := strings.Count(joined, "instance closed (timeout or exit)"); n != 1 {
+		t.Errorf("expected exactly one 'instance closed' line, got %d in:\n%s", n, joined)
+	}
+	if n := strings.Count(joined, "instance re-created"); n != 1 {
+		t.Errorf("expected exactly one re-creation, got %d in:\n%s", n, joined)
+	}
+	// Once the window has passed it is re-created again.
+	p.mu.Lock()
+	p.reinstantiatedAt = time.Now().Add(-reinstantiateBackoff)
+	p.mu.Unlock()
+	if tmpl, _ := p.RenderPage(hookCtx(settings, "/echo", ""), "echo"); tmpl != "page_content.html" {
+		t.Errorf("after the back-off window the instance should be re-created, got %q", tmpl)
+	}
+	// Close is final and idempotent.
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
+	}
+	if tmpl, _ := p.RenderPage(hookCtx(settings, "/echo", ""), "echo"); tmpl != "" {
+		t.Errorf("a closed plugin must not be re-created, got %q", tmpl)
+	}
+
 	p2 := loadEcho(t, Options{})
 	if tmpl, _ := p2.RenderPage(hookCtx(settings, "/echo/big", "big"), "echo"); tmpl != "" {
 		t.Error("200 MB allocation should exceed the memory cap and decline")

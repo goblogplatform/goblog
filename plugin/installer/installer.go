@@ -339,11 +339,17 @@ func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 	if i.isRegistered(name) {
 		return Result{}, ErrAlreadyInstalled
 	}
+	path := i.wasmPath(e.Name)
+	// Nothing registered under this name, yet a module is sitting at its
+	// path: an operator-dropped file, or one that failed to load at boot.
+	// Overwriting it silently would hide that; refuse and say so.
+	if _, err := os.Stat(path); err == nil {
+		return Result{}, fmt.Errorf("%w: a file for %q already exists in plugins/wasm; remove it first", ErrAlreadyInstalled, e.Name)
+	}
 	src, p, err := i.fetchAndCheck(ctx, e)
 	if err != nil {
 		return Result{}, err
 	}
-	path := i.wasmPath(e.Name)
 	if err := writeModule(path, src, e.AllowedHosts); err != nil {
 		closePlugin(p)
 		return Result{}, err
@@ -452,7 +458,7 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 }
 
 // Uninstall unregisters a dynamic plugin, releases its instance and deletes
-// its files, settings and stored data.
+// its files, settings, stored data and the pages it declared.
 func (i *Installer) Uninstall(name string) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -464,9 +470,13 @@ func (i *Installer) Uninstall(name string) error {
 		return ErrNotInstalled
 	}
 	var old plugin.Plugin
+	var pageTypes []string
 	for _, rp := range i.Registry.Plugins() {
 		if rp.Name() == name {
 			old = rp
+			for _, pg := range rp.Pages() {
+				pageTypes = append(pageTypes, pg.PageType)
+			}
 		}
 	}
 	if err := i.Registry.Unregister(name); err != nil {
@@ -484,6 +494,12 @@ func (i *Installer) Uninstall(name string) error {
 	i.Registry.DeleteSettings(name)
 	if err := i.Registry.Store().DeleteAll(name); err != nil {
 		log.Printf("Uninstall %s: deleting stored data failed: %v", name, err)
+	}
+	// The registry created a page row for each page the plugin declared;
+	// without the plugin those would stay enabled and in the nav as empty
+	// pages.
+	if err := i.Registry.DeletePages(pageTypes); err != nil {
+		log.Printf("Uninstall %s: deleting its pages failed: %v", name, err)
 	}
 	log.Printf("Uninstalled plugin %s", name)
 	return nil
@@ -512,7 +528,7 @@ func writeModule(path string, src []byte, allowedHosts []string) error {
 		os.Remove(wasm.SidecarPath(path)) // whatever a partial write left behind
 		return fmt.Errorf("%w: %v", ErrWrite, err)
 	}
-	if err := writeAtomic(path, src); err != nil {
+	if err := wasm.WriteAtomic(path, src); err != nil {
 		removeModule(path)
 		return fmt.Errorf("%w: %v", ErrWrite, err)
 	}
@@ -704,35 +720,4 @@ func (i *Installer) probeDirWritable() (bool, string) {
 		return false, removeErr.Error()
 	}
 	return true, ""
-}
-
-// writeAtomic writes via a temp file in the same directory and renames it
-// into place, so a crash never leaves a half-written plugin.
-func writeAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".plugin-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Chmod(tmpName, 0644); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	return nil
 }

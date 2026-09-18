@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"goblog/blog"
 	"goblog/plugin"
 	"goblog/plugin/wasm"
 	"goblog/plugins/directory"
@@ -158,8 +159,18 @@ func (f *fixture) wasmEntries() []map[string]any {
 
 func newInstaller(t *testing.T, f *fixture) *Installer {
 	t.Helper()
+	inst, _ := newInstallerDB(t, f)
+	return inst
+}
+
+// newInstallerDB also returns the registry's database for direct queries.
+func newInstallerDB(t *testing.T, f *fixture) (*Installer, *gorm.DB) {
+	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&blog.Page{}); err != nil {
 		t.Fatal(err)
 	}
 	reg := plugin.NewRegistry(db)
@@ -176,7 +187,7 @@ func newInstaller(t *testing.T, f *fixture) *Installer {
 		Enabled:     true,
 		WasmEnabled: true,
 		IndexURL:    func() string { return f.srv.URL + "/index.json" },
-	}
+	}, db
 }
 
 // setting returns the current value of one plugin setting, "" if unset.
@@ -277,7 +288,7 @@ func TestStatus_DirectoryUnavailable(t *testing.T) {
 func TestInstallWasm_HappyPathAndUninstall(t *testing.T) {
 	f := newFixture(t)
 	f.entries = []map[string]any{f.wasmEntry("echo", "1.2.3", []string{"api.example.test"})}
-	inst := newInstaller(t, f)
+	inst, db := newInstallerDB(t, f)
 	ctx := context.Background()
 
 	res, err := inst.Install(ctx, "echo")
@@ -306,6 +317,12 @@ func TestInstallWasm_HappyPathAndUninstall(t *testing.T) {
 	if v, _, _ := inst.Registry.Store().Get("echo", "init"); string(v) != "1" {
 		t.Error("on_init should have written to the store")
 	}
+	// The registry created the page the plugin declares.
+	var count int64
+	db.Model(&blog.Page{}).Where("page_type = ?", "echo").Count(&count)
+	if count != 1 {
+		t.Fatalf("expected the echo page row after install, got %d", count)
+	}
 
 	if err := inst.Uninstall("echo"); err != nil {
 		t.Fatal(err)
@@ -318,6 +335,43 @@ func TestInstallWasm_HappyPathAndUninstall(t *testing.T) {
 	}
 	if keys, _ := inst.Registry.Store().List("echo", ""); len(keys) != 0 {
 		t.Error("store rows should be deleted on uninstall")
+	}
+	db.Model(&blog.Page{}).Where("page_type = ?", "echo").Count(&count)
+	if count != 0 {
+		t.Errorf("the plugin's page row should be deleted on uninstall, got %d", count)
+	}
+}
+
+// TestInstall_RefusesExistingFile: a module already sitting at
+// plugins/wasm/<name>.wasm that no registered plugin owns (dropped by hand,
+// or one that failed to load at boot) is not silently overwritten.
+func TestInstall_RefusesExistingFile(t *testing.T) {
+	f := newFixture(t)
+	f.entries = f.wasmEntries()
+	inst := newInstaller(t, f)
+	path := filepath.Join(inst.WasmDir, "echo.wasm")
+	if err := os.WriteFile(path, []byte("stray"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	inst.Status() // caches the index so the only request Install could make is the download
+	hits := f.hits.Load()
+	_, err := inst.Install(context.Background(), "echo")
+	if !errors.Is(err, ErrAlreadyInstalled) || !strings.Contains(err.Error(), "remove it first") {
+		t.Fatalf("expected an already-installed error naming the file, got %v", err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "stray" {
+		t.Error("the existing file must be left untouched")
+	}
+	if len(inst.Registry.Dynamic()) != 0 {
+		t.Error("nothing may be registered")
+	}
+	if f.hits.Load() != hits {
+		t.Error("nothing should be downloaded when the file already exists")
+	}
+	// Once the stray file is gone the install goes through.
+	os.Remove(path)
+	if _, err := inst.Install(context.Background(), "echo"); err != nil {
+		t.Fatalf("install after removing the file: %v", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -197,6 +198,16 @@ func initPlugin(db *gorm.DB, p Plugin) error {
 	return nil
 }
 
+// slugPattern is what a plugin-declared page slug may look like: it becomes
+// a top-level URL path segment.
+var slugPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// reservedSlugs are top-level paths goblog itself serves; a plugin page
+// there would shadow (or be shadowed by) them.
+var reservedSlugs = map[string]bool{
+	"admin": true, "api": true, "login": true, "logout": true, "search": true, "theme": true, "wizard": true,
+}
+
 // ensurePages creates a blog.Page row for each page a plugin declares via
 // Pages() that doesn't have one yet, keyed by page_type. Compiled-in plugins
 // with real database access (e.g. plugins/directory) can and do create their
@@ -205,13 +216,22 @@ func initPlugin(db *gorm.DB, p Plugin) error {
 // itself. This mirrors what plugins/directory's own OnInit does, and runs
 // before OnInit so a plugin's own (redundant but harmless) page-creation
 // logic just finds the page already there. A slug already used by a
-// different page type is left alone and logged, same as directory.OnInit.
+// different page type is left alone and logged, same as directory.OnInit;
+// so is a slug that is not a plain path segment or is one goblog reserves.
 func ensurePages(db *gorm.DB, p Plugin) {
 	if db == nil {
 		return
 	}
 	for _, pd := range p.Pages() {
 		if pd.PageType == "" || pd.Slug == "" {
+			continue
+		}
+		if !slugPattern.MatchString(pd.Slug) {
+			log.Printf("Plugin %s: page slug %q is not a plain path segment ([a-z0-9-]); no page created", p.Name(), pd.Slug)
+			continue
+		}
+		if reservedSlugs[pd.Slug] {
+			log.Printf("Plugin %s: page slug %q is reserved by goblog; no page created", p.Name(), pd.Slug)
 			continue
 		}
 		var existing blog.Page
@@ -245,6 +265,21 @@ func ensurePages(db *gorm.DB, p Plugin) {
 		}
 		log.Printf("Plugin %s: created page %q", p.Name(), pd.Slug)
 	}
+}
+
+// DeletePages removes the blog.Page rows of the given page types — what
+// ensurePages created for a plugin that is now being uninstalled.
+func (r *Registry) DeletePages(pageTypes []string) error {
+	if len(pageTypes) == 0 {
+		return nil
+	}
+	r.mu.RLock()
+	db := r.db
+	r.mu.RUnlock()
+	if db == nil {
+		return nil
+	}
+	return db.Where("page_type IN ?", pageTypes).Delete(&blog.Page{}).Error
 }
 
 // InitPlugin seeds settings, runs OnInit and starts the scheduled jobs of one
@@ -334,11 +369,15 @@ func (r *Registry) DeleteSettings(name string) {
 
 // getPluginSettings returns a plugin's settings as a simple key→value map.
 func (r *Registry) getPluginSettings(pluginName string) map[string]string {
-	if r.db == nil {
+	return pluginSettings(r.db, pluginName)
+}
+
+func pluginSettings(db *gorm.DB, pluginName string) map[string]string {
+	if db == nil {
 		return make(map[string]string)
 	}
 	var settings []PluginSetting
-	r.db.Where("plugin_name = ?", pluginName).Find(&settings)
+	db.Where("plugin_name = ?", pluginName).Find(&settings)
 	result := make(map[string]string)
 	for _, s := range settings {
 		result[s.Key] = s.Value
@@ -348,12 +387,16 @@ func (r *Registry) getPluginSettings(pluginName string) map[string]string {
 
 // InjectTemplateData gathers data from all plugins and merges it into
 // the template data map. Adds "plugins", "plugin_head_html", and
-// "plugin_footer_html" keys.
+// "plugin_footer_html" keys. The plugin list is snapshotted and the lock
+// released before any hook runs: a slow (or stuck-until-timeout) wasm
+// plugin must not hold up registration, uninstall or every other request.
 func (r *Registry) InjectTemplateData(c *gin.Context, templateName string, data gin.H) gin.H {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	plugins := r.plugins // rebuilt, never mutated, on change
+	db := r.db
+	r.mu.RUnlock()
 
-	if r.db == nil {
+	if db == nil {
 		return data
 	}
 
@@ -361,11 +404,11 @@ func (r *Registry) InjectTemplateData(c *gin.Context, templateName string, data 
 	headHTML := ""
 	footerHTML := ""
 
-	for _, p := range r.plugins {
-		settings := r.getPluginSettings(p.Name())
+	for _, p := range plugins {
+		settings := pluginSettings(db, p.Name())
 		ctx := &HookContext{
 			GinContext: c,
-			DB:         r.db,
+			DB:         db,
 			Settings:   settings,
 			Template:   templateName,
 			Data:       data,
@@ -431,16 +474,20 @@ func (r *Registry) GetPagePlugin(pageType string) Plugin {
 // its data, and whether the request was handled. A plugin handles a request
 // either by returning a template name or by writing the response itself
 // (for example JSON), in which case the template name is empty and the
-// caller must not render anything.
+// caller must not render anything. The registry lock is not held while the
+// plugin renders (GetPagePlugin releases it before returning).
 func (r *Registry) RenderPluginPage(c *gin.Context, pageType, subPath string) (string, gin.H, bool) {
 	p := r.GetPagePlugin(pageType)
 	if p == nil {
 		return "", nil, false
 	}
-	settings := r.getPluginSettings(p.Name())
+	r.mu.RLock()
+	db := r.db
+	r.mu.RUnlock()
+	settings := pluginSettings(db, p.Name())
 	ctx := &HookContext{
 		GinContext: c,
-		DB:         r.db,
+		DB:         db,
 		Settings:   settings,
 		Template:   pageType,
 		SubPath:    subPath,

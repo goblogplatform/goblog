@@ -305,6 +305,79 @@ func TestInit_LeavesSlugCollisionToTheOperator(t *testing.T) {
 	}
 }
 
+// slugPlugin declares one page at an arbitrary slug.
+type slugPlugin struct {
+	plugin.BasePlugin
+	slug string
+}
+
+func (p *slugPlugin) Name() string        { return "slugger" }
+func (p *slugPlugin) DisplayName() string { return "Slugger" }
+func (p *slugPlugin) Version() string     { return "1.0.0" }
+func (p *slugPlugin) Pages() []plugin.PageDefinition {
+	return []plugin.PageDefinition{{PageType: "slugger", Title: "Slugger", Slug: p.slug}}
+}
+
+// TestInit_RefusesReservedAndMalformedSlugs: a plugin cannot claim a
+// top-level path goblog serves itself, nor one that is not a plain path
+// segment.
+func TestInit_RefusesReservedAndMalformedSlugs(t *testing.T) {
+	for _, slug := range []string{"admin", "api", "login", "logout", "search", "theme", "wizard", "Bad Slug", "a/b", "../x"} {
+		db, err := gorm.Open(sqlite.Open(":memory:"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+			t.Fatal(err)
+		}
+		reg := plugin.NewRegistry(db)
+		reg.Register(&slugPlugin{slug: slug})
+		if err := reg.Init(); err != nil {
+			t.Fatal(err)
+		}
+		var count int64
+		db.Model(&blog.Page{}).Where("page_type = ?", "slugger").Count(&count)
+		if count != 0 {
+			t.Errorf("slug %q: expected no page to be created, got %d", slug, count)
+		}
+	}
+}
+
+// TestDeletePages removes what ensurePages created (uninstall) and leaves
+// other pages alone.
+func TestDeletePages(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&blog.Page{Title: "About", Slug: "about", PageType: "about", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	reg.Register(&pagePlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.DeletePages(nil); err != nil {
+		t.Errorf("DeletePages(nil): %v", err)
+	}
+	if err := reg.DeletePages([]string{"pager"}); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	db.Model(&blog.Page{}).Where("page_type = ?", "pager").Count(&count)
+	if count != 0 {
+		t.Errorf("expected the plugin's page to be deleted, got %d", count)
+	}
+	db.Model(&blog.Page{}).Count(&count)
+	if count != 1 {
+		t.Errorf("expected the about page to survive, got %d pages", count)
+	}
+}
+
 // jobPlugin counts how often its 10ms job runs.
 type jobPlugin struct {
 	plugin.BasePlugin

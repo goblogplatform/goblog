@@ -10,13 +10,13 @@ import (
 	"goblog/plugin/wasm"
 )
 
-// runValidatePlugin implements `goblog validate-plugin <file.go>`: it loads
-// the file through the dynamic plugin loader and prints the plugin's identity
-// as JSON. Returns the process exit code. The plugin registry's CI runs this
+// runValidatePlugin implements `goblog validate-plugin <file.go|file.wasm>`:
+// it loads the file through the matching plugin loader and prints the
+// plugin's identity as JSON. Returns the process exit code. The plugin registry's CI runs this
 // against the release Docker image to check a submission before listing it.
 func runValidatePlugin(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
-		fmt.Fprintln(stderr, "usage: goblog validate-plugin <file.go>")
+		fmt.Fprintln(stderr, "usage: goblog validate-plugin <file.go|file.wasm>")
 		return 2
 	}
 	var info gplugin.Info

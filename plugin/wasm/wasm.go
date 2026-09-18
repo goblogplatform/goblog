@@ -53,10 +53,15 @@ func init() {
 	extism.SetLogLevel(extism.LogLevelInfo)
 }
 
+// reinstantiateBackoff is the minimum gap between two re-creations of a
+// plugin's instance after a timeout closed it (see call).
+const reinstantiateBackoff = 30 * time.Second
+
 // Plugin is a loaded WebAssembly plugin. It implements plugin.Plugin.
 type Plugin struct {
 	mu                sync.Mutex
 	ext               *extism.Plugin
+	data              []byte // module bytes, kept so a closed instance can be re-created
 	opts              Options
 	name              string
 	identity          Identity
@@ -65,7 +70,9 @@ type Plugin struct {
 	jobs              []jobDef
 	exports           map[string]bool // export presence, read once at load
 	hasEnabledSetting bool
-	closedLogged      bool // "instance closed" warning already emitted (under mu)
+	closed            bool      // Close() was called (under mu)
+	closedLogged      bool      // "instance closed" warning already emitted (under mu)
+	reinstantiatedAt  time.Time // last time call re-created the instance (under mu)
 }
 
 // Load reads a .wasm file and instantiates it.
@@ -90,31 +97,12 @@ func LoadBytes(data []byte, opts Options) (*Plugin, error) {
 	if opts.Logf == nil {
 		opts.Logf = log.Printf
 	}
-	p := &Plugin{opts: opts}
-	manifest := extism.Manifest{
-		Wasm:         []extism.Wasm{extism.WasmData{Data: data}},
-		AllowedHosts: opts.AllowedHosts,
-		Memory:       &extism.ManifestMemory{MaxPages: memoryPages, MaxHttpResponseBytes: maxHTTPResponseBytes},
-		// Non-zero so the runtime is built with close-on-context-done; the
-		// effective timeout is set per call (see call).
-		Timeout: uint64(callTimeout / time.Millisecond),
-	}
-	config := extism.PluginConfig{
-		EnableWasi: true,
-		// The SDK layers close-on-context-done and the memory limit on top.
-		RuntimeConfig: wazero.NewRuntimeConfig().WithCompilationCache(compilationCache),
-		// Real clock, sleep and randomness: wazero's defaults are a fake
-		// clock starting in 2022, a no-op sleep and a fixed-seed RNG.
-		ModuleConfig: wazero.NewModuleConfig().WithSysWalltime().WithSysNanotime().WithSysNanosleep().WithRandSource(rand.Reader),
-	}
-	ext, err := extism.NewPlugin(context.Background(), manifest, config, hostFunctions(p))
+	p := &Plugin{opts: opts, data: data}
+	ext, err := p.instantiate()
 	if err != nil {
-		return nil, fmt.Errorf("wasm plugin: %w", err)
+		return nil, err
 	}
 	p.ext = ext
-	ext.SetLogger(func(level extism.LogLevel, msg string) {
-		p.opts.Logf("plugin %s: %s: %s", p.displayForLog(), level, msg)
-	})
 	p.exports = map[string]bool{}
 	for _, name := range []string{"identity", "settings", "pages", "jobs", "template_head", "template_footer", "template_data", "render_page", "run_job", "on_init"} {
 		p.exports[name] = ext.FunctionExists(name)
@@ -159,6 +147,36 @@ func LoadBytes(data []byte, opts Options) (*Plugin, error) {
 	return p, nil
 }
 
+// instantiate builds a fresh Extism instance from the module bytes with the
+// plugin's manifest, config and host functions. Used at load and again by
+// call when a timeout has closed the running instance.
+func (p *Plugin) instantiate() (*extism.Plugin, error) {
+	manifest := extism.Manifest{
+		Wasm:         []extism.Wasm{extism.WasmData{Data: p.data}},
+		AllowedHosts: p.opts.AllowedHosts,
+		Memory:       &extism.ManifestMemory{MaxPages: memoryPages, MaxHttpResponseBytes: maxHTTPResponseBytes},
+		// Non-zero so the runtime is built with close-on-context-done; the
+		// effective timeout is set per call (see call).
+		Timeout: uint64(callTimeout / time.Millisecond),
+	}
+	config := extism.PluginConfig{
+		EnableWasi: true,
+		// The SDK layers close-on-context-done and the memory limit on top.
+		RuntimeConfig: wazero.NewRuntimeConfig().WithCompilationCache(compilationCache),
+		// Real clock, sleep and randomness: wazero's defaults are a fake
+		// clock starting in 2022, a no-op sleep and a fixed-seed RNG.
+		ModuleConfig: wazero.NewModuleConfig().WithSysWalltime().WithSysNanotime().WithSysNanosleep().WithRandSource(rand.Reader),
+	}
+	ext, err := extism.NewPlugin(context.Background(), manifest, config, hostFunctions(p))
+	if err != nil {
+		return nil, fmt.Errorf("wasm plugin: %w", err)
+	}
+	ext.SetLogger(func(level extism.LogLevel, msg string) {
+		p.opts.Logf("plugin %s: %s: %s", p.displayForLog(), level, msg)
+	})
+	return ext, nil
+}
+
 func (p *Plugin) displayForLog() string {
 	if p.name != "" {
 		return p.name
@@ -166,10 +184,17 @@ func (p *Plugin) displayForLog() string {
 	return "(loading)"
 }
 
-// Close releases the instance.
+// errClosed is returned by call after Close.
+var errClosed = errors.New("wasm plugin: instance closed")
+
+// Close releases the instance. Calling it again is a no-op.
 func (p *Plugin) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		return nil
+	}
+	p.closed = true
 	return p.ext.Close(context.Background())
 }
 
@@ -185,24 +210,61 @@ func (p *Plugin) AllowedHosts() []string { return p.opts.AllowedHosts }
 // The timeout has one mechanism: ext.Timeout, which CallWithContext turns
 // into a context deadline that wazero (built with close-on-context-done)
 // enforces by closing the module. After that every later call fails with
-// "module is closed". That is reported once, clearly; the caller keeps
-// declining until the plugin is reinstalled or goblog restarts.
+// "module is closed". The first such call re-creates the instance from the
+// module bytes and retries once, so one slow request does not take the
+// plugin down for good; a plugin that keeps timing out is re-created at
+// most once per reinstantiateBackoff and declines in between, reported
+// once per closed instance.
 func (p *Plugin) call(name string, input []byte, timeout time.Duration) ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		return nil, errClosed
+	}
+	out, err := p.callLocked(name, input, timeout)
+	if err == nil || err.Error() != "module is closed" {
+		return out, err
+	}
+	if p.reinstantiateLocked() {
+		return p.callLocked(name, input, timeout)
+	}
+	if !p.closedLogged {
+		p.closedLogged = true
+		p.opts.Logf("plugin %s: instance closed (timeout or exit); it is re-created at most once per %s", p.displayForLog(), reinstantiateBackoff)
+	}
+	return nil, err
+}
+
+func (p *Plugin) callLocked(name string, input []byte, timeout time.Duration) ([]byte, error) {
 	p.ext.Timeout = timeout
 	code, out, err := p.ext.CallWithContext(context.Background(), name, input)
 	if err != nil {
-		if err.Error() == "module is closed" && !p.closedLogged {
-			p.closedLogged = true
-			p.opts.Logf("plugin %s: instance closed (timeout or exit); reinstall or restart to recover", p.displayForLog())
-		}
 		return nil, err
 	}
 	if code != 0 {
 		return nil, fmt.Errorf("%s returned %d: %s", name, code, p.ext.GetError())
 	}
 	return out, nil
+}
+
+// reinstantiateLocked replaces a closed instance with a fresh one unless one
+// was already re-created within reinstantiateBackoff. Reports whether the
+// caller may retry.
+func (p *Plugin) reinstantiateLocked() bool {
+	if !p.reinstantiatedAt.IsZero() && time.Since(p.reinstantiatedAt) < reinstantiateBackoff {
+		return false
+	}
+	ext, err := p.instantiate()
+	if err != nil {
+		p.opts.Logf("plugin %s: re-creating the instance failed: %v", p.displayForLog(), err)
+		return false
+	}
+	p.ext.Close(context.Background()) // releases the compiled module and runtime
+	p.ext = ext
+	p.reinstantiatedAt = time.Now()
+	p.closedLogged = false
+	p.opts.Logf("plugin %s: instance re-created after it was closed", p.displayForLog())
+	return true
 }
 
 func (p *Plugin) callJSON(name string, input any, out any, timeout time.Duration) error {
@@ -321,14 +383,24 @@ func (p *Plugin) TemplateData(ctx *plugin.HookContext) gin.H {
 	return gin.H(data)
 }
 
-// OnInit calls on_init with the plugin's default settings (see initInput).
-func (p *Plugin) OnInit(_ *gorm.DB) error {
+// OnInit calls on_init with the plugin's current settings: the declared
+// defaults overlaid with whatever is stored for it (see initInput).
+func (p *Plugin) OnInit(db *gorm.DB) error {
 	if !p.exports["on_init"] {
 		return nil
 	}
 	settings := map[string]string{}
 	for _, s := range p.settings {
 		settings[s.Key] = s.DefaultValue
+	}
+	if db != nil {
+		var stored []plugin.PluginSetting
+		if err := db.Where("plugin_name = ?", p.name).Find(&stored).Error; err != nil {
+			return fmt.Errorf("wasm plugin %s: on_init: load settings: %w", p.name, err)
+		}
+		for _, s := range stored {
+			settings[s.Key] = s.Value
+		}
 	}
 	if err := p.callJSON("on_init", initInput{Settings: settings}, nil, jobTimeout); err != nil {
 		return fmt.Errorf("wasm plugin %s: on_init: %w", p.name, err)
