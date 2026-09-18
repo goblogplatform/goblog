@@ -100,7 +100,7 @@
         '<td><strong>' + esc(p.display_name) + '</strong><br><small class="text-muted">' + esc(p.name) + '</small></td>' +
         '<td>v' + esc(p.version) + '</td>' +
         '<td>' + (p.dynamic ? '<span class="badge text-bg-secondary">dynamic</span>' : '<span class="badge text-bg-light">built-in</span>') + '</td>' +
-        '<td><div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-toggle-enabled data-name="' + esc(p.name) + '" ' + (p.enabled ? "checked" : "") + '></div></td>' +
+        '<td><div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-toggle-enabled data-name="' + esc(p.name) + '" aria-label="Enable ' + esc(p.display_name) + '" ' + (p.enabled ? "checked" : "") + '></div></td>' +
         '<td class="text-end">' + actions + '<div class="small text-danger row-error"></div></td></tr>';
     });
     document.getElementById("installed-rows").innerHTML = rows.join("") || '<tr><td colspan="5" class="text-muted">No plugins registered.</td></tr>';

@@ -59,7 +59,7 @@
       } else {
         resp.json().then(function(msg) { alert(msg || "Request failed."); }, function() { alert("Request failed."); });
       }
-    });
+    }).catch(function() { alert("Request failed: could not reach the server."); });
   }
   function promoteAdmin(id) { changeAdmin("POST", id, "Make this user an admin?"); }
   function demoteAdmin(id) { changeAdmin("DELETE", id, "Remove admin from this user?"); }
