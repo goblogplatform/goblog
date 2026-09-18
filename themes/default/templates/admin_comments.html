@@ -58,7 +58,7 @@
       } else {
         alert("Failed to delete comment.");
       }
-    });
+    }).catch(function() { alert("Failed to delete comment: could not reach the server."); });
   }
 </script>
 {{ template "footer.html" .}}
