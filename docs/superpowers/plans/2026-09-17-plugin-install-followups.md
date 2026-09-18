@@ -200,7 +200,7 @@ jobs:
           set -e
           cat result.txt
           if grep -Fxq "$REPO: built" result.txt; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; fi
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: result
@@ -221,8 +221,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           token: ${{ secrets.SUBMIT_TOKEN || secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v6
-        if: needs.check.result != 'failure' || true
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: result
@@ -260,9 +259,7 @@ $out
 \`\`\`"
           fi
 ```
-Check current majors for `actions/upload-artifact` and `actions/download-artifact` (`gh api repos/actions/<name>/releases/latest --jq .tag_name`) and adjust the `@vN` if they differ.
-
-Simplify the download step's `if:` to just `continue-on-error: true` (drop the odd `|| true` expression) before committing.
+Action majors above are current as of 2026-09-17 (`checkout@v7`, `setup-go@v7`, `upload-artifact@v7`, `download-artifact@v8`); re-check with `gh api repos/actions/<name>/releases/latest --jq .tag_name` if this plan is executed later.
 
 - [ ] **Step 3: Docs + repo setting**
 
