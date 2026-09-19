@@ -378,7 +378,12 @@ const (
 // getter performs an HTTP GET; the wasm build uses the PDK, tests inject a fake.
 type getter func(url string, headers map[string]string) (status int, body []byte, err error)
 
-// fetchAll pages through an author's papers until limit is reached.
+// maxPages bounds pagination; 10 pages × 100 papers is far beyond any article_limit.
+const maxPages = 10
+
+// fetchAll pages through an author's papers, sorts them newest first, and
+// keeps the first limit entries. All pages are read before truncating so
+// "limit" means the newest N, not the API's first N.
 func fetchAll(get getter, authorID, apiKey string, limit int) ([]Article, error) {
 	if authorID == "" {
 		return nil, errors.New("semantic scholar author id is empty")
@@ -389,7 +394,7 @@ func fetchAll(get getter, authorID, apiKey string, limit int) ([]Article, error)
 	}
 	var out []Article
 	offset := 0
-	for len(out) < limit {
+	for page := 0; page < maxPages; page++ {
 		u := fmt.Sprintf("%s/author/%s/papers?fields=%s&limit=%d&offset=%d", apiBase, url.PathEscape(authorID), fields, pageSize, offset)
 		status, body, err := get(u, headers)
 		if err != nil {
@@ -398,20 +403,20 @@ func fetchAll(get getter, authorID, apiKey string, limit int) ([]Article, error)
 		if status != 200 {
 			return nil, fmt.Errorf("semantic scholar returned HTTP %d: %s", status, truncate(string(body), 200))
 		}
-		page, err := parsePapersPage(body)
+		p, err := parsePapersPage(body)
 		if err != nil {
 			return nil, fmt.Errorf("decode semantic scholar response: %w", err)
 		}
-		out = append(out, page.Articles...)
-		if page.Next == nil || len(page.Articles) == 0 {
+		out = append(out, p.Articles...)
+		if p.Next == nil || len(p.Articles) == 0 {
 			break
 		}
-		offset = *page.Next
+		offset = *p.Next
 	}
+	sortArticles(out)
 	if len(out) > limit {
 		out = out[:limit]
 	}
-	sortArticles(out)
 	return out, nil
 }
 
@@ -421,12 +426,9 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
-
-var _ = strconv.Itoa
 ```
-(remove the trailing `var _ = strconv.Itoa` and the `strconv` import if unused — it is; keep the file tidy.)
 
-Note: `fetchAll` sorts *after* truncation to `limit` — the API returns papers in its own order, so to honour "top N newest" sort before truncating: collect all pages until `next == nil` or a hard ceiling of 10 pages, then sort, then truncate. Implement it that way (the test's `limit=1` case then expects **1 call** only when the first page has no `next`… adjust the test: with `next: 2` on page 1 the limit-1 case makes 2 calls). Update `TestFetchAll`'s limit case to assert `len(as) == 1` and `len(calls) == 2`, and add a `maxPages = 10` guard.
+In `TestFetchAll`, the `limit=1` case therefore expects `len(as) == 1` **and** `len(calls) == 2` (both pages are read before truncating), and the kept article is the newest (`year 3`, title `c`) — assert `as[0].Title == "c"`.
 
 Run: `GOTOOLCHAIN=go1.26.1 go test ./...` → PASS (native).
 
