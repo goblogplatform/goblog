@@ -33,6 +33,28 @@ import (
 // Used to filter out pages owned by disabled plugins.
 type PageFilter func(page Page) bool
 
+// builtinPageTypes are rendered by blog itself; any other page type needs a
+// registered plugin to own it.
+var builtinPageTypes = map[string]bool{PageTypeWriting: true, PageTypeAbout: true, PageTypeCustom: true, PageTypeTags: true, PageTypeArchives: true}
+
+// PluginPageFilter hides pages whose type belongs to a disabled plugin or to
+// no plugin at all (e.g. a plugin that was uninstalled or moved to the
+// directory); such pages come back as soon as a plugin claims the type.
+func PluginPageFilter(reg interface {
+	HasPageType(string) bool
+	IsPageTypeEnabled(string) bool
+}) PageFilter {
+	return func(page Page) bool {
+		if builtinPageTypes[page.PageType] {
+			return true
+		}
+		if !reg.HasPageType(page.PageType) {
+			return false
+		}
+		return reg.IsPageTypeEnabled(page.PageType)
+	}
+}
+
 // pluginRegistry is the part of the plugin registry the blog needs to
 // resolve and render plugin-owned pages. It is looked up from the Gin
 // context (set by plugin.Middleware) so blog does not import plugin.
@@ -632,6 +654,22 @@ func (b *Blog) DynamicPage(c *gin.Context, page *Page, subPath string) {
 				})
 				return
 			}
+		}
+		if !builtinPageTypes[page.PageType] {
+			// A plugin page type nobody owns (the plugin was uninstalled or,
+			// like scholar, moved to the directory). The row stays so the page
+			// comes back when a plugin claims the type again.
+			b.Render(c, http.StatusNotFound, "error.html", gin.H{
+				"error":       "Page Not Available",
+				"description": "This page's plugin is not installed.",
+				"version":     b.Version,
+				"title":       "Not Available",
+				"recent":      b.GetLatest(),
+				"admin_page":  false,
+				"settings":    b.GetSettings(),
+				"nav_pages":   navPages,
+			})
+			return
 		}
 		// Fallback: render as custom content page
 		b.Render(c, http.StatusOK, "page_content.html", gin.H{

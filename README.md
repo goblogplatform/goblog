@@ -21,7 +21,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 
 ### Pages
 - Configurable dynamic pages (writing, research, archives, tags, about, custom)
-- Research page fed by Google Scholar or the Semantic Scholar API (`scholar` plugin), with on-disk caching and throttle resilience
+- Research page listing your publications from Semantic Scholar — install **Scholar Publications** from Admin → Plugins
 - Archives sorted by year and month
 
 ### Theming
@@ -41,7 +41,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 
 ### Plugins
 - Plugin system for injecting template data / HTML, scheduled jobs, settings, and whole pages
-- Built-in plugins: `analytics`, `socialicons`, `scholar` (research page; Google Scholar is blocked from most cloud IPs, so set its `source` setting to `semantic_scholar` when hosting in a datacenter), `directory` (the plugin directory that runs [goblog.live/plugins](https://goblog.live/plugins); off by default)
+- Built-in plugins: `analytics`, `socialicons`, `directory` (the plugin directory that runs [goblog.live/plugins](https://goblog.live/plugins); off by default)
 - Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
 - WebAssembly plugins (sandboxed, any language/dependencies) installable from the directory
 - Install plugins from the [directory](https://www.goblog.live/plugins) with one click under **Admin → Plugins**
@@ -143,10 +143,13 @@ A plugin implements the `plugin.Plugin` interface (`plugin/plugin.go`). Embed `p
 | `TemplateHead(ctx)` / `TemplateFooter(ctx)` | Return raw HTML injected into `<head>` / before `</body>` on every rendered page. Escape anything that came from settings or the request. |
 | `TemplateData(ctx)` | Returns data made available to templates as `.plugins.<name>`. |
 | `ScheduledJobs()` | Periodic background jobs (`Name`, `Interval`, `Run(db, settings)`), started at boot. |
-| `Pages()` / `RenderPage(ctx, pageType)` | Own a page type: it gets a slug, an optional nav entry, and you choose the template and data when it is visited. The plugin also owns everything under its slug: `ctx.SubPath` is `""` for `/research`, `"2024"` for `/research/2024`. Return a template name to render it inside the theme, or write the response yourself (e.g. `ctx.GinContext.JSON(...)`) and return `""`; returning `""` without writing anything gives a 404. `plugins/scholar` is the simplest example, `plugins/directory` uses sub-paths. |
+| `Pages()` / `RenderPage(ctx, pageType)` | Own a page type: it gets a slug, an optional nav entry, and you choose the template and data when it is visited. The plugin also owns everything under its slug: `ctx.SubPath` is `""` for `/research`, `"2024"` for `/research/2024`. Return a template name to render it inside the theme, or write the response yourself (e.g. `ctx.GinContext.JSON(...)`) and return `""`; returning `""` without writing anything gives a 404. `plugins/directory` is the example: it serves `/plugins`, `/plugins/<name>` and `/plugins/index.json`. |
 | `OnInit(db)` | Runs once at startup, after settings are seeded. |
 
 `ctx` is a `*plugin.HookContext` carrying the Gin context, the DB, the plugin's own settings, the template being rendered, and the existing template data. `plugins/socialicons` is the smallest complete example.
+
+#### Upgrading to 0.3.0
+The `scholar` plugin is no longer compiled in; it is now **Scholar Publications** in the plugin directory ([goblogplatform/goblog-plugin-scholar](https://github.com/goblogplatform/goblog-plugin-scholar)). After upgrading, install it from **Admin → Plugins**. Your Research page and the plugin's settings carry over (same plugin name and page type), so the page reappears in the nav as soon as the plugin is installed; until then it is hidden and `/research` answers "Page Not Available". The new plugin reads from the Semantic Scholar API only — if you were using Google Scholar, set `semantic_scholar_id` (the number at the end of your semanticscholar.org author URL) under **Admin → Settings → Scholar Publications**.
 
 ### Compiled-in plugins
 Live in `plugins/<name>/` as a normal Go package, and are registered in `main()`:

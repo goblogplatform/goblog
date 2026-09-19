@@ -1316,3 +1316,57 @@ func TestSettingValue(t *testing.T) {
 		t.Errorf("no db should return the default, got %q", got)
 	}
 }
+
+// TestUnownedPluginPageIsHidden: a page whose plugin type has no registered
+// owner (e.g. "research" after the scholar plugin moved to the directory) is
+// hidden from the nav and answers 404 until a plugin claims it again.
+func TestUnownedPluginPageIsHidden(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Page{Title: "Research", Slug: "research", PageType: "research", ShowInNav: true, Enabled: true})
+	db.Create(&blog.Page{Title: "About", Slug: "about", PageType: blog.PageTypeAbout, ShowInNav: true, Enabled: true, Content: "about"})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+	reg := plugin.NewRegistry(db) // no plugin owns "research"
+	b.PageFilter = blog.PluginPageFilter(reg)
+
+	router := gin.New()
+	router.Use(plugin.Middleware(reg))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.NoRoute(b.NoRoute)
+
+	get := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		router.ServeHTTP(w, req)
+		return w
+	}
+	if w := get("/research"); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "Page Not Available") {
+		t.Errorf("/research without an owner: code=%d", w.Code)
+	}
+	if w := get("/about"); w.Code != http.StatusOK {
+		t.Errorf("/about: code=%d", w.Code)
+	}
+	for _, p := range b.GetNavPages() {
+		if p.PageType == "research" {
+			t.Error("unowned research page must not be in the nav")
+		}
+	}
+	// A plugin claiming the type brings the page back.
+	reg.Register(&subPathPlugin{}) // owns "dir"
+	db.Create(&blog.Page{Title: "Dir", Slug: "dir", PageType: "dir", ShowInNav: true, Enabled: true})
+	reg.Init()
+	found := false
+	for _, p := range b.GetNavPages() {
+		found = found || p.PageType == "dir"
+	}
+	if !found {
+		t.Error("an owned plugin page must be in the nav")
+	}
+}
