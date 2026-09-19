@@ -85,7 +85,7 @@ func settings() int32 {
 func templateFooter() int32 {
 	var in hookInput
 	if err := json.Unmarshal(pdk.Input(), &in); err != nil {
-		pdk.SetError("template_footer: " + err.Error())
+		pdk.SetErrorString("template_footer: " + err.Error())
 		return 1
 	}
 	if in.Settings["enabled"] != "true" {

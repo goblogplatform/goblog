@@ -134,8 +134,11 @@ func TestCacheFreshness(t *testing.T) {
 	if (cachedArticles{}).fresh(now, 24) {
 		t.Error("zero FetchedAt is never fresh")
 	}
-	if parseIntSetting("", 50) != 50 || parseIntSetting("7", 50) != 7 || parseIntSetting("x", 50) != 50 || parseIntSetting("0", 50) != 50 {
+	if parseIntSetting("", 50, 0) != 50 || parseIntSetting("7", 50, 0) != 7 || parseIntSetting("x", 50, 0) != 50 || parseIntSetting("0", 50, 0) != 50 {
 		t.Error("parseIntSetting")
+	}
+	if parseIntSetting("9999", 50, maxArticleLimit) != 500 || parseIntSetting("500", 50, maxArticleLimit) != 500 || parseIntSetting("9999", 24, 0) != 9999 {
+		t.Error("parseIntSetting clamp")
 	}
 }
 ```
@@ -169,11 +172,12 @@ func TestFetchAll(t *testing.T) {
 	if len(calls) != 2 || !strings.HasPrefix(calls[0], "https://api.semanticscholar.org/graph/v1/author/123/papers?") || !strings.Contains(calls[0], "limit=100") || !strings.Contains(calls[1], "offset=2") {
 		t.Errorf("calls = %v", calls)
 	}
-	// limit truncates and stops paginating
+	// limit keeps the newest N: every page is still read, then the sorted
+	// result is truncated
 	calls = nil
 	as, _ = fetchAll(get, "123", "k", 1)
-	if len(as) != 1 || len(calls) != 1 {
-		t.Errorf("limit=1: %d articles, %d calls", len(as), len(calls))
+	if len(as) != 1 || len(calls) != 2 || as[0].Title != "c" {
+		t.Errorf("limit=1: %d articles, %d calls, first %+v", len(as), len(calls), as)
 	}
 	// non-200 → error
 	bad := func(string, map[string]string) (int, []byte, error) { return 429, []byte("slow down"), nil }
@@ -343,11 +347,19 @@ func (c cachedArticles) fresh(now time.Time, cacheHours int) bool {
 	return now.Sub(c.FetchedAt) < time.Duration(cacheHours)*time.Hour
 }
 
-// parseIntSetting reads a positive integer setting with a default.
-func parseIntSetting(s string, def int) int {
+// maxArticleLimit caps article_limit: more than this is never useful on a
+// single page, and it keeps fetchAll's page bound meaningful.
+const maxArticleLimit = 500
+
+// parseIntSetting reads a positive integer setting with a default, clamped
+// to max when max > 0.
+func parseIntSetting(s string, def, max int) int {
 	n, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil || n <= 0 {
 		return def
+	}
+	if max > 0 && n > max {
+		return max
 	}
 	return n
 }
@@ -378,7 +390,10 @@ const (
 // getter performs an HTTP GET; the wasm build uses the PDK, tests inject a fake.
 type getter func(url string, headers map[string]string) (status int, body []byte, err error)
 
-// maxPages bounds pagination; 10 pages × 100 papers is far beyond any article_limit.
+// maxPages bounds pagination. article_limit is clamped to maxArticleLimit
+// (500), so maxPages*pageSize = 1000 is the most the fetch ever
+// needs; an author with more papers than that gets the newest 1000 sorted
+// and truncated like everyone else.
 const maxPages = 10
 
 // fetchAll pages through an author's papers, sorts them newest first, and
@@ -562,8 +577,8 @@ func refresh(settings map[string]string, force bool) ([]Article, bool) {
 	if id == "" {
 		return nil, false
 	}
-	hours := parseIntSetting(settings["cache_hours"], 24)
-	limit := parseIntSetting(settings["article_limit"], 50)
+	hours := parseIntSetting(settings["cache_hours"], 24, 0)
+	limit := parseIntSetting(settings["article_limit"], 50, maxArticleLimit)
 	cache, have := loadCache()
 	if have && !force && cache.fresh(time.Now(), hours) {
 		return cache.Articles, true
@@ -610,6 +625,9 @@ func runJob() int32 {
 		pdk.SetErrorString("run_job: " + err.Error())
 		return 1
 	}
+	// goblog's wasm adapter never calls run_job while the plugin's
+	// `enabled` setting is off (plugin/wasm/wasm.go, ScheduledJobs), so
+	// only the id needs checking here.
 	if in.Name == "refresh" && in.Settings["semantic_scholar_id"] != "" {
 		refresh(in.Settings, false) // only fetches when stale
 	}
