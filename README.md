@@ -20,7 +20,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 - RSS-ready sitemap generation
 
 ### Pages
-- Configurable dynamic pages (writing, research, archives, tags, about, custom)
+- Configurable dynamic pages (writing, archives, tags, about, custom), plus pages owned by plugins
 - Research page listing your publications from Semantic Scholar — install **Scholar Publications** from Admin → Plugins
 - Archives sorted by year and month
 
@@ -149,7 +149,7 @@ A plugin implements the `plugin.Plugin` interface (`plugin/plugin.go`). Embed `p
 `ctx` is a `*plugin.HookContext` carrying the Gin context, the DB, the plugin's own settings, the template being rendered, and the existing template data. `plugins/socialicons` is the smallest complete example.
 
 #### Upgrading to 0.3.0
-The `scholar` plugin is no longer compiled in; it is now **Scholar Publications** in the plugin directory ([goblogplatform/goblog-plugin-scholar](https://github.com/goblogplatform/goblog-plugin-scholar)). After upgrading, install it from **Admin → Plugins**. Your Research page and the plugin's settings carry over (same plugin name and page type), so the page reappears in the nav as soon as the plugin is installed; until then it is hidden and `/research` answers "Page Not Available". The new plugin reads from the Semantic Scholar API only — if you were using Google Scholar, set `semantic_scholar_id` (the number at the end of your semanticscholar.org author URL) under **Admin → Settings → Scholar Publications**.
+The `scholar` plugin is no longer compiled in; it is now **Scholar Publications** in the plugin directory ([goblogplatform/goblog-plugin-scholar](https://github.com/goblogplatform/goblog-plugin-scholar)). After upgrading, install it from **Admin → Plugins**. Your Research page and the plugin's settings carry over (same plugin name and page type), so the page reappears in the nav as soon as the plugin is installed **and enabled** — its `enabled` setting defaults to `false` on a fresh install, while a site that already had `scholar.enabled=true` keeps it. Until then the page is hidden and `/research` answers "Page Not Available". The new plugin reads from the Semantic Scholar API only — if you were using Google Scholar, set `semantic_scholar_id` (the number at the end of your semanticscholar.org author URL) under **Admin → Settings → Scholar Publications**. Docker users: bind-mount `plugins/wasm/` first (see [Installing from the directory](#installing-from-the-directory)), or the installed plugin vanishes when the container restarts.
 
 ### Compiled-in plugins
 Live in `plugins/<name>/` as a normal Go package, and are registered in `main()`:

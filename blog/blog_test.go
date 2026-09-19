@@ -1347,8 +1347,8 @@ func TestUnownedPluginPageIsHidden(t *testing.T) {
 		router.ServeHTTP(w, req)
 		return w
 	}
-	if w := get("/research"); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "Page Not Available") {
-		t.Errorf("/research without an owner: code=%d", w.Code)
+	if w := get("/research"); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "Page Not Available") || !strings.Contains(w.Body.String(), "plugin is not installed") {
+		t.Errorf("/research without an owner: code=%d, body=%q", w.Code, w.Body.String())
 	}
 	if w := get("/about"); w.Code != http.StatusOK {
 		t.Errorf("/about: code=%d", w.Code)
