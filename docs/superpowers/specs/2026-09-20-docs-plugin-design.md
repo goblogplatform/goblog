@@ -84,3 +84,7 @@ goblog.live URL, so a self-hosted copy stays self-contained.
 - Versioned docs for older releases (the page documents the running version;
   older versions have their README).
 - Search.
+
+## Revision 2 (2026-09-20): tried as a WASM plugin, reverted
+
+Between 076ad07 and the merge of #591 the serving side was moved out of the binary into `goblogplatform/goblog-plugin-docs` (pages and lint in `docs/guide/`, content vendored per goblog release). That merged, and was reverted in the follow-up PR: every documentation change would have needed a sync-commit-tag-release cycle in a second repo, which Jason judged a non-starter. The docs are therefore a **compiled-in plugin, off by default**, on the same footing as `directory`: goblog.live enables it, other installs never see it. The plugin repo was deleted; `docs/superpowers/plans/2026-09-20-docs-plugin-rev2.md` is kept as the record of the attempt.

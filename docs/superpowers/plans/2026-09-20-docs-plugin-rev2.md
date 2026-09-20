@@ -1,5 +1,7 @@
 # Documentation as a WASM plugin (rev 2) — Implementation Plan
 
+> **Reverted.** Executed and merged in #591, then reverted: the per-release content sync was a non-starter. The compiled-in design of `2026-09-20-docs-plugin.md` stands. Kept for the record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Take the documentation out of the goblog binary: the pages stay in the goblog repo (with their CI lint) and are served on goblog.live by a separate WASM plugin, `goblogplatform/goblog-plugin-docs`.
