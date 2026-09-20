@@ -8,7 +8,7 @@ Install them from your own goblog under <strong>Admin → Themes</strong>.</p>
     <div class="card h-100">
       {{ if .ScreenshotURL }}<a href="{{ $.Base }}/{{ .Name }}"><img src="{{ .ScreenshotURL }}" class="card-img-top" alt="Screenshot of {{ .DisplayName }}" loading="lazy"></a>{{ end }}
       <div class="card-body">
-        <h2 class="h5 card-title"><a href="{{ $.Base }}/{{ .Name }}">{{ .DisplayName }}</a> <small class="text-muted">v{{ .Version }}</small></h2>
+        <h2 class="fs-5 card-title"><a href="{{ $.Base }}/{{ .Name }}">{{ .DisplayName }}</a> <small class="text-muted">v{{ .Version }}</small></h2>
         <p class="card-text">{{ .Description }}</p>
         <p class="small text-muted mb-0">by {{ .Author }} · {{ .License }} · ★ {{ .Stars }} · <a href="{{ .SourceURL }}">source</a></p>
       </div>
