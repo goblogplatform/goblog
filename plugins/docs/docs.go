@@ -81,8 +81,9 @@ func (p *Plugin) Pages() []gplugin.PageDefinition {
 }
 
 // OnInit ensures the page row exists (the registry normally creates it
-// first; this is the fallback). A foreign page on the "docs" slug is left
-// alone with a log line, as the directory plugin does, so Init continues.
+// first; this is the fallback). A foreign page or a post type on the "docs"
+// slug is left alone with a log line, as the directory plugin does, so Init
+// continues.
 func (p *Plugin) OnInit(db *gorm.DB) error {
 	var existing blog.Page
 	err := db.Where("page_type = ?", PageType).First(&existing).Error
@@ -98,6 +99,13 @@ func (p *Plugin) OnInit(db *gorm.DB) error {
 		return nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("docs plugin: query slug: %w", err)
+	}
+	var postType blog.PostType
+	if err := db.Where("slug = ?", def.Slug).First(&postType).Error; err == nil {
+		log.Printf("Docs plugin: page slug %q is already used by the %q post type; rename it and restart to create the docs page", def.Slug, postType.Name)
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("docs plugin: query post type slug: %w", err)
 	}
 	row := blog.Page{Title: def.Title, Slug: def.Slug, PageType: def.PageType, ShowInNav: def.ShowInNav, NavOrder: def.NavOrder, Enabled: true}
 	if err := db.Create(&row).Error; err != nil {

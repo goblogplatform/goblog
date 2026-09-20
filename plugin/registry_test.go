@@ -251,7 +251,7 @@ func TestInit_CreatesPageForPluginsThatCannotTouchTheDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}, &blog.PostType{}); err != nil {
 		t.Fatal(err)
 	}
 	reg := plugin.NewRegistry(db)
@@ -287,7 +287,7 @@ func TestInit_LeavesSlugCollisionToTheOperator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}, &blog.PostType{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&blog.Page{Title: "Mine", Slug: "pager", PageType: "custom", Enabled: true}).Error; err != nil {
@@ -302,6 +302,32 @@ func TestInit_LeavesSlugCollisionToTheOperator(t *testing.T) {
 	db.Model(&blog.Page{}).Where("page_type = ?", "pager").Count(&count)
 	if count != 0 {
 		t.Errorf("expected the pre-existing page to be left alone, got %d pager-typed pages", count)
+	}
+}
+
+// TestInit_LeavesPostTypeSlugToTheOperator: a post type already listed at
+// the slug keeps its URL (blog resolves a page before a post type, so the
+// plugin's page would shadow it).
+func TestInit_LeavesPostTypeSlugToTheOperator(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}, &blog.PostType{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&blog.PostType{Name: "Pager", Slug: "pager"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	reg.Register(&pagePlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	db.Model(&blog.Page{}).Where("slug = ?", "pager").Count(&count)
+	if count != 0 {
+		t.Errorf("expected the post type's slug to be left alone, got %d pages at it", count)
 	}
 }
 
@@ -327,7 +353,7 @@ func TestInit_RefusesReservedAndMalformedSlugs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+		if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}, &blog.PostType{}); err != nil {
 			t.Fatal(err)
 		}
 		reg := plugin.NewRegistry(db)
@@ -350,7 +376,7 @@ func TestDeletePages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}, &blog.PostType{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&blog.Page{Title: "About", Slug: "about", PageType: "about", Enabled: true}).Error; err != nil {
@@ -560,7 +586,7 @@ func TestDeletePages_KeepsClaimedTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}, &blog.PostType{}); err != nil {
 		t.Fatal(err)
 	}
 	reg := plugin.NewRegistry(db)

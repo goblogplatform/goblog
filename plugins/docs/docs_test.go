@@ -71,7 +71,7 @@ func TestPagesManifest(t *testing.T) {
 
 func TestOnInit_CreatesPage(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
-	db.AutoMigrate(&blog.Page{})
+	db.AutoMigrate(&blog.Page{}, &blog.PostType{})
 	p := New()
 	if err := p.OnInit(db); err != nil {
 		t.Fatal(err)
@@ -83,6 +83,30 @@ func TestOnInit_CreatesPage(t *testing.T) {
 	db.Where("page_type = ?", PageType).Find(&rows)
 	if len(rows) != 1 || rows[0].Slug != "docs" || rows[0].Title != "Docs" || !rows[0].Enabled {
 		t.Errorf("rows = %+v", rows)
+	}
+}
+
+// TestOnInit_ForeignSlug: a page of another type or a post type already at
+// "docs" is left alone with a log line; OnInit neither fails nor creates a
+// docs page.
+func TestOnInit_ForeignSlug(t *testing.T) {
+	for name, seed := range map[string]any{
+		"page":      &blog.Page{Title: "Mine", Slug: "docs", PageType: blog.PageTypeCustom, Enabled: true},
+		"post type": &blog.PostType{Name: "Docs", Slug: "docs"},
+	} {
+		db, _ := gorm.Open(sqlite.Open(":memory:"))
+		db.AutoMigrate(&blog.Page{}, &blog.PostType{})
+		if err := db.Create(seed).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := New().OnInit(db); err != nil {
+			t.Fatalf("%s: OnInit must not fail when the slug is taken, got %v", name, err)
+		}
+		var count int64
+		db.Model(&blog.Page{}).Where("page_type = ?", PageType).Count(&count)
+		if count != 0 {
+			t.Errorf("%s: expected no docs page, got %d", name, count)
+		}
 	}
 }
 
