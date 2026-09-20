@@ -61,7 +61,7 @@ type pluginFixture struct {
 func newPluginFixture(t *testing.T) *pluginFixture {
 	t.Helper()
 	f := newFixture(t)
-	f.db.AutoMigrate(&blog.Page{}, &blog.Setting{}, &gplugin.PluginSetting{})
+	f.db.AutoMigrate(&blog.Page{}, &blog.PostType{}, &blog.Setting{}, &gplugin.PluginSetting{})
 	f.db.Create(&blog.Setting{Key: "site_url", Value: "https://example.test"})
 	p := New()
 	p.newSource = func(string) registry.Source { return f.src }
@@ -104,7 +104,7 @@ func TestOnInit_MigratesCreatesPageAndService(t *testing.T) {
 
 func TestOnInit_SlugCollision(t *testing.T) {
 	db := testDB(t)
-	db.AutoMigrate(&blog.Page{})
+	db.AutoMigrate(&blog.Page{}, &blog.PostType{})
 	existing := blog.Page{Title: "Mine", Slug: "plugins", PageType: blog.PageTypeCustom, Enabled: true}
 	if err := db.Create(&existing).Error; err != nil {
 		t.Fatal(err)
@@ -117,6 +117,23 @@ func TestOnInit_SlugCollision(t *testing.T) {
 	db.Where("slug = ?", "plugins").Find(&pages)
 	if len(pages) != 1 || pages[0].PageType != blog.PageTypeCustom {
 		t.Errorf("the pre-existing page must be left alone: %+v", pages)
+	}
+}
+
+func TestOnInit_PostTypeSlugCollision(t *testing.T) {
+	db := testDB(t)
+	db.AutoMigrate(&blog.Page{}, &blog.PostType{})
+	if err := db.Create(&blog.PostType{Name: "Themes", Slug: "themes"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	p := New()
+	if err := p.OnInit(db); err != nil {
+		t.Fatalf("OnInit must not fail when a post type has the slug, got %v", err)
+	}
+	var count int64
+	db.Model(&blog.Page{}).Where("slug = ?", "themes").Count(&count)
+	if count != 0 {
+		t.Errorf("the post type's slug must be left alone, got %d pages at it", count)
 	}
 }
 

@@ -136,9 +136,9 @@ To create a custom theme:
 1. Create `themes/my-theme/templates/` and copy in only the templates you want to change (start with `header.html`, `footer.html`, `home.html`); add `static/` for CSS.
 2. Set the `theme` setting to `my-theme` in admin settings (hot-reloads, no restart).
 
-Themes from the directory will be installable under **Admin → Themes** into `themes/installed/` once the theme installer lands (a follow-up PR); see [docs/THEME_CONTRACT.md](docs/THEME_CONTRACT.md) to publish one.
+Full guide: [goblog.live/docs/writing-a-theme](https://www.goblog.live/docs/writing-a-theme).
 
-**Admin → Themes** browses the [theme directory](https://www.goblog.live/themes), installs a theme into `themes/installed/` (bind-mount it in Docker, set with `THEMES_INSTALLED_DIR`, or installs vanish on restart), activates it, updates it when the directory has a newer release, and removes it. The directory URL is the `theme_directory_url` setting.
+**Admin → Themes** browses the [theme directory](https://www.goblog.live/themes), installs a theme into `themes/installed/` (bind-mount it in Docker, set with `THEMES_INSTALLED_DIR`, or installs vanish on restart), activates it, updates it when the directory has a newer release, and removes it. The directory URL is the `theme_directory_url` setting; see [Publishing a theme](https://www.goblog.live/docs/publishing-a-theme) to publish one.
 
 A theme is code: once activated its templates render every page, including the admin, with the same template functions and data goblog's own templates get. The directory's validation checks that a theme is well-formed, not that it is benign, and a listing on goblog.live is a maintainer's approval, not a code audit — install only themes you trust, as with plugins.
 
@@ -173,32 +173,7 @@ The plugin directory installs sandboxed WebAssembly modules built with [Extism](
 
 Every export takes and returns JSON through Extism's input/output. Only `identity` is mandatory; a missing export behaves like `BasePlugin`'s no-op.
 
-| Export | Input → Output | Mirrors |
-|---|---|---|
-| `identity` | → `{name, display_name, version}` | `Name/DisplayName/Version` |
-| `settings` | → `[{key, type, default, label, description}]` | `Settings()` |
-| `pages` | → `[{page_type, title, slug, show_in_nav, nav_order, description}]` | `Pages()` |
-| `jobs` | → `[{name, interval_seconds}]` (`interval_seconds` ≤ 0 → 1 h) | `ScheduledJobs()` |
-| `template_head` / `template_footer` | `ctx` → HTML string | same |
-| `template_data` | `ctx` → JSON object (`.plugins.<name>`) | `TemplateData` |
-| `render_page` | `ctx` → `{"html": "…"}` **or** `{"template": "x.html", "data": {…}}` **or** `{"raw": {"status", "content_type", "body"}}` | `RenderPage` |
-| `run_job` | `{"name", "settings"}` → `{}` | `ScheduledJob.Run` |
-| `on_init` | `{"settings": {k: v}}` (current values: defaults overlaid with what is stored) → `{}` | `OnInit` |
-
-`ctx` is `{"settings": {k: v}, "template": "…", "request": {"path", "sub_path", "query": {k: v}, "method"}}`.
-
-Host functions (Extism's `extism:host/user` namespace):
-
-| Function | Behaviour |
-|---|---|
-| `store_get(key) → value \| null` | per-plugin persistent KV (`plugin_store` table) |
-| `store_set(key, value)` | key ≤ 256 bytes, value ≤ 1 MiB, at most 10 000 keys and 16 MiB per plugin; errors otherwise |
-| `store_delete(key)` | |
-| `store_list(prefix) → [keys]` | |
-| logging | the Extism PDK's own logger (`pdk.Log`), prefixed with the plugin name — there is no separate `log` host function |
-| HTTP | Extism's built-in `http_request`, limited to the hosts in the plugin's `allowed_hosts`; none declared → no network |
-
-Limits: 10 s per `template_*`/`render_page` call, 120 s for `run_job`/`on_init`; 64 MB memory per plugin; one loaded instance per plugin with calls serialised — `template_*` hooks wait at most 2 s for a busy instance and then skip that render (logged once), so a slow `render_page` or a long job cannot stall every page; Admin → Plugins shows a plugin as `busy` or `closed` while that is the case. A call that hits its timeout closes the instance; the next call re-creates it from the module bytes and carries on, at most once per 30 s — a plugin that keeps timing out declines (empty hooks, 404 pages) in between. HTTP redirects are checked against `allowed_hosts` on every hop.
+The full contract — every export's input and output, `ctx`, host functions, store limits, timeouts — is documented at [goblog.live/docs/plugin-api](https://www.goblog.live/docs/plugin-api) (or `/docs/plugin-api` on any goblog running the [docs plugin](https://github.com/goblogplatform/goblog-plugin-docs)); the source of those pages is `docs/guide/`.
 
 Build one with the standard Go toolchain and [`github.com/extism/go-pdk`](https://github.com/extism/go-pdk):
 ```bash
@@ -267,7 +242,7 @@ docker run --rm --network none -v "$PWD:/p" --entrypoint /go/src/github.com/comp
 This is the same check goblog.live runs on every submission to the plugin directory.
 
 ### Plugin directory
-[goblog.live/plugins](https://goblog.live/plugins) lists published plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`, `runtime`, `allowed_hosts`) and `/plugins/<name>.json` carries one plugin's README, changelog and release history. Plugins are individual GitHub repositories with releases — see [docs/PLUGIN_CONTRACT.md](docs/PLUGIN_CONTRACT.md). To publish one, paste its URL at [goblog.live/plugins/submit](https://goblog.live/plugins/submit): it is validated on the spot (latest release, manifest, `plugin.wasm` loads and its name/version match) and listed once a maintainer approves it.
+[goblog.live/plugins](https://goblog.live/plugins) lists published plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`, `runtime`, `allowed_hosts`) and `/plugins/<name>.json` carries one plugin's README, changelog and release history — full field-by-field detail at [Directory formats](https://www.goblog.live/docs/directory-formats). Plugins are individual GitHub repositories with releases — see [Publishing a plugin](https://www.goblog.live/docs/publishing-a-plugin). To publish one, paste its URL at [goblog.live/plugins/submit](https://goblog.live/plugins/submit): it is validated on the spot (latest release, manifest, `plugin.wasm` loads and its name/version match) and listed once a maintainer approves it.
 
 The directory is the built-in `directory` plugin, so any goblog can host one: turn it on under **Admin → Settings → Plugin Directory** (`enabled` = `true`). Submissions are stored in the site's database and reviewed under **Admin → Plugins → Directory**, where you can also add repositories yourself, rebuild an entry or delist it. Listed plugins are re-checked every `refresh_minutes` (default 360) for new releases and star counts. The GitHub API allows 60 anonymous requests per hour; set `github_token` (any token, no scopes needed) to raise that to 5000 if you list more than a handful of plugins. README, changelog and release-note HTML is rendered by GitHub's markdown API and shown as-is on the directory pages; the admin sees it in the pending card before approving.
 

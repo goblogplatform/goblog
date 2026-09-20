@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -57,6 +58,17 @@ var knownLicenses = map[string]bool{
 	"AGPL-3.0-only": true, "AGPL-3.0-or-later": true,
 }
 
+// KnownLicenses returns the accepted SPDX identifiers, sorted; the docs
+// tests check the published lists against it.
+func KnownLicenses() []string {
+	out := make([]string, 0, len(knownLicenses))
+	for l := range knownLicenses {
+		out = append(out, l)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ParseManifest decodes and validates a manifest. Entry defaults to
 // plugin.wasm; AllowedHosts is never nil on success so the index serialises
 // it as [] rather than null.
@@ -84,7 +96,7 @@ func ParseManifest(b []byte) (Manifest, error) {
 		problems = append(problems, fmt.Sprintf("license %q is not a known SPDX identifier", m.License))
 	}
 	if m.Runtime != "wasm" {
-		problems = append(problems, "runtime must be \"wasm\": the directory only lists WebAssembly plugins; see docs/PLUGIN_CONTRACT.md")
+		problems = append(problems, "runtime must be \"wasm\": the directory only lists WebAssembly plugins; see /docs/publishing-a-plugin")
 	}
 	if !entryPattern.MatchString(m.Entry) {
 		problems = append(problems, "entry must be a .wasm release asset name (letters, digits, `_`, `.`, `-`)")

@@ -140,9 +140,10 @@ func (p *Plugin) source(token string) registry.Source {
 // in place and is kept as a fallback. The admin can rename or reorder it.
 //
 // blog.Page.Slug has a unique index, so if some other page already uses the
-// "plugins" slug (a different page type), creating our page would fail.
-// That must not abort plugin.Registry.Init, so we log a warning and leave
-// it to the operator instead of returning an error.
+// "plugins" slug (a different page type), creating our page would fail; a
+// post type on that slug would be shadowed by our page. Neither must abort
+// plugin.Registry.Init, so we log a warning and leave it to the operator
+// instead of returning an error.
 func (p *Plugin) OnInit(db *gorm.DB) error {
 	if err := Migrate(db); err != nil {
 		return fmt.Errorf("directory plugin: migrate: %w", err)
@@ -161,8 +162,9 @@ func (p *Plugin) OnInit(db *gorm.DB) error {
 }
 
 // ensurePage creates def's page row if it does not already exist. A slug
-// collision with some other page type must not abort plugin.Registry.Init,
-// so it is logged and left to the operator instead of returned as an error.
+// collision with some other page type or a post type must not abort
+// plugin.Registry.Init, so it is logged and left to the operator instead of
+// returned as an error.
 func ensurePage(db *gorm.DB, def gplugin.PageDefinition) error {
 	var page blog.Page
 	err := db.Where("page_type = ?", def.PageType).First(&page).Error
@@ -178,6 +180,13 @@ func ensurePage(db *gorm.DB, def gplugin.PageDefinition) error {
 		return nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("directory plugin: query slug: %w", err)
+	}
+	var postType blog.PostType
+	if err := db.Where("slug = ?", def.Slug).First(&postType).Error; err == nil {
+		log.Printf("Directory plugin: page slug %q is already used by the %q post type; rename it and restart to create the %s page", def.Slug, postType.Name, def.Title)
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("directory plugin: query post type slug: %w", err)
 	}
 	page = blog.Page{
 		Title:     def.Title,

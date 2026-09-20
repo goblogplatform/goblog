@@ -51,6 +51,14 @@ const (
 // ErrNoIdentity is returned when a module has no identity export.
 var ErrNoIdentity = errors.New("wasm plugin: missing identity export")
 
+// Exports are the functions a plugin module may export; goblog calls the
+// ones present. The documentation is linted against this list.
+var Exports = []string{"identity", "settings", "pages", "jobs", "template_head", "template_footer", "template_data", "render_page", "run_job", "on_init"}
+
+// HostFunctions are what goblog offers in the extism:host/user namespace
+// besides the PDK's own logging and http_request.
+var HostFunctions = []string{"store_get", "store_set", "store_delete", "store_list"}
+
 // compilationCache is shared by every instance so a module is compiled once
 // per process (validate, install and boot all load the same bytes).
 var compilationCache = wazero.NewCompilationCache()
@@ -115,7 +123,7 @@ func LoadBytes(data []byte, opts Options) (*Plugin, error) {
 	}
 	p.ext = ext
 	p.exports = map[string]bool{}
-	for _, name := range []string{"identity", "settings", "pages", "jobs", "template_head", "template_footer", "template_data", "render_page", "run_job", "on_init"} {
+	for _, name := range Exports {
 		p.exports[name] = ext.FunctionExists(name)
 	}
 	if !p.exports["identity"] {

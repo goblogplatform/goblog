@@ -169,7 +169,7 @@ func newInstallerDB(t *testing.T, f *fixture) (*Installer, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&blog.Page{}); err != nil {
+	if err := db.AutoMigrate(&blog.Page{}, &blog.PostType{}); err != nil {
 		t.Fatal(err)
 	}
 	reg := plugin.NewRegistry(db)

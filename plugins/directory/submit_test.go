@@ -45,7 +45,7 @@ func TestRenderPage_SubmitForm(t *testing.T) {
 	if tmpl != "page_content.html" || data["title"] != "Submit a plugin" {
 		t.Errorf("form: %q %v", tmpl, data["title"])
 	}
-	for _, want := range []string{`<form`, `method="post"`, `action="/plugins/submit"`, `name="repo"`, `name="website"`, "goblog-plugin.json", "PLUGIN_CONTRACT.md"} {
+	for _, want := range []string{`<form`, `method="post"`, `action="/plugins/submit"`, `name="repo"`, `name="website"`, "goblog-plugin.json", `href="/docs/publishing-a-plugin"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("form missing %q in:\n%s", want, html)
 		}
@@ -60,7 +60,7 @@ func TestRenderPage_SubmitForm_Theme(t *testing.T) {
 	if tmpl != "page_content.html" || data["title"] != "Submit a theme" {
 		t.Errorf("form: %q %v", tmpl, data["title"])
 	}
-	for _, want := range []string{`<form`, `method="post"`, `action="/themes/submit"`, `name="repo"`, `name="website"`, "goblog-theme.json", "THEME_CONTRACT.md"} {
+	for _, want := range []string{`<form`, `method="post"`, `action="/themes/submit"`, `name="repo"`, `name="website"`, "goblog-theme.json", `href="/docs/publishing-a-theme"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("form missing %q in:\n%s", want, html)
 		}

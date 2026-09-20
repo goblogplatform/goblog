@@ -237,8 +237,10 @@ var reservedSlugs = map[string]bool{
 // itself. This mirrors what plugins/directory's own OnInit does, and runs
 // before OnInit so a plugin's own (redundant but harmless) page-creation
 // logic just finds the page already there. A slug already used by a
-// different page type is left alone and logged, same as directory.OnInit;
-// so is a slug that is not a plain path segment or is one goblog reserves.
+// different page type or by a post type is left alone and logged, same as
+// directory.OnInit (the admin keeps page and post-type slugs disjoint, and
+// a page would shadow the post type's listing); so is a slug that is not a
+// plain path segment or is one goblog reserves.
 func ensurePages(db *gorm.DB, p Plugin) {
 	if db == nil {
 		return
@@ -270,6 +272,14 @@ func ensurePages(db *gorm.DB, p Plugin) {
 			continue
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("Plugin %s: query page slug %q: %v", p.Name(), pd.Slug, err)
+			continue
+		}
+		var postType blog.PostType
+		if err := db.Where("slug = ?", pd.Slug).First(&postType).Error; err == nil {
+			log.Printf("Plugin %s: page slug %q is already used by the %q post type; rename it and restart to create the %q page", p.Name(), pd.Slug, postType.Name, pd.PageType)
+			continue
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("Plugin %s: query post type slug %q: %v", p.Name(), pd.Slug, err)
 			continue
 		}
 		page := blog.Page{
