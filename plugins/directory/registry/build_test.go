@@ -15,6 +15,7 @@ func TestBuildRepo_Good(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := IndexEntry{
+		Kind: "plugin",
 		Name: "hello", DisplayName: "Hello", Description: "Says hi.", Version: "1.1.0", Author: "Jason Ernst",
 		License: "Apache-2.0", SourceURL: "https://github.com/o/hello",
 		DownloadURL: "https://github.com/o/hello/releases/download/v1.1.0/plugin.wasm", SHA256: Sum(helloWasm),

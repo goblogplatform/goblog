@@ -1,6 +1,8 @@
 package admin_test
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,14 +32,32 @@ type stubSource struct{ missing bool }
 var helloWasm = []byte("\x00asm hello")
 
 func (s stubSource) Releases(_ context.Context, owner, repo string) ([]registry.Release, error) {
-	if s.missing || owner+"/"+repo != "o/hello" {
+	if s.missing {
 		return nil, fmt.Errorf("%s/%s: no such repository", owner, repo)
 	}
-	return []registry.Release{{Tag: "v1.0.0", Body: "notes", URL: "https://github.com/o/hello/releases/tag/v1.0.0",
-		PublishedAt: time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC),
-		Assets:      []registry.Asset{{ID: 1, Name: "plugin.wasm", Size: len(helloWasm), DownloadURL: "https://github.com/o/hello/releases/download/v1.0.0/plugin.wasm"}}}}, nil
+	switch owner + "/" + repo {
+	case "o/hello":
+		return []registry.Release{{Tag: "v1.0.0", Body: "notes", URL: "https://github.com/o/hello/releases/tag/v1.0.0",
+			PublishedAt: time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC),
+			Assets:      []registry.Asset{{ID: 1, Name: "plugin.wasm", Size: len(helloWasm), DownloadURL: "https://github.com/o/hello/releases/download/v1.0.0/plugin.wasm"}}}}, nil
+	case "o/ocean":
+		return []registry.Release{{Tag: "v1.0.0", Body: "notes", URL: "https://github.com/o/ocean/releases/tag/v1.0.0",
+			PublishedAt: time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)}}, nil
+	}
+	return nil, fmt.Errorf("%s/%s: no such repository", owner, repo)
 }
-func (s stubSource) File(_ context.Context, _, _, _, path string) ([]byte, error) {
+func (s stubSource) File(_ context.Context, owner, repo, _, path string) ([]byte, error) {
+	if owner+"/"+repo == "o/ocean" {
+		switch path {
+		case "goblog-theme.json":
+			return []byte(`{"name":"ocean","display_name":"Ocean","description":"Blue.","author":"Jason","license":"MIT","min_goblog_version":"0.5.0"}`), nil
+		case "README.md":
+			return []byte("# Ocean"), nil
+		case "screenshot.png":
+			return []byte("\x89PNG"), nil
+		}
+		return nil, registry.ErrNotFound
+	}
 	switch path {
 	case "goblog-plugin.json":
 		return []byte(`{"name":"hello","display_name":"Hello","description":"Says hi.","author":"Jason","license":"MIT","runtime":"wasm","min_goblog_version":"0.3.0"}`), nil
@@ -53,6 +73,32 @@ func (s stubSource) RenderMarkdown(_ context.Context, _, md string) (string, err
 	return "<p>" + md + "</p>", nil
 }
 func (s stubSource) RepoStars(context.Context, string, string) (int, error) { return 7, nil }
+
+// Zipball serves o/ocean's theme archive (one template, laid out the way
+// GitHub's tag zipballs are: everything under "<repo>-<version>/"); every
+// other repository has no archive, matching a plugin repo's Source.
+func (s stubSource) Zipball(_ context.Context, owner, repo, _ string) ([]byte, error) {
+	if owner+"/"+repo != "o/ocean" {
+		return nil, fmt.Errorf("no archive")
+	}
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	f, err := w.Create("ocean-1.0.0/templates/home.html")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.Write([]byte("home")); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (s stubSource) FileURL(owner, repo, ref, path string) string {
+	return "https://raw.test/" + owner + "/" + repo + "/" + ref + "/" + path
+}
 
 type directoryHarness struct {
 	router *gin.Engine
@@ -76,6 +122,7 @@ func newDirectoryHarness(t *testing.T, wire bool) *directoryHarness {
 	dir.SetValidator(&registry.FakeValidator{Infos: map[string]plugin.Info{
 		registry.Sum(helloWasm): {Name: "hello", DisplayName: "Hello", Version: "1.0.0", Runtime: "wasm"},
 	}})
+	dir.SetThemeValidator(&registry.FakeThemeValidator{})
 	if wire {
 		if err := dir.OnInit(db); err != nil {
 			t.Fatal(err)
@@ -152,12 +199,27 @@ func TestDirectoryAPI_Lifecycle(t *testing.T) {
 	if w := h.do("POST", "/api/v1/directory/repos", `{"repo":"o/other"}`); w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "no such repository") {
 		t.Errorf("validation failure: %d %s", w.Code, w.Body.String())
 	}
+	if w := h.do("POST", "/api/v1/directory/repos", `{"repo":"o/hello","kind":"bogus"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("bad kind: %d %s", w.Code, w.Body.String())
+	}
+
+	w = h.do("POST", "/api/v1/directory/repos", `{"repo":"o/ocean","kind":"theme"}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"kind":"theme"`) {
+		t.Fatalf("add theme: %d %s", w.Code, w.Body.String())
+	}
 
 	w = h.do("GET", "/api/v1/directory/repos?status=approved", "")
 	var list []directory.RepoView
 	json.Unmarshal(w.Body.Bytes(), &list)
-	if w.Code != http.StatusOK || len(list) != 1 || list[0].Name != "hello" || list[0].Stars != 7 {
+	byName := map[string]directory.RepoView{}
+	for _, r := range list {
+		byName[r.Name] = r
+	}
+	if w.Code != http.StatusOK || len(list) != 2 || byName["hello"].Kind != directory.KindPlugin || byName["hello"].Stars != 7 {
 		t.Errorf("list: %d %s", w.Code, w.Body.String())
+	}
+	if byName["ocean"].Kind != directory.KindTheme || byName["ocean"].ScreenshotURL == "" {
+		t.Errorf("theme row: %+v", byName["ocean"])
 	}
 
 	w = h.do("GET", "/api/v1/directory/repos/"+id, "")
@@ -181,7 +243,7 @@ func TestDirectoryAPI_Lifecycle(t *testing.T) {
 	if w := h.do("POST", "/api/v1/directory/repos/"+id+"/approve", ""); w.Code != http.StatusOK {
 		t.Errorf("approve: %d", w.Code)
 	}
-	if raw, _ := h.dir.Service().Index(); !strings.Contains(string(raw), `"name": "hello"`) {
+	if raw, _ := h.dir.Service().Index(directory.KindPlugin); !strings.Contains(string(raw), `"name": "hello"`) {
 		t.Errorf("approve must regenerate the index: %s", raw)
 	}
 

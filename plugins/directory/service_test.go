@@ -1,6 +1,8 @@
 package directory
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,13 +18,16 @@ import (
 )
 
 // fakeRepo is one GitHub repository as the fake source presents it: a
-// single vX.Y.Z release with plugin.wasm attached.
+// single vX.Y.Z release with plugin.wasm attached, or (theme: true) a
+// theme's manifest, screenshot and archive.
 type fakeRepo struct {
+	theme   bool
 	version string
 	name    string // manifest + identity name
 	stars   int
 	readme  string
 	wasm    []byte
+	files   map[string]string // theme archive contents (templates/**, static/**)
 }
 
 type fakeSource struct {
@@ -61,6 +66,17 @@ func (f *fakeSource) File(_ context.Context, owner, repo, ref, path string) ([]b
 	r, err := f.repo(owner, repo)
 	if err != nil {
 		return nil, err
+	}
+	if r.theme {
+		switch path {
+		case "goblog-theme.json":
+			return []byte(`{"name":"` + r.name + `","display_name":"` + strings.ToUpper(r.name) + `","description":"A theme.","author":"Jason","license":"MIT","min_goblog_version":"0.5.0"}`), nil
+		case "README.md":
+			return []byte(r.readme), nil
+		case "screenshot.png":
+			return []byte("\x89PNG"), nil
+		}
+		return nil, registry.ErrNotFound
 	}
 	switch path {
 	case "goblog-plugin.json":
@@ -101,32 +117,75 @@ func (f *fakeSource) RepoStars(_ context.Context, owner, repo string) (int, erro
 	return r.stars, nil
 }
 
+// Zipball returns a theme repository's archive built from r.files, laid out
+// the way GitHub's tag zipballs are: everything under one
+// "<repo>-<version>/" folder.
+func (f *fakeSource) Zipball(_ context.Context, owner, repo, ref string) ([]byte, error) {
+	r, err := f.repo(owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	if len(r.files) == 0 {
+		return nil, errors.New("no archive")
+	}
+	return zipOf(repo+"-"+r.version+"/", r.files)
+}
+
+// zipOf builds a zip archive with the given entries under prefix — the
+// small helper from registry's theme_test.go (test code in another
+// package), minus its *testing.T since fakeSource.Zipball cannot take one.
+func zipOf(prefix string, entries map[string]string) ([]byte, error) {
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	for name, body := range entries {
+		f, err := w.Create(prefix + name)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := f.Write([]byte(body)); err != nil {
+			return nil, err
+		}
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (f *fakeSource) FileURL(owner, repo, ref, path string) string {
+	return "https://raw.test/" + owner + "/" + repo + "/" + ref + "/" + path
+}
+
 type fixture struct {
 	db  *gorm.DB
 	src *fakeSource
 	val *registry.FakeValidator
+	tv  *registry.FakeThemeValidator
 	svc *Service
 }
 
 // newFixture returns a Service over sqlite with o/hello (v1.0.0, name
-// "hello") and o/zeta (v0.1.0, name "zeta") available at the fake GitHub.
+// "hello"), o/zeta (v0.1.0, name "zeta") and o/ocean (a theme, v1.0.0, name
+// "ocean") available at the fake GitHub.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	hello := &fakeRepo{version: "1.0.0", name: "hello", stars: 7, readme: "# Hello", wasm: []byte("\x00asm hello")}
 	zeta := &fakeRepo{version: "0.1.0", name: "zeta", stars: 1, readme: "# Zeta", wasm: []byte("\x00asm zeta")}
-	src := &fakeSource{repos: map[string]*fakeRepo{"o/hello": hello, "o/zeta": zeta}}
+	ocean := &fakeRepo{theme: true, version: "1.0.0", name: "ocean", stars: 3, readme: "# Ocean", files: map[string]string{"templates/home.html": "home"}}
+	src := &fakeSource{repos: map[string]*fakeRepo{"o/hello": hello, "o/zeta": zeta, "o/ocean": ocean}}
 	val := &registry.FakeValidator{Infos: map[string]plugin.Info{
 		registry.Sum(hello.wasm): {Name: "hello", DisplayName: "Hello", Version: "1.0.0", Runtime: "wasm"},
 		registry.Sum(zeta.wasm):  {Name: "zeta", DisplayName: "Zeta", Version: "0.1.0", Runtime: "wasm"},
 	}}
+	tv := &registry.FakeThemeValidator{}
 	db := testDB(t)
-	svc := NewService(db, func(string) registry.Source { return src }, val, func() string { return "https://example.test" })
-	return &fixture{db: db, src: src, val: val, svc: svc}
+	svc := NewService(db, func(string) registry.Source { return src }, val, tv, func() string { return "https://example.test" })
+	return &fixture{db: db, src: src, val: val, tv: tv, svc: svc}
 }
 
-func (f *fixture) indexNames(t *testing.T) []string {
+func (f *fixture) indexNames(t *testing.T, kind string) []string {
 	t.Helper()
-	_, entries := f.svc.Index()
+	_, entries := f.svc.Index(kind)
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		names = append(names, e.Name)
@@ -136,7 +195,7 @@ func (f *fixture) indexNames(t *testing.T) []string {
 
 func TestService_SubmitThenApprove(t *testing.T) {
 	f := newFixture(t)
-	r, err := f.svc.Submit(context.Background(), "https://github.com/o/hello", "1.1.1.1", "")
+	r, err := f.svc.Submit(context.Background(), KindPlugin, "https://github.com/o/hello", "1.1.1.1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,23 +206,23 @@ func TestService_SubmitThenApprove(t *testing.T) {
 	if err := f.db.Where("repo_id = ?", r.ID).First(&b).Error; err != nil || b.Name != "hello" || b.Version != "1.0.0" || b.Stars != 7 {
 		t.Errorf("build = %+v %v", b, err)
 	}
-	if names := f.indexNames(t); len(names) != 0 {
+	if names := f.indexNames(t, KindPlugin); len(names) != 0 {
 		t.Errorf("pending must not be in the index: %v", names)
 	}
-	if _, ok := f.svc.Detail("hello"); ok {
+	if _, ok := f.svc.Detail(KindPlugin, "hello"); ok {
 		t.Error("pending must not have a public detail")
 	}
 	if err := f.svc.Approve(r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if names := f.indexNames(t); len(names) != 1 || names[0] != "hello" {
+	if names := f.indexNames(t, KindPlugin); len(names) != 1 || names[0] != "hello" {
 		t.Errorf("approved should be in the index: %v", names)
 	}
-	d, ok := f.svc.Detail("hello")
+	d, ok := f.svc.Detail(KindPlugin, "hello")
 	if !ok || d.DetailURL != "https://example.test/plugins/hello.json" || d.ReadmeHTML != "<p># Hello</p>" {
 		t.Errorf("detail = %+v %v", d, ok)
 	}
-	raw, _ := f.svc.Index()
+	raw, _ := f.svc.Index(KindPlugin)
 	if !strings.Contains(string(raw), `"name": "hello"`) {
 		t.Errorf("raw index = %s", raw)
 	}
@@ -171,23 +230,23 @@ func TestService_SubmitThenApprove(t *testing.T) {
 
 func TestService_SubmitDuplicatesAndResubmit(t *testing.T) {
 	f := newFixture(t)
-	r, _ := f.svc.Submit(context.Background(), "o/hello", "ip", "")
-	if _, err := f.svc.Submit(context.Background(), "O/Hello", "ip", ""); !errors.Is(err, ErrUnderReview) {
+	r, _ := f.svc.Submit(context.Background(), KindPlugin, "o/hello", "ip", "")
+	if _, err := f.svc.Submit(context.Background(), KindPlugin, "O/Hello", "ip", ""); !errors.Is(err, ErrUnderReview) {
 		t.Errorf("pending again: %v", err)
 	}
 	f.svc.Approve(r.ID)
-	if _, err := f.svc.Submit(context.Background(), "o/hello", "ip", ""); !errors.Is(err, ErrAlreadyListed) {
+	if _, err := f.svc.Submit(context.Background(), KindPlugin, "o/hello", "ip", ""); !errors.Is(err, ErrAlreadyListed) {
 		t.Errorf("approved again: %v", err)
 	}
 	if err := f.svc.Reject(r.ID, "nope"); err != nil {
 		t.Fatal(err)
 	}
-	if names := f.indexNames(t); len(names) != 0 {
+	if names := f.indexNames(t, KindPlugin); len(names) != 0 {
 		t.Errorf("rejected must leave the index: %v", names)
 	}
 	f.src.repos["o/hello"].version = "1.1.0"
 	f.val.Infos[registry.Sum(f.src.repos["o/hello"].wasm)] = plugin.Info{Name: "hello", Version: "1.1.0", Runtime: "wasm"}
-	again, err := f.svc.Submit(context.Background(), "o/hello", "ip", "")
+	again, err := f.svc.Submit(context.Background(), KindPlugin, "o/hello", "ip", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,11 +263,11 @@ func TestService_SubmitDuplicatesAndResubmit(t *testing.T) {
 func TestService_SubmitErrors(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.svc.Submit(ctx, "not a repo", "ip", ""); !errors.Is(err, ErrBadRepo) {
+	if _, err := f.svc.Submit(ctx, KindPlugin, "not a repo", "ip", ""); !errors.Is(err, ErrBadRepo) {
 		t.Errorf("bad input: %v", err)
 	}
 	var ve *ValidationError
-	if _, err := f.svc.Submit(ctx, "o/missing", "ip", ""); !errors.As(err, &ve) || !strings.Contains(ve.Msg, "no such repository") {
+	if _, err := f.svc.Submit(ctx, KindPlugin, "o/missing", "ip", ""); !errors.As(err, &ve) || !strings.Contains(ve.Msg, "no such repository") {
 		t.Errorf("unknown repo should be a ValidationError: %v", err)
 	}
 	var n int64
@@ -218,10 +277,10 @@ func TestService_SubmitErrors(t *testing.T) {
 	}
 
 	// Name collision: o/zeta re-using hello's plugin name.
-	f.svc.Add(ctx, "o/hello", "")
+	f.svc.Add(ctx, KindPlugin, "o/hello", "")
 	f.src.repos["o/zeta"].name = "hello"
 	f.val.Infos[registry.Sum(f.src.repos["o/zeta"].wasm)] = plugin.Info{Name: "hello", Version: "0.1.0", Runtime: "wasm"}
-	if _, err := f.svc.Submit(ctx, "o/zeta", "ip", ""); !errors.Is(err, ErrNameTaken) {
+	if _, err := f.svc.Submit(ctx, KindPlugin, "o/zeta", "ip", ""); !errors.Is(err, ErrNameTaken) {
 		t.Errorf("name taken: %v", err)
 	}
 }
@@ -230,38 +289,38 @@ func TestService_SubmitRateLimitAndBusy(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
-		f.svc.Submit(ctx, "o/missing", "9.9.9.9", "") // fails validation but counts
+		f.svc.Submit(ctx, KindPlugin, "o/missing", "9.9.9.9", "") // fails validation but counts
 	}
-	if _, err := f.svc.Submit(ctx, "o/hello", "9.9.9.9", ""); !errors.Is(err, ErrRateLimited) {
+	if _, err := f.svc.Submit(ctx, KindPlugin, "o/hello", "9.9.9.9", ""); !errors.Is(err, ErrRateLimited) {
 		t.Errorf("6th attempt: %v", err)
 	}
-	if _, err := f.svc.Submit(ctx, "o/hello", "8.8.8.8", ""); err != nil {
+	if _, err := f.svc.Submit(ctx, KindPlugin, "o/hello", "8.8.8.8", ""); err != nil {
 		t.Errorf("other address is fine: %v", err)
 	}
 
 	f.svc.validate.Lock()
 	defer f.svc.validate.Unlock()
-	if _, err := f.svc.Submit(ctx, "o/zeta", "7.7.7.7", ""); !errors.Is(err, ErrBusy) {
+	if _, err := f.svc.Submit(ctx, KindPlugin, "o/zeta", "7.7.7.7", ""); !errors.Is(err, ErrBusy) {
 		t.Errorf("while a validation runs: %v", err)
 	}
 }
 
 func TestService_AddDelistNotFound(t *testing.T) {
 	f := newFixture(t)
-	r, err := f.svc.Add(context.Background(), "https://github.com/o/hello", "")
+	r, err := f.svc.Add(context.Background(), KindPlugin, "https://github.com/o/hello", "")
 	if err != nil || r.Status != StatusApproved || r.DecidedAt == nil {
 		t.Fatalf("add: %+v %v", r, err)
 	}
-	if names := f.indexNames(t); len(names) != 1 {
+	if names := f.indexNames(t, KindPlugin); len(names) != 1 {
 		t.Errorf("index after add: %v", names)
 	}
-	if _, err := f.svc.Add(context.Background(), "o/hello", ""); !errors.Is(err, ErrAlreadyListed) {
+	if _, err := f.svc.Add(context.Background(), KindPlugin, "o/hello", ""); !errors.Is(err, ErrAlreadyListed) {
 		t.Errorf("add twice: %v", err)
 	}
 	if err := f.svc.Delist(r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if names := f.indexNames(t); len(names) != 0 {
+	if names := f.indexNames(t, KindPlugin); len(names) != 0 {
 		t.Errorf("index after delist: %v", names)
 	}
 	var n int64
@@ -278,7 +337,7 @@ func TestService_AddDelistNotFound(t *testing.T) {
 
 func TestService_RebuildKeepsOldDocOnFailure(t *testing.T) {
 	f := newFixture(t)
-	r, _ := f.svc.Add(context.Background(), "o/hello", "")
+	r, _ := f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
 	f.src.repos["o/hello"].readme = ""
 	delete(f.src.repos, "o/hello")
 	err := f.svc.Rebuild(context.Background(), r.ID, "")
@@ -290,7 +349,7 @@ func TestService_RebuildKeepsOldDocOnFailure(t *testing.T) {
 	if b.Version != "1.0.0" || b.LastError == "" || b.LastAttemptAt == nil {
 		t.Errorf("build after failure = %+v", b)
 	}
-	if names := f.indexNames(t); len(names) != 1 {
+	if names := f.indexNames(t, KindPlugin); len(names) != 1 {
 		t.Errorf("still listed: %v", names)
 	}
 	f.src.repos["o/hello"] = &fakeRepo{version: "1.0.0", name: "hello", stars: 8, readme: "# Hello", wasm: []byte("\x00asm hello")}
@@ -306,8 +365,8 @@ func TestService_RebuildKeepsOldDocOnFailure(t *testing.T) {
 func TestService_RefreshAll(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	hello, _ := f.svc.Add(ctx, "o/hello", "")
-	f.svc.Add(ctx, "o/zeta", "")
+	hello, _ := f.svc.Add(ctx, KindPlugin, "o/hello", "")
+	f.svc.Add(ctx, KindPlugin, "o/zeta", "")
 	old := time.Now().Add(-8 * 24 * time.Hour)
 	f.db.Model(&Repo{}).Where("id = ?", hello.ID).Updates(map[string]any{"submitter_ip": "1.2.3.4", "submitted_at": old})
 
@@ -321,7 +380,7 @@ func TestService_RefreshAll(t *testing.T) {
 	if f.src.assets.Load()-assetsBefore != 1 {
 		t.Errorf("only zeta (new release) should be downloaded, got %d downloads", f.src.assets.Load()-assetsBefore)
 	}
-	_, entries := f.svc.Index()
+	_, entries := f.svc.Index(KindPlugin)
 	if len(entries) != 2 || entries[0].Name != "hello" || entries[0].Stars != 70 || entries[0].Version != "1.0.0" || entries[1].Version != "0.2.0" {
 		t.Errorf("index after refresh = %+v", entries)
 	}
@@ -341,7 +400,7 @@ func TestService_RefreshAll(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "o/hello") {
 		t.Errorf("want an error naming o/hello, got %v", err)
 	}
-	_, entries = f.svc.Index()
+	_, entries = f.svc.Index(KindPlugin)
 	if len(entries) != 2 || entries[1].Stars != 5 {
 		t.Errorf("zeta should still refresh: %+v", entries)
 	}
@@ -350,8 +409,8 @@ func TestService_RefreshAll(t *testing.T) {
 func TestService_ListAndGet(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	f.svc.Add(ctx, "o/hello", "")
-	z, _ := f.svc.Submit(ctx, "o/zeta", "ip", "")
+	f.svc.Add(ctx, KindPlugin, "o/hello", "")
+	z, _ := f.svc.Submit(ctx, KindPlugin, "o/zeta", "ip", "")
 	all, err := f.svc.List("")
 	if err != nil || len(all) != 2 {
 		t.Fatalf("list: %+v %v", all, err)
@@ -377,7 +436,7 @@ func TestService_ListAndGet(t *testing.T) {
 func TestService_RebuildDelistRaceLeavesNoOrphanBuild(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	r, err := f.svc.Add(ctx, "o/hello", "")
+	r, err := f.svc.Add(ctx, KindPlugin, "o/hello", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +460,7 @@ func TestService_RebuildDelistRaceLeavesNoOrphanBuild(t *testing.T) {
 		t.Errorf("delist must win the race: no orphan repo, got %d rows", n)
 	}
 
-	if _, err := f.svc.Add(ctx, "o/hello", ""); err != nil {
+	if _, err := f.svc.Add(ctx, KindPlugin, "o/hello", ""); err != nil {
 		t.Errorf("re-adding after the race should succeed, got %v", err)
 	}
 }
@@ -413,8 +472,8 @@ func TestService_RebuildDelistRaceLeavesNoOrphanBuild(t *testing.T) {
 func TestService_RebuildNameCollisionKeepsOldBuildAndRecordsError(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	f.svc.Add(ctx, "o/hello", "")
-	z, err := f.svc.Add(ctx, "o/zeta", "")
+	f.svc.Add(ctx, KindPlugin, "o/hello", "")
+	z, err := f.svc.Add(ctx, KindPlugin, "o/zeta", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +494,58 @@ func TestService_RebuildNameCollisionKeepsOldBuildAndRecordsError(t *testing.T) 
 		t.Errorf("build after collision = %+v", b)
 	}
 
-	if names := f.indexNames(t); len(names) != 2 {
+	if names := f.indexNames(t, KindPlugin); len(names) != 2 {
 		t.Errorf("both repositories should still be listed: %v", names)
+	}
+}
+
+func TestService_ThemesAreSeparateFromPlugins(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.svc.Add(ctx, "bogus", "o/hello", ""); !errors.Is(err, ErrBadKind) {
+		t.Errorf("bad kind: %v", err)
+	}
+	if _, err := f.svc.Add(ctx, KindPlugin, "o/hello", ""); err != nil {
+		t.Fatal(err)
+	}
+	// A theme repo whose manifest name is "hello" too.
+	f.src.repos["o/ocean"].name = "hello"
+	th, err := f.svc.Add(ctx, KindTheme, "o/ocean", "")
+	if err != nil || th.Kind != KindTheme {
+		t.Fatalf("add theme: %+v %v", th, err)
+	}
+	if names := f.indexNames(t, KindPlugin); len(names) != 1 || names[0] != "hello" {
+		t.Errorf("plugin index = %v", names)
+	}
+	if names := f.indexNames(t, KindTheme); len(names) != 1 || names[0] != "hello" {
+		t.Errorf("theme index = %v", names)
+	}
+	d, ok := f.svc.Detail(KindTheme, "hello")
+	if !ok || d.Kind != KindTheme || d.InstallType != "theme" || d.ScreenshotURL == "" {
+		t.Errorf("theme detail = %+v %v", d, ok)
+	}
+	if d, _ := f.svc.Detail(KindPlugin, "hello"); d.Kind != KindPlugin {
+		t.Errorf("plugin detail = %+v", d)
+	}
+	// Same kind, same name, different repo: refused.
+	f.src.repos["o/zeta"].name = "hello"
+	f.val.Infos[registry.Sum(f.src.repos["o/zeta"].wasm)] = plugin.Info{Name: "hello", Version: "0.1.0", Runtime: "wasm"}
+	if _, err := f.svc.Submit(ctx, KindPlugin, "o/zeta", "ip", ""); !errors.Is(err, ErrNameTaken) {
+		t.Errorf("same-kind collision: %v", err)
+	}
+	// A repo keeps its kind: resubmitting o/hello as a theme is a duplicate, not a new theme.
+	if _, err := f.svc.Submit(ctx, KindTheme, "o/hello", "ip", ""); !errors.Is(err, ErrAlreadyListed) {
+		t.Errorf("repo already listed under another kind: %v", err)
+	}
+	views, _ := f.svc.List("")
+	kinds := map[string]string{}
+	for _, v := range views {
+		kinds[v.Repo] = v.Kind
+	}
+	if kinds["o/hello"] != KindPlugin || kinds["o/ocean"] != KindTheme {
+		t.Errorf("List kinds = %v", kinds)
+	}
+	if err := f.svc.RefreshAll(ctx, ""); err != nil {
+		t.Errorf("refresh with both kinds: %v", err)
 	}
 }

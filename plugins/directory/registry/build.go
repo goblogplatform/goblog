@@ -29,6 +29,8 @@ type IndexEntry struct {
 	ReleasedAt       string   `json:"released_at"`   // RFC 3339
 	DetailURL        string   `json:"detail_url"`
 	Stars            int      `json:"stars"`
+	Kind             string   `json:"kind"`                     // "plugin" or "theme"
+	ScreenshotURL    string   `json:"screenshot_url,omitempty"` // themes only
 }
 
 // ReleaseDoc is one release in a plugin's history.
@@ -72,6 +74,7 @@ func BuildRepo(ctx context.Context, src Source, val Validator, repo, baseURL str
 func buildDetail(ctx context.Context, src Source, v *Validated, baseURL string) (DetailDoc, error) {
 	ownerRepo := v.Owner + "/" + v.Name
 	entry := IndexEntry{
+		Kind:             KindPlugin,
 		Name:             v.Manifest.Name,
 		DisplayName:      v.Manifest.DisplayName,
 		Description:      v.Manifest.Description,
@@ -97,41 +100,46 @@ func buildDetail(ctx context.Context, src Source, v *Validated, baseURL string) 
 		entry.Stars = stars
 	}
 
-	readme, err := src.File(ctx, v.Owner, v.Name, v.Release.Tag, "README.md")
-	if err != nil {
-		return DetailDoc{}, fmt.Errorf("README.md: %w", err)
-	}
-	readmeHTML, err := src.RenderMarkdown(ctx, ownerRepo, string(readme))
+	readme, changelog, releases, err := renderDocs(ctx, src, v.Owner, v.Name, v.Release.Tag, v.Releases)
 	if err != nil {
 		return DetailDoc{}, err
 	}
+	return DetailDoc{IndexEntry: entry, ReadmeHTML: readme, ChangelogHTML: changelog, Releases: releases}, nil
+}
+
+// renderDocs fetches README.md and CHANGELOG.md at tag and renders them
+// and the release notes through GitHub's markdown API.
+func renderDocs(ctx context.Context, src Source, owner, name, tag string, all []Release) (readme, changelog template.HTML, releases []ReleaseDoc, err error) {
+	ownerRepo := owner + "/" + name
+	rb, err := src.File(ctx, owner, name, tag, "README.md")
+	if err != nil {
+		return "", "", nil, fmt.Errorf("README.md: %w", err)
+	}
+	readmeHTML, err := src.RenderMarkdown(ctx, ownerRepo, string(rb))
+	if err != nil {
+		return "", "", nil, err
+	}
 	if len(readmeHTML) > MaxRenderedBytes {
-		return DetailDoc{}, fmt.Errorf("%s: rendered README.md is %d bytes; the limit is %d (1 MiB)", ownerRepo, len(readmeHTML), MaxRenderedBytes)
+		return "", "", nil, fmt.Errorf("%s: rendered README.md is %d bytes; the limit is %d (1 MiB)", ownerRepo, len(readmeHTML), MaxRenderedBytes)
 	}
 	changelogHTML := ""
-	if cl, err := src.File(ctx, v.Owner, v.Name, v.Release.Tag, "CHANGELOG.md"); err == nil {
+	if cl, err := src.File(ctx, owner, name, tag, "CHANGELOG.md"); err == nil {
 		if changelogHTML, err = src.RenderMarkdown(ctx, ownerRepo, string(cl)); err != nil {
-			return DetailDoc{}, err
+			return "", "", nil, err
 		}
 		if len(changelogHTML) > MaxRenderedBytes {
-			return DetailDoc{}, fmt.Errorf("%s: rendered CHANGELOG.md is %d bytes; the limit is %d (1 MiB)", ownerRepo, len(changelogHTML), MaxRenderedBytes)
+			return "", "", nil, fmt.Errorf("%s: rendered CHANGELOG.md is %d bytes; the limit is %d (1 MiB)", ownerRepo, len(changelogHTML), MaxRenderedBytes)
 		}
 	} else if !isNotFound(err) {
-		return DetailDoc{}, fmt.Errorf("CHANGELOG.md: %w", err)
+		return "", "", nil, fmt.Errorf("CHANGELOG.md: %w", err)
 	}
-
-	releases := make([]ReleaseDoc, 0, len(v.Releases))
-	for _, r := range v.Releases {
+	releases = make([]ReleaseDoc, 0, len(all))
+	for _, r := range all {
 		notes, err := src.RenderMarkdown(ctx, ownerRepo, r.Body)
 		if err != nil {
-			return DetailDoc{}, err
+			return "", "", nil, err
 		}
-		releases = append(releases, ReleaseDoc{
-			Version:    strings.TrimPrefix(r.Tag, "v"),
-			ReleasedAt: r.PublishedAt.UTC().Format(time.RFC3339),
-			NotesHTML:  template.HTML(notes),
-			URL:        r.URL,
-		})
+		releases = append(releases, ReleaseDoc{Version: strings.TrimPrefix(r.Tag, "v"), ReleasedAt: r.PublishedAt.UTC().Format(time.RFC3339), NotesHTML: template.HTML(notes), URL: r.URL})
 	}
-	return DetailDoc{IndexEntry: entry, ReadmeHTML: template.HTML(readmeHTML), ChangelogHTML: template.HTML(changelogHTML), Releases: releases}, nil
+	return template.HTML(readmeHTML), template.HTML(changelogHTML), releases, nil
 }

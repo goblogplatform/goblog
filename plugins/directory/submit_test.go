@@ -1,6 +1,7 @@
 package directory
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -51,6 +52,24 @@ func TestRenderPage_SubmitForm(t *testing.T) {
 	}
 }
 
+func TestRenderPage_SubmitForm_Theme(t *testing.T) {
+	f := newPluginFixture(t)
+	ctx, _ := newRenderCtx(t, http.MethodGet, "/themes/submit", "submit", nil)
+	tmpl, data := f.p.RenderPage(ctx, ThemePageType)
+	html := content(t, data)
+	if tmpl != "page_content.html" || data["title"] != "Submit a theme" {
+		t.Errorf("form: %q %v", tmpl, data["title"])
+	}
+	for _, want := range []string{`<form`, `method="post"`, `action="/themes/submit"`, `name="repo"`, `name="website"`, "goblog-theme.json", "THEME_CONTRACT.md"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("form missing %q in:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, "goblog-plugin.json") {
+		t.Errorf("theme form must not mention goblog-plugin.json:\n%s", html)
+	}
+}
+
 func TestRenderPage_SubmitPost(t *testing.T) {
 	f := newPluginFixture(t)
 	post := func(repo, honeypot string) (gin.H, string) {
@@ -92,6 +111,40 @@ func TestRenderPage_SubmitPost(t *testing.T) {
 	}
 	if err := f.db.Where("repo = ?", "o/zeta").First(&Repo{}).Error; err == nil {
 		t.Error("honeypot submissions must not be stored")
+	}
+
+	// Themes submit under KindTheme.
+	ctx, _ := newRenderCtx(t, http.MethodPost, "/themes/submit", "submit", url.Values{"repo": {"o/ocean"}})
+	_, data := f.p.RenderPage(ctx, ThemePageType)
+	if html := content(t, data); !strings.Contains(html, "Queued for review") {
+		t.Errorf("theme success page:\n%s", html)
+	}
+	var themeRow Repo
+	if err := f.db.Where("repo = ?", "o/ocean").First(&themeRow).Error; err != nil || themeRow.Kind != KindTheme {
+		t.Errorf("theme row = %+v %v", themeRow, err)
+	}
+}
+
+// TestRenderPage_SubmitAlreadyListedLinksToActualKind: a repository already
+// listed under one kind, but submitted through the other kind's form, must
+// link at the page of the kind it actually has.
+func TestRenderPage_SubmitAlreadyListedLinksToActualKind(t *testing.T) {
+	f := newPluginFixture(t)
+	if _, err := f.svc.Add(context.Background(), KindTheme, "o/ocean", ""); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ := newRenderCtx(t, http.MethodPost, "/plugins/submit", "submit", url.Values{"repo": {"o/ocean"}})
+	_, data := f.p.RenderPage(ctx, PageType)
+	html := content(t, data)
+	if !strings.Contains(html, "already listed") || !strings.Contains(html, `href="/themes/ocean"`) {
+		t.Errorf("already listed under the other kind:\n%s", html)
+	}
+	// Same kind: the link follows the request's slug (the admin may have
+	// renamed the page), not a hard-coded default.
+	ctx, _ = newRenderCtx(t, http.MethodPost, "/skins/submit", "submit", url.Values{"repo": {"o/ocean"}})
+	_, data = f.p.RenderPage(ctx, ThemePageType)
+	if html := content(t, data); !strings.Contains(html, `href="/skins/ocean"`) {
+		t.Errorf("same-kind link should use the request slug:\n%s", html)
 	}
 }
 

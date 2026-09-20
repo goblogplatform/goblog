@@ -19,11 +19,15 @@ import (
 var (
 	ErrAlreadyListed = errors.New("this repository is already listed in the directory")
 	ErrUnderReview   = errors.New("this repository is already under review")
-	ErrNameTaken     = errors.New("a different repository already publishes a plugin with this name")
+	ErrNameTaken     = errors.New("a different repository already publishes an entry with this name")
 	ErrRateLimited   = errors.New("too many submissions from your address; try again in an hour")
 	ErrBusy          = errors.New("another submission is being checked; try again in a minute")
 	ErrNotFound      = errors.New("no such repository")
+	ErrBadKind       = errors.New("kind must be plugin or theme")
 )
+
+// validKind reports whether kind is one the directory curates.
+func validKind(k string) bool { return k == KindPlugin || k == KindTheme }
 
 // ValidationError is a submission that failed the plugin contract. Msg is
 // the registry's error text, the same message CI used to give.
@@ -41,26 +45,28 @@ const (
 // Service is the registry: it validates and builds repositories, keeps the
 // curation state in the database and serves the current index from memory.
 type Service struct {
-	db        *gorm.DB
-	newSource func(token string) registry.Source
-	validator registry.Validator
-	siteURL   func() string
-	limiter   *ipLimiter
+	db             *gorm.DB
+	newSource      func(token string) registry.Source
+	validator      registry.Validator
+	themeValidator registry.ThemeValidator
+	siteURL        func() string
+	limiter        *ipLimiter
 
 	// validate serializes builds. Public submissions TryLock it (and get
 	// ErrBusy), admin operations wait.
 	validate sync.Mutex
 
 	mu           sync.RWMutex
-	indexRaw     []byte
-	indexEntries []registry.IndexEntry
+	indexRaw     map[string][]byte
+	indexEntries map[string][]registry.IndexEntry
 	lastRefresh  time.Time
 }
 
 // NewService wires a Service. newSource is called per operation with the
 // current github_token setting so a token change needs no restart.
-func NewService(db *gorm.DB, newSource func(token string) registry.Source, val registry.Validator, siteURL func() string) *Service {
-	return &Service{db: db, newSource: newSource, validator: val, siteURL: siteURL, limiter: newIPLimiter(submitLimit, submitWindow)}
+func NewService(db *gorm.DB, newSource func(token string) registry.Source, val registry.Validator, tv registry.ThemeValidator, siteURL func() string) *Service {
+	return &Service{db: db, newSource: newSource, validator: val, themeValidator: tv, siteURL: siteURL, limiter: newIPLimiter(submitLimit, submitWindow),
+		indexRaw: map[string][]byte{}, indexEntries: map[string][]registry.IndexEntry{}}
 }
 
 // RepoView is a curation record with its build summarised: what the admin
@@ -69,6 +75,7 @@ type RepoView struct {
 	ID               uint       `json:"id"`
 	Repo             string     `json:"repo"`
 	Status           string     `json:"status"`
+	Kind             string     `json:"kind"`
 	SubmittedAt      time.Time  `json:"submitted_at"`
 	DecidedAt        *time.Time `json:"decided_at"`
 	RejectReason     string     `json:"reject_reason"`
@@ -81,6 +88,7 @@ type RepoView struct {
 	AllowedHosts     []string   `json:"allowed_hosts"`
 	MinGoblogVersion string     `json:"min_goblog_version"`
 	SourceURL        string     `json:"source_url"`
+	ScreenshotURL    string     `json:"screenshot_url,omitempty"`
 	BuiltAt          time.Time  `json:"built_at"`
 	LastAttemptAt    *time.Time `json:"last_attempt_at"`
 	LastError        string     `json:"last_error"`
@@ -88,7 +96,10 @@ type RepoView struct {
 
 // Submit is the public path: parse, refuse duplicates, rate-limit, validate
 // and build synchronously, then queue the repository for review.
-func (s *Service) Submit(ctx context.Context, input, ip, token string) (*Repo, error) {
+func (s *Service) Submit(ctx context.Context, kind, input, ip, token string) (*Repo, error) {
+	if !validKind(kind) {
+		return nil, ErrBadKind
+	}
 	repo, err := ParseRepo(input)
 	if err != nil {
 		return nil, err
@@ -105,15 +116,18 @@ func (s *Service) Submit(ctx context.Context, input, ip, token string) (*Repo, e
 	defer s.validate.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, submitBudget)
 	defer cancel()
-	doc, err := s.build(ctx, repo, token)
+	doc, err := s.build(ctx, kind, repo, token)
 	if err != nil {
 		return nil, &ValidationError{Msg: err.Error()}
 	}
-	return s.save(repo, doc, StatusPending, ip)
+	return s.save(kind, repo, doc, StatusPending, ip)
 }
 
 // Add is the admin path: same validation, no rate limit, listed at once.
-func (s *Service) Add(ctx context.Context, input, token string) (*Repo, error) {
+func (s *Service) Add(ctx context.Context, kind, input, token string) (*Repo, error) {
+	if !validKind(kind) {
+		return nil, ErrBadKind
+	}
 	repo, err := ParseRepo(input)
 	if err != nil {
 		return nil, err
@@ -123,11 +137,11 @@ func (s *Service) Add(ctx context.Context, input, token string) (*Repo, error) {
 	}
 	s.validate.Lock()
 	defer s.validate.Unlock()
-	doc, err := s.build(ctx, repo, token)
+	doc, err := s.build(ctx, kind, repo, token)
 	if err != nil {
 		return nil, &ValidationError{Msg: err.Error()}
 	}
-	r, err := s.save(repo, doc, StatusApproved, "")
+	r, err := s.save(kind, repo, doc, StatusApproved, "")
 	if err != nil {
 		return nil, err
 	}
@@ -157,18 +171,21 @@ func (s *Service) refuseDuplicate(repo string, pendingToo bool) error {
 	return nil
 }
 
-func (s *Service) build(ctx context.Context, repo, token string) (registry.DetailDoc, error) {
+func (s *Service) build(ctx context.Context, kind, repo, token string) (registry.DetailDoc, error) {
+	if kind == KindTheme {
+		return registry.BuildTheme(ctx, s.newSource(token), s.themeValidator, repo, s.siteURL())
+	}
 	return registry.BuildRepo(ctx, s.newSource(token), s.validator, repo, s.siteURL())
 }
 
-// nameTaken reports whether name is already published by a build belonging
-// to a repository other than repo. The directory routes on plugin names, so
-// this is the curation-level refusal that keeps a collision from ever
-// reaching Build.Name's uniqueIndex as a raw DB error.
-func nameTaken(tx *gorm.DB, name, repo string) error {
+// nameTaken reports whether name is already published, under kind, by a
+// build belonging to a repository other than repo. The directory routes on
+// names within a kind, so this is the curation-level refusal that keeps a
+// collision from ever reaching Build's uniqueIndex as a raw DB error.
+func nameTaken(tx *gorm.DB, kind, name, repo string) error {
 	var taken Build
 	err := tx.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
-		Where("directory_builds.name = ? AND directory_repos.repo <> ?", name, repo).First(&taken).Error
+		Where("directory_builds.kind = ? AND directory_builds.name = ? AND directory_repos.repo <> ?", kind, name, repo).First(&taken).Error
 	if err == nil {
 		return ErrNameTaken
 	}
@@ -182,10 +199,10 @@ func nameTaken(tx *gorm.DB, name, repo string) error {
 // created or reset to status, and its Build row is created or replaced. A
 // plugin name already published by another repository is refused because
 // the directory routes on names.
-func (s *Service) save(repo string, doc registry.DetailDoc, status, ip string) (*Repo, error) {
+func (s *Service) save(kind, repo string, doc registry.DetailDoc, status, ip string) (*Repo, error) {
 	var out Repo
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := nameTaken(tx, doc.Name, repo); err != nil {
+		if err := nameTaken(tx, kind, doc.Name, repo); err != nil {
 			return err
 		}
 
@@ -194,7 +211,7 @@ func (s *Service) save(repo string, doc registry.DetailDoc, status, ip string) (
 			return err
 		}
 		now := time.Now()
-		r.Repo, r.Status, r.SubmittedAt, r.SubmitterIP, r.RejectReason, r.DecidedAt = repo, status, now, ip, "", nil
+		r.Repo, r.Kind, r.Status, r.SubmittedAt, r.SubmitterIP, r.RejectReason, r.DecidedAt = repo, kind, status, now, ip, "", nil
 		if status == StatusApproved {
 			r.DecidedAt = &now
 		}
@@ -206,7 +223,7 @@ func (s *Service) save(repo string, doc registry.DetailDoc, status, ip string) (
 		if err := tx.Where("repo_id = ?", r.ID).First(&b).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		b.RepoID = r.ID
+		b.RepoID, b.Kind = r.ID, kind
 		b.LastAttemptAt = &now
 		if err := b.SetDoc(doc); err != nil {
 			return err
@@ -315,11 +332,11 @@ func (s *Service) rebuildRepo(ctx context.Context, r Repo, token string, skipUnc
 				return nil
 			}
 		}
-		doc, err := s.build(ctx, r.Repo, token)
+		doc, err := s.build(ctx, r.Kind, r.Repo, token)
 		if err != nil {
 			return err
 		}
-		if err := nameTaken(s.db, doc.Name, r.Repo); err != nil {
+		if err := nameTaken(s.db, r.Kind, doc.Name, r.Repo); err != nil {
 			return err
 		}
 		return b.SetDoc(doc)
@@ -428,7 +445,7 @@ func (s *Service) Get(id uint) (RepoView, registry.DetailDoc, error) {
 }
 
 func view(r Repo, b *Build) RepoView {
-	v := RepoView{ID: r.ID, Repo: r.Repo, Status: r.Status, SubmittedAt: r.SubmittedAt, DecidedAt: r.DecidedAt,
+	v := RepoView{ID: r.ID, Repo: r.Repo, Status: r.Status, Kind: r.Kind, SubmittedAt: r.SubmittedAt, DecidedAt: r.DecidedAt,
 		RejectReason: r.RejectReason, AllowedHosts: []string{}}
 	if b == nil {
 		return v
@@ -437,15 +454,19 @@ func view(r Repo, b *Build) RepoView {
 	if d, err := b.Detail(); err == nil {
 		v.Name, v.DisplayName, v.Version, v.Author, v.License = d.Name, d.DisplayName, d.Version, d.Author, d.License
 		v.Stars, v.AllowedHosts, v.MinGoblogVersion, v.SourceURL = d.Stars, d.AllowedHosts, d.MinGoblogVersion, d.SourceURL
+		v.ScreenshotURL = d.ScreenshotURL
 	}
 	return v
 }
 
-// Index returns the current index.json bytes and entries, generating them
-// on first use.
-func (s *Service) Index() ([]byte, []registry.IndexEntry) {
+// Index returns the current index.json bytes and entries for kind,
+// generating them on first use.
+func (s *Service) Index(kind string) ([]byte, []registry.IndexEntry) {
+	if !validKind(kind) {
+		return []byte("[]\n"), nil
+	}
 	s.mu.RLock()
-	raw, entries := s.indexRaw, s.indexEntries
+	raw, entries := s.indexRaw[kind], s.indexEntries[kind]
 	s.mu.RUnlock()
 	if raw != nil {
 		return raw, entries
@@ -456,18 +477,18 @@ func (s *Service) Index() ([]byte, []registry.IndexEntry) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.indexRaw, s.indexEntries
+	return s.indexRaw[kind], s.indexEntries[kind]
 }
 
-// Detail returns the document of an approved plugin by name.
-func (s *Service) Detail(name string) (registry.DetailDoc, bool) {
+// Detail returns the document of an approved entry of kind by name.
+func (s *Service) Detail(kind, name string) (registry.DetailDoc, bool) {
 	var b Build
 	// Limit(1).Find instead of First: crawlers hit /plugins/<unknown-name>
 	// constantly, and First logs a gorm ERROR "record not found" for every
 	// one of them; Find with RowsAffected treats a miss as the routine case
 	// it is.
 	res := s.db.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
-		Where("directory_builds.name = ? AND directory_repos.status = ?", name, StatusApproved).Limit(1).Find(&b)
+		Where("directory_builds.kind = ? AND directory_builds.name = ? AND directory_repos.status = ?", kind, name, StatusApproved).Limit(1).Find(&b)
 	if res.Error != nil || res.RowsAffected == 0 {
 		return registry.DetailDoc{}, false
 	}
@@ -479,21 +500,28 @@ func (s *Service) Detail(name string) (registry.DetailDoc, bool) {
 	return d, true
 }
 
-// nameOf returns the plugin name a repository publishes, if it has a build.
-func (s *Service) nameOf(repo string) (string, bool) {
+// nameOf returns the kind and name a repository publishes, if it has a
+// build. The repository may be listed under either kind, so callers must
+// not assume the kind they were asked about.
+func (s *Service) nameOf(repo string) (kind, name string, ok bool) {
 	var b Build
 	err := s.db.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
 		Where("directory_repos.repo = ?", repo).First(&b).Error
-	return b.Name, err == nil
+	return b.Kind, b.Name, err == nil
 }
 
-// regenerate rebuilds the cached index from the approved builds.
+// regenerate rebuilds the cached index for every kind from the approved
+// builds.
 func (s *Service) regenerate() error {
-	docs, err := approvedDocs(s.db)
-	if err != nil {
-		return err
+	raw := make(map[string][]byte, 2)
+	entries := make(map[string][]registry.IndexEntry, 2)
+	for _, kind := range []string{KindPlugin, KindTheme} {
+		docs, err := approvedDocs(s.db, kind)
+		if err != nil {
+			return err
+		}
+		raw[kind], entries[kind] = encodeIndex(docs)
 	}
-	raw, entries := encodeIndex(docs)
 	s.mu.Lock()
 	s.indexRaw, s.indexEntries = raw, entries
 	s.mu.Unlock()

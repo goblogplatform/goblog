@@ -47,46 +47,74 @@ func ParseRepo(input string) (string, error) {
 // submitView is what templates/submit.html renders.
 type submitView struct {
 	Base   string
+	Kind   string // "plugin" or "theme": which form copy to show
 	Repo   string // prefilled input
 	Error  string // shown above the form
 	Done   bool   // queued: show the confirmation instead of the form
-	Listed string // "already listed": the plugin's page path
+	Listed string // "already listed": the entry's page path
 }
 
-// renderSubmit serves the submission form (GET) and handles it (POST).
-// The form is plain HTML so it works without JavaScript; the result is
-// always rendered into the page, with 429 as the only non-200 status.
-func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base string) (string, gin.H) {
+// kindSlug is the URL segment a kind's pages live under, independent of
+// this page's own slug — a repository's ErrAlreadyListed link must point
+// at the page of the kind it actually has, which may be the other one.
+func kindSlug(kind string) string {
+	if kind == KindTheme {
+		return "themes"
+	}
+	return "plugins"
+}
+
+// submitTitle is the page title by kind.
+func submitTitle(kind string) string {
+	if kind == KindTheme {
+		return "Submit a theme"
+	}
+	return "Submit a plugin"
+}
+
+// renderSubmit serves the submission form (GET) and handles it (POST) for
+// kind. The form is plain HTML so it works without JavaScript; the result
+// is always rendered into the page, with 429 as the only non-200 status.
+func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base, kind string) (string, gin.H) {
 	c := ctx.GinContext
+	title := submitTitle(kind)
 	page := func(v submitView) (string, gin.H) {
 		html, err := renderSubmitPage(v)
 		if err != nil {
 			log.Printf("Directory plugin: render submit: %v", err)
-			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML, "title": "Submit a plugin"}
+			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML, "title": title}
 		}
-		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html, "title": "Submit a plugin"}
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html, "title": title}
 	}
 	if c.Request.Method != http.MethodPost {
-		return page(submitView{Base: base})
+		return page(submitView{Base: base, Kind: kind})
 	}
 
 	repo := strings.TrimSpace(c.PostForm("repo"))
 	// "website" is a honeypot: humans never see it, bots fill it. Pretend
 	// it worked so they move on.
 	if c.PostForm("website") != "" {
-		return page(submitView{Base: base, Done: true})
+		return page(submitView{Base: base, Kind: kind, Done: true})
 	}
-	_, err := p.svc.Submit(c.Request.Context(), repo, c.ClientIP(), ctx.Settings["github_token"])
+	_, err := p.svc.Submit(c.Request.Context(), kind, repo, c.ClientIP(), ctx.Settings["github_token"])
 	switch {
 	case err == nil:
-		return page(submitView{Base: base, Done: true})
+		return page(submitView{Base: base, Kind: kind, Done: true})
 	case errors.Is(err, ErrAlreadyListed):
 		if key, perr := ParseRepo(repo); perr == nil {
-			if name, ok := p.svc.nameOf(key); ok {
-				return page(submitView{Base: base, Repo: repo, Error: err.Error(), Listed: base + "/" + name})
+			if actualKind, name, ok := p.svc.nameOf(key); ok {
+				// Same kind: keep following the request's slug like every other
+				// directory link, so a renamed page still resolves. Crossing
+				// kinds is the one case where we can only guess the other
+				// page's default slug.
+				prefix := base
+				if actualKind != kind {
+					prefix = "/" + kindSlug(actualKind)
+				}
+				return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error(), Listed: prefix + "/" + name})
 			}
 		}
-		return page(submitView{Base: base, Repo: repo, Error: err.Error()})
+		return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error()})
 	case errors.Is(err, ErrRateLimited), errors.Is(err, ErrBusy):
 		// gin buffers a status set with c.Status and blog's later
 		// Render(c, 200, …) would replace it; writing the header now makes
@@ -97,16 +125,16 @@ func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base string) (string, gi
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.Status(http.StatusTooManyRequests)
 		c.Writer.WriteHeaderNow()
-		return page(submitView{Base: base, Repo: repo, Error: err.Error()})
+		return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error()})
 	default:
 		// ErrBadRepo, ErrUnderReview, ErrNameTaken, *ValidationError: all
 		// carry a message meant for the submitter. Anything else is an
 		// operator problem and is logged, not shown.
 		var ve *ValidationError
 		if errors.As(err, &ve) || errors.Is(err, ErrBadRepo) || errors.Is(err, ErrUnderReview) || errors.Is(err, ErrNameTaken) {
-			return page(submitView{Base: base, Repo: repo, Error: err.Error()})
+			return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error()})
 		}
 		log.Printf("Directory plugin: submit %q: %v", repo, err)
-		return page(submitView{Base: base, Repo: repo, Error: "Something went wrong on our side; please try again later."})
+		return page(submitView{Base: base, Kind: kind, Repo: repo, Error: "Something went wrong on our side; please try again later."})
 	}
 }

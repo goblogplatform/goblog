@@ -66,6 +66,14 @@ func fakeGitHub(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte("<p>" + body.Text + "</p>"))
 	})
+	// Zipball: the API redirects to a storage host; the client follows it.
+	mux.HandleFunc("GET /repos/o/r/zipball/v1.1.0", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/codeload/o/r/v1.1.0", http.StatusFound)
+	})
+	mux.HandleFunc("GET /codeload/o/r/v1.1.0", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Write([]byte("PK\x03\x04zip"))
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -128,6 +136,17 @@ func TestGitHubSource(t *testing.T) {
 	}
 	if _, err := src.RepoStars(ctx, "o", "missing"); err == nil {
 		t.Error("RepoStars on an unknown repo should fail")
+	}
+
+	zb, err := src.Zipball(ctx, "o", "r", "v1.1.0")
+	if err != nil || string(zb) != "PK\x03\x04zip" {
+		t.Errorf("Zipball: %q %v", zb, err)
+	}
+	if _, err := src.Zipball(ctx, "o", "r", "v9.9.9"); err == nil {
+		t.Error("Zipball of an unknown ref should fail")
+	}
+	if got := src.FileURL("o", "r", "v1.1.0", "screenshot.png"); got != "https://raw.githubusercontent.com/o/r/v1.1.0/screenshot.png" {
+		t.Errorf("FileURL = %q", got)
 	}
 }
 

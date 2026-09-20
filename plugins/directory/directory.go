@@ -20,13 +20,36 @@ import (
 	"goblog/blog"
 	gplugin "goblog/plugin"
 	"goblog/plugins/directory/registry"
+	"goblog/theme"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
+// fsThemeValidator checks a theme's files against this goblog's shared and
+// default templates — the same rule the installer applies.
+type fsThemeValidator struct{}
+
+func (fsThemeValidator) Validate(_ context.Context, files map[string][]byte) error {
+	return theme.ValidateFiles(files)
+}
+
 // PageType is the page type this plugin owns.
 const PageType = "plugin-directory"
+
+// ThemePageType is the page type of /themes.
+const ThemePageType = "theme-directory"
+
+// kindOf maps a page type to the directory kind it lists.
+func kindOf(pageType string) string {
+	switch pageType {
+	case PageType:
+		return KindPlugin
+	case ThemePageType:
+		return KindTheme
+	}
+	return ""
+}
 
 const (
 	defaultRefresh = 360 * time.Minute
@@ -36,16 +59,17 @@ const (
 // Plugin is the directory plugin. Its Service exists once OnInit has run.
 type Plugin struct {
 	gplugin.BasePlugin
-	userAgent string
-	db        *gorm.DB
-	svc       *Service
-	validator registry.Validator
-	newSource func(token string) registry.Source // nil → GitHub; tests inject a fake
+	userAgent      string
+	db             *gorm.DB
+	svc            *Service
+	validator      registry.Validator
+	themeValidator registry.ThemeValidator
+	newSource      func(token string) registry.Source // nil → GitHub; tests inject a fake
 }
 
 // New creates the directory plugin.
 func New() *Plugin {
-	return &Plugin{userAgent: "goblog-directory", validator: registry.WasmValidator{}}
+	return &Plugin{userAgent: "goblog-directory", validator: registry.WasmValidator{}, themeValidator: fsThemeValidator{}}
 }
 
 func (p *Plugin) Name() string        { return "directory" }
@@ -60,6 +84,9 @@ func (p *Plugin) SetSource(f func(token string) registry.Source) { p.newSource =
 
 // SetValidator replaces the module validator (tests).
 func (p *Plugin) SetValidator(v registry.Validator) { p.validator = v }
+
+// SetThemeValidator replaces the theme validator (tests).
+func (p *Plugin) SetThemeValidator(v registry.ThemeValidator) { p.themeValidator = v }
 
 // Service is the registry behind the pages; nil until OnInit has run.
 func (p *Plugin) Service() *Service { return p.svc }
@@ -76,14 +103,24 @@ func (p *Plugin) Settings() []gplugin.SettingDefinition {
 }
 
 func (p *Plugin) Pages() []gplugin.PageDefinition {
-	return []gplugin.PageDefinition{{
-		PageType:    PageType,
-		Title:       "Plugins",
-		Slug:        "plugins",
-		ShowInNav:   true,
-		NavOrder:    30,
-		Description: "Browsable directory of goblog plugins",
-	}}
+	return []gplugin.PageDefinition{
+		{
+			PageType:    PageType,
+			Title:       "Plugins",
+			Slug:        "plugins",
+			ShowInNav:   true,
+			NavOrder:    30,
+			Description: "Browsable directory of goblog plugins",
+		},
+		{
+			PageType:    ThemePageType,
+			Title:       "Themes",
+			Slug:        "themes",
+			ShowInNav:   true,
+			NavOrder:    31,
+			Description: "Browsable directory of goblog themes",
+		},
+	}
 }
 
 // source returns the GitHub client for one operation, with the token the
@@ -112,21 +149,32 @@ func (p *Plugin) OnInit(db *gorm.DB) error {
 	}
 	p.db = db
 	if p.svc == nil {
-		p.svc = NewService(db, p.source, p.validator, func() string { return siteURL(db) })
+		p.svc = NewService(db, p.source, p.validator, p.themeValidator, func() string { return siteURL(db) })
 	}
 
+	for _, def := range p.Pages() {
+		if err := ensurePage(db, def); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensurePage creates def's page row if it does not already exist. A slug
+// collision with some other page type must not abort plugin.Registry.Init,
+// so it is logged and left to the operator instead of returned as an error.
+func ensurePage(db *gorm.DB, def gplugin.PageDefinition) error {
 	var page blog.Page
-	err := db.Where("page_type = ?", PageType).First(&page).Error
+	err := db.Where("page_type = ?", def.PageType).First(&page).Error
 	if err == nil {
 		return nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("directory plugin: query page: %w", err)
 	}
-	def := p.Pages()[0]
 	var existing blog.Page
 	if err := db.Where("slug = ?", def.Slug).First(&existing).Error; err == nil {
-		log.Printf("Directory plugin: page slug %q is already used by a %q page; rename it and restart to create the plugin directory page", def.Slug, existing.PageType)
+		log.Printf("Directory plugin: page slug %q is already used by a %q page; rename it and restart to create the %s page", def.Slug, existing.PageType, def.Title)
 		return nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("directory plugin: query slug: %w", err)
@@ -142,7 +190,7 @@ func (p *Plugin) OnInit(db *gorm.DB) error {
 	if err := db.Create(&page).Error; err != nil {
 		return fmt.Errorf("directory plugin: create page: %w", err)
 	}
-	log.Println("Directory plugin: created plugins page")
+	log.Printf("Directory plugin: created %s page", def.Title)
 	return nil
 }
 
@@ -203,7 +251,8 @@ const unavailableHTML = `<div class="alert alert-warning" role="alert">The plugi
 // ("<name>.json"). Anything else — including plugins that are not approved
 // — is declined, which blog turns into a 404.
 func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, gin.H) {
-	if pageType != PageType || p.svc == nil {
+	kind := kindOf(pageType)
+	if kind == "" || p.svc == nil {
 		return "", nil
 	}
 	c := ctx.GinContext
@@ -211,7 +260,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 
 	switch {
 	case ctx.SubPath == "":
-		_, entries := p.svc.Index()
+		_, entries := p.svc.Index(kind)
 		sorted := append([]Entry(nil), entries...)
 		sort.SliceStable(sorted, func(i, j int) bool {
 			if sorted[i].Stars != sorted[j].Stars {
@@ -219,7 +268,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 			}
 			return sorted[i].Name < sorted[j].Name
 		})
-		html, err := renderListing(base, sorted)
+		html, err := renderListingFor(kind, base, sorted)
 		if err != nil {
 			log.Printf("Directory plugin: render listing: %v", err)
 			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML}
@@ -227,16 +276,16 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html}
 
 	case ctx.SubPath == "index.json":
-		raw, _ := p.svc.Index()
+		raw, _ := p.svc.Index(kind)
 		c.Header("Cache-Control", "public, max-age=300")
 		c.Data(http.StatusOK, "application/json", raw)
 		return "", nil
 
 	case ctx.SubPath == "submit":
-		return p.renderSubmit(ctx, base)
+		return p.renderSubmit(ctx, base, kind)
 
 	case strings.HasSuffix(ctx.SubPath, ".json") && validName(strings.TrimSuffix(ctx.SubPath, ".json")):
-		d, ok := p.svc.Detail(strings.TrimSuffix(ctx.SubPath, ".json"))
+		d, ok := p.svc.Detail(kind, strings.TrimSuffix(ctx.SubPath, ".json"))
 		if !ok {
 			return "", nil
 		}
@@ -250,11 +299,11 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "", nil
 
 	case validName(ctx.SubPath):
-		d, ok := p.svc.Detail(ctx.SubPath)
+		d, ok := p.svc.Detail(kind, ctx.SubPath)
 		if !ok {
 			return "", nil
 		}
-		html, err := renderDetail(base, d.IndexEntry, &d, "")
+		html, err := renderDetailFor(kind, base, d)
 		if err != nil {
 			log.Printf("Directory plugin: render %s: %v", d.Name, err)
 			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML, "title": d.DisplayName}

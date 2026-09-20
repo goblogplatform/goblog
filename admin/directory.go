@@ -34,7 +34,7 @@ func directoryStatus(err error) int {
 	switch {
 	case errors.Is(err, directory.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, directory.ErrBadRepo):
+	case errors.Is(err, directory.ErrBadRepo), errors.Is(err, directory.ErrBadKind):
 		return http.StatusBadRequest
 	case errors.Is(err, directory.ErrAlreadyListed), errors.Is(err, directory.ErrUnderReview), errors.Is(err, directory.ErrNameTaken):
 		return http.StatusConflict
@@ -96,7 +96,8 @@ func (a *Admin) GetDirectoryRepo(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"repo": v, "detail": d})
 }
 
-// AddDirectoryRepo validates a repository and lists it at once: POST {repo}.
+// AddDirectoryRepo validates a repository and lists it at once: POST
+// {repo, kind}. An empty kind defaults to "plugin".
 func (a *Admin) AddDirectoryRepo(c *gin.Context) {
 	svc := a.requireDirectory(c)
 	if svc == nil {
@@ -104,12 +105,17 @@ func (a *Admin) AddDirectoryRepo(c *gin.Context) {
 	}
 	var req struct {
 		Repo string `json:"repo"`
+		Kind string `json:"kind"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Repo) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "repo is required"})
 		return
 	}
-	r, err := svc.Add(c.Request.Context(), req.Repo, a.Directory.Token())
+	kind := strings.TrimSpace(req.Kind)
+	if kind == "" {
+		kind = directory.KindPlugin
+	}
+	r, err := svc.Add(c.Request.Context(), kind, req.Repo, a.Directory.Token())
 	if err != nil {
 		writeDirectoryError(c, err)
 		return

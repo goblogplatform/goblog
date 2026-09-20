@@ -78,19 +78,27 @@ func basePath(c *gin.Context) string {
 	return "/" + slug
 }
 
-func renderListing(base string, entries []Entry) (string, error) {
+// renderListingFor renders the listing page for kind: listing.html for
+// plugins, themes-listing.html for themes.
+func renderListingFor(kind, base string, entries []Entry) (string, error) {
+	name := "listing.html"
+	if kind == KindTheme {
+		name = "themes-listing.html"
+	}
 	var buf bytes.Buffer
-	err := templates.ExecuteTemplate(&buf, "listing.html", map[string]any{"Base": base, "Entries": entries})
+	err := templates.ExecuteTemplate(&buf, name, map[string]any{"Base": base, "Entries": entries})
 	return buf.String(), err
 }
 
-// renderDetail renders a plugin page. notice, when set, is shown to the
-// reader above the page content.
-func renderDetail(base string, e Entry, d *Detail, notice string) (string, error) {
+// renderDetailFor renders one entry's page for kind: detail.html for
+// plugins, themes-detail.html for themes.
+func renderDetailFor(kind, base string, d Detail) (string, error) {
+	name := "detail.html"
+	if kind == KindTheme {
+		name = "themes-detail.html"
+	}
 	var buf bytes.Buffer
-	err := templates.ExecuteTemplate(&buf, "detail.html", map[string]any{
-		"Base": base, "Entry": e, "Detail": d, "Notice": notice,
-	})
+	err := templates.ExecuteTemplate(&buf, name, map[string]any{"Base": base, "Entry": d.IndexEntry, "Detail": &d, "Notice": ""})
 	return buf.String(), err
 }
 
