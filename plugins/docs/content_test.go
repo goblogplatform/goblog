@@ -13,8 +13,12 @@ import (
 // internalLink matches /docs/<slug>[#anchor] links in rendered HTML.
 var internalLink = regexp.MustCompile(`href="/docs(?:/([a-z0-9-]+))?(?:#([A-Za-z0-9_-]+))?"`)
 
+// samePageLink matches #anchor links in rendered HTML.
+var samePageLink = regexp.MustCompile(`href="#([A-Za-z0-9_-]+)"`)
+
 // TestInternalLinksResolve fails when a page links to a slug that is not
-// in the manifest or to an anchor that is not a heading on that page.
+// in the manifest or to an anchor that is not a heading on that page, or
+// to a same-page anchor that is not one of its own headings.
 func TestInternalLinksResolve(t *testing.T) {
 	p := New()
 	for _, pg := range pages {
@@ -31,6 +35,25 @@ func TestInternalLinksResolve(t *testing.T) {
 			}
 			if !strings.Contains(string(target.HTML), ` id="`+anchor+`"`) {
 				t.Errorf("%s links to /docs/%s#%s but %s has no such heading", pg.File, slug, anchor, target.File)
+			}
+		}
+		for _, m := range samePageLink.FindAllStringSubmatch(string(r.HTML), -1) {
+			if !strings.Contains(string(r.HTML), ` id="`+m[1]+`"`) {
+				t.Errorf("%s links to #%s but has no such heading", pg.File, m[1])
+			}
+		}
+	}
+}
+
+// TestLicenseListsMatchRegistry: the pages that spell out the accepted
+// licenses name every one the directory accepts.
+func TestLicenseListsMatchRegistry(t *testing.T) {
+	p := New()
+	for _, slug := range []string{"publishing-a-plugin", "publishing-a-theme", "writing-a-plugin"} {
+		r, _ := p.rendered(slug)
+		for _, l := range registry.KnownLicenses() {
+			if !strings.Contains(string(r.HTML), "<code>"+l+"</code>") {
+				t.Errorf("%s does not list the %s license", r.File, l)
 			}
 		}
 	}
@@ -124,7 +147,9 @@ func knownIdentifiers() map[string]bool {
 	return known
 }
 
-var snakeCase = regexp.MustCompile(`<code>([a-z][a-z0-9]*(?:_[a-z0-9]+)+)</code>`)
+// snakeCase matches a <code>snake_case</code> span, with or without a dotted
+// prefix (request.sub_path): the last segment is what is linted.
+var snakeCase = regexp.MustCompile(`<code>(?:[a-z][a-z0-9_]*\.)*([a-z][a-z0-9]*(?:_[a-z0-9]+)+)</code>`)
 
 // TestSnakeCaseIdentifiersExist lints every <code>snake_case</code> span in
 // the rendered pages against the real identifiers in the code, so a rename

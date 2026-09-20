@@ -29,7 +29,7 @@ The array is sorted by `name`; the listings sort it by `stars` before showing it
 | `kind` | string | `plugin`. Entries built by a directory older than the field carry `""`; the plugin installer keys on `install_type` and does not look at it. | `theme`. The theme installer requires it. |
 | `screenshot_url` | string | Absent (`omitempty`). | The raw GitHub URL of `screenshot.png` (or `.jpg`) at the tag: `https://raw.githubusercontent.com/<owner>/<repo>/vX.Y.Z/screenshot.png`. |
 
-The two entries below are copied from goblog.live's indexes on the day this page was written, with one edit: hello's live entry still says `"kind": ""` because it was built before `kind` existed, and the value the code writes today is `"plugin"`.
+The two entries below are copied from goblog.live's indexes on the day this page was written, with one edit: hello's live entry may still say `"kind": ""` because it was built before `kind` existed, and the value the code writes today is `"plugin"`.
 
 A plugin — [goblog-plugin-hello](https://github.com/goblogplatform/goblog-plugin-hello) v2.0.0, from `/plugins/index.json`:
 
@@ -84,7 +84,7 @@ An index is served with `Content-Type: application/json`, indented with two spac
 
 ## `<name>.json`
 
-The detail document is the index entry with three more fields — the rendered documentation and the release history. It is what the directory's own listing page shows for an entry, published as JSON for tooling and mirrors; goblog's installer does not read it.
+The detail document is the index entry with three more fields — the rendered documentation and the release history. It backs the directory's page for an entry (`/plugins/<name>`), published as JSON for tooling and mirrors; goblog's installer does not read it.
 
 | Field | Type | Meaning |
 |---|---|---|

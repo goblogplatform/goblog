@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -55,6 +56,17 @@ var knownLicenses = map[string]bool{
 	"GPL-2.0-only": true, "GPL-2.0-or-later": true, "GPL-3.0-only": true, "GPL-3.0-or-later": true,
 	"LGPL-2.1-only": true, "LGPL-2.1-or-later": true, "LGPL-3.0-only": true, "LGPL-3.0-or-later": true,
 	"AGPL-3.0-only": true, "AGPL-3.0-or-later": true,
+}
+
+// KnownLicenses returns the accepted SPDX identifiers, sorted; the docs
+// tests check the published lists against it.
+func KnownLicenses() []string {
+	out := make([]string, 0, len(knownLicenses))
+	for l := range knownLicenses {
+		out = append(out, l)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ParseManifest decodes and validates a manifest. Entry defaults to

@@ -34,7 +34,7 @@ You do not need goblog's source, a fork, or a rebuild. A plugin is a separate re
 | `display_name` | The label in the directory listing. Required. |
 | `description` | One sentence for the listing. Required. |
 | `author` | Required. |
-| `license` | An SPDX identifier from the directory's short list (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, Unlicense, 0BSD, and the GPL/LGPL/AGPL `-only`/`-or-later` forms). |
+| `license` | One of exactly these SPDX identifiers: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `MPL-2.0`, `Unlicense`, `0BSD`, `GPL-2.0-only`, `GPL-2.0-or-later`, `GPL-3.0-only`, `GPL-3.0-or-later`, `LGPL-2.1-only`, `LGPL-2.1-or-later`, `LGPL-3.0-only`, `LGPL-3.0-or-later`, `AGPL-3.0-only`, `AGPL-3.0-or-later`. |
 | `runtime` | Must be `wasm`. Anything else is rejected. |
 | `entry` | The name of the `.wasm` asset attached to each release. Defaults to `plugin.wasm`; letters, digits, `_`, `.` and `-` only, ending in `.wasm`, no path. |
 | `allowed_hosts` | Hostnames, IPs or globs (`*.example.com`) the module may reach over HTTP, each optionally with a port, never a scheme or path. Empty or omitted means no network. `*` alone is rejected. |
@@ -77,7 +77,7 @@ func outputJSON(v any) int32 {
 }
 ```
 
-`settings` declares what appears under **Admin → Settings** for this plugin. Each entry has a `key`, a `type` (`textarea` renders a textarea; anything else is a single-line text input — there is no checkbox type, so booleans are the strings `true` and `false`; the `enabled` key alone gets the card's on/off switch), a `default`, a `label` and a `description`. A setting named `enabled` is special: when you declare one, goblog does not call your template hooks or jobs unless its value is `true`. Hello checks it again anyway, which costs nothing and keeps the module correct on its own.
+`settings` declares what appears under **Admin → Settings** for this plugin. Each entry has a `key`, a `type` (`text` for a single-line input, `textarea` for a multi-line one, or `password` for an input that renders empty and keeps the stored value when saved blank — see [settings](/docs/plugin-api#settings); there is no checkbox type, so booleans are the strings `true` and `false`; the `enabled` key alone gets the card's on/off switch), a `default`, a `label` and a `description`. A setting named `enabled` is special: when you declare one, goblog does not call your template hooks or jobs unless its value is `true`. Hello checks it again anyway, which costs nothing and keeps the module correct on its own.
 
 ```go
 //go:wasmexport settings
