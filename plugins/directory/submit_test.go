@@ -16,6 +16,7 @@ import (
 func TestParseRepo(t *testing.T) {
 	good := map[string]string{
 		"https://github.com/Owner/Repo":          "owner/repo",
+		"HTTPS://GitHub.COM/Owner/Repo":          "owner/repo",
 		"http://www.github.com/o/r/":             "o/r",
 		"https://github.com/o/r.git":             "o/r",
 		"https://github.com/o/r/releases/tag/v1": "o/r",

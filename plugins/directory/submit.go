@@ -14,11 +14,13 @@ import (
 
 // ErrBadRepo is the message shown when the submitted text is not a GitHub
 // repository.
-var ErrBadRepo = errors.New("enter a GitHub repository URL like https://github.com/owner/repo")
+var ErrBadRepo = errors.New("enter a GitHub repository URL like https://github.com/owner/repo, or just owner/repo")
 
 // repoURLPattern accepts a github.com URL (with or without scheme, www,
-// .git or a trailing path) and captures owner and repository.
-var repoURLPattern = regexp.MustCompile(`^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)(?:/.*)?$`)
+// .git or a trailing path) and captures owner and repository. Hostnames are
+// case-insensitive, so https://GitHub.com/... is as good as the lower-case
+// form.
+var repoURLPattern = regexp.MustCompile(`(?i)^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)(?:/.*)?$`)
 
 // repoShortPattern accepts bare owner/repo.
 var repoShortPattern = regexp.MustCompile(`^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$`)
