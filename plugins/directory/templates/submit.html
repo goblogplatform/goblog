@@ -1,7 +1,7 @@
 <p><a href="{{ .Base }}">&larr; All {{ if eq .Kind "theme" }}themes{{ else }}plugins{{ end }}</a></p>
 {{ if .Done }}
 <div class="alert alert-success" role="alert">
-  <strong>Queued for review{{ if eq .DoneKind "theme" }} as a theme{{ else if eq .DoneKind "plugin" }} as a plugin{{ end }}.</strong> Your repository passed validation. It appears on the {{ if eq .DoneKind "theme" }}themes{{ else }}plugins{{ end }} page once a maintainer approves it — usually within a few days.
+  <strong>Queued for review{{ if eq .DoneKind "theme" }} as a theme{{ else if eq .DoneKind "plugin" }} as a plugin{{ end }}.</strong> Your repository passed validation. It appears on the <a href="{{ .DoneBase }}">{{ if eq .DoneKind "theme" }}themes{{ else }}plugins{{ end }} page</a> once a maintainer approves it — usually within a few days.
 </div>
 {{ else }}
 {{ if eq .Kind "theme" }}

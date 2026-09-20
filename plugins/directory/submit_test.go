@@ -117,7 +117,7 @@ func TestRenderPage_SubmitPost(t *testing.T) {
 	// the plugins form is queued as a theme and the confirmation says so.
 	ctx, _ := newRenderCtx(t, http.MethodPost, "/plugins/submit", "submit", url.Values{"repo": {"o/ocean"}})
 	_, data := f.p.RenderPage(ctx, PageType)
-	if html := content(t, data); !strings.Contains(html, "Queued for review as a theme") || !strings.Contains(html, "themes page") {
+	if html := content(t, data); !strings.Contains(html, "Queued for review as a theme") || !strings.Contains(html, `<a href="/themes">themes page</a>`) {
 		t.Errorf("theme success page:\n%s", html)
 	}
 	var themeRow Repo

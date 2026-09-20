@@ -52,8 +52,11 @@ type submitView struct {
 	Error string // shown above the form
 	Done  bool   // queued: show the confirmation instead of the form
 	// DoneKind is what the submission turned out to be (detected from its
-	// manifest), which may differ from the page it was submitted on.
+	// manifest), which may differ from the page it was submitted on;
+	// DoneBase is the listing it will appear on (this page, or the other
+	// kind's).
 	DoneKind string
+	DoneBase string
 	Listed   string // "already listed": the entry's page path
 }
 
@@ -97,7 +100,7 @@ func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base, kind string) (stri
 	// "website" is a honeypot: humans never see it, bots fill it. Pretend
 	// it worked so they move on.
 	if c.PostForm("website") != "" {
-		return page(submitView{Base: base, Kind: kind, Done: true, DoneKind: kind})
+		return page(submitView{Base: base, Kind: kind, Done: true, DoneKind: kind, DoneBase: base})
 	}
 	// The kind comes from the repository's manifest, not from which form it
 	// was pasted into: a theme submitted on the plugins page lands under
@@ -105,7 +108,11 @@ func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base, kind string) (stri
 	r, err := p.svc.Submit(c.Request.Context(), KindAuto, repo, c.ClientIP(), ctx.Settings["github_token"])
 	switch {
 	case err == nil:
-		return page(submitView{Base: base, Kind: kind, Done: true, DoneKind: r.Kind})
+		doneBase := base
+		if r.Kind != kind {
+			doneBase = "/" + kindSlug(r.Kind)
+		}
+		return page(submitView{Base: base, Kind: kind, Done: true, DoneKind: r.Kind, DoneBase: doneBase})
 	case errors.Is(err, ErrAlreadyListed):
 		if key, perr := ParseRepo(repo); perr == nil {
 			if actualKind, name, ok := p.svc.nameOf(key); ok {
