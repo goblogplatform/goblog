@@ -103,8 +103,15 @@ func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base, kind string) (stri
 	case errors.Is(err, ErrAlreadyListed):
 		if key, perr := ParseRepo(repo); perr == nil {
 			if actualKind, name, ok := p.svc.nameOf(key); ok {
-				listed := "/" + kindSlug(actualKind) + "/" + name
-				return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error(), Listed: listed})
+				// Same kind: keep following the request's slug like every other
+				// directory link, so a renamed page still resolves. Crossing
+				// kinds is the one case where we can only guess the other
+				// page's default slug.
+				prefix := base
+				if actualKind != kind {
+					prefix = "/" + kindSlug(actualKind)
+				}
+				return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error(), Listed: prefix + "/" + name})
 			}
 		}
 		return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error()})

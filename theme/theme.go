@@ -64,8 +64,9 @@ func IsBuiltin(name string) bool {
 	return ValidName(name) && hasTemplates(filepath.Join(BuiltinRoot, name))
 }
 
-// List returns every theme name from both roots, sorted, "default" always
-// included (the loader falls back to it even if the directory is missing).
+// List returns every theme name from both roots, sorted. "default" is
+// always listed: it is the baseline every other theme is layered on, and
+// Load requires it (a missing or broken default is a startup error).
 func List() []string {
 	seen := map[string]bool{DefaultName: true}
 	for _, root := range []string{BuiltinRoot, InstalledRoot()} {

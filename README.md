@@ -136,7 +136,7 @@ To create a custom theme:
 1. Create `themes/my-theme/templates/` and copy in only the templates you want to change (start with `header.html`, `footer.html`, `home.html`); add `static/` for CSS.
 2. Set the `theme` setting to `my-theme` in admin settings (hot-reloads, no restart).
 
-Themes from the directory are installed under **Admin → Themes** into `themes/installed/`; see [docs/THEME_CONTRACT.md](docs/THEME_CONTRACT.md) to publish one.
+Themes from the directory will be installable under **Admin → Themes** into `themes/installed/` once the theme installer lands (a follow-up PR); see [docs/THEME_CONTRACT.md](docs/THEME_CONTRACT.md) to publish one.
 
 **Admin → Themes** browses the [theme directory](https://www.goblog.live/themes), installs a theme into `themes/installed/` (bind-mount it in Docker, set with `THEMES_INSTALLED_DIR`, or installs vanish on restart), activates it, updates it when the directory has a newer release, and removes it. The directory URL is the `theme_directory_url` setting.
 
