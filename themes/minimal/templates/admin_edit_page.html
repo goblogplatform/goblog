@@ -32,7 +32,7 @@
             <label for="page_type" class="form-label">Page Type</label>
             <select class="form-select" id="page_type">
                 <option value="writing" {{ if eq .page.PageType "writing" }}selected{{ end }}>Writing (post listing)</option>
-                <option value="research" {{ if eq .page.PageType "research" }}selected{{ end }}>Research (Google Scholar)</option>
+                <option value="research" {{ if eq .page.PageType "research" }}selected{{ end }}>Research (Scholar Publications plugin)</option>
                 <option value="about" {{ if eq .page.PageType "about" }}selected{{ end }}>About (markdown content)</option>
                 <option value="custom" {{ if eq .page.PageType "custom" }}selected{{ end }}>Custom (markdown content)</option>
                 <option value="tags" {{ if eq .page.PageType "tags" }}selected{{ end }}>Tags (tag listing)</option>

@@ -5,7 +5,6 @@ go 1.25.0
 toolchain go1.26.1
 
 require (
-	github.com/compscidr/scholar v1.1.0
 	github.com/gin-contrib/sessions v1.1.1 // https://github.com/gin-contrib/sessions/issues/287
 	github.com/gin-contrib/static v1.1.7
 	github.com/gin-gonic/gin v1.12.0
@@ -28,8 +27,6 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.1.1 // indirect
-	github.com/PuerkitoBio/goquery v1.13.0 // indirect
-	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/beevik/etree v1.1.0 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.2 // indirect

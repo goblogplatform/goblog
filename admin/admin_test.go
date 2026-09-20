@@ -550,6 +550,28 @@ func TestCreatePost(t *testing.T) {
 		t.Fatalf("Expected status %d for duplicate slug but got %d", http.StatusConflict, w.Code)
 	}
 
+	// Create page without a page_type -> stored as "custom", so raw API
+	// callers keep the custom-content page instead of a page type no plugin
+	// owns (which would 404 as "plugin is not installed").
+	a.On("IsAdmin", mock.Anything).Return(true).Once()
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("POST", "/api/v1/pages", bytes.NewBuffer([]byte(`{"title":"Untyped","slug":"untyped","enabled":true}`)))
+	req.Header.Add("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Expected status %d for create page without page_type but got %d. Body: %s", http.StatusCreated, w.Code, w.Body.String())
+	}
+	var untyped blog.Page
+	json.Unmarshal(w.Body.Bytes(), &untyped)
+	if untyped.PageType != blog.PageTypeCustom {
+		t.Errorf("Expected an empty page_type to default to %q, got %q", blog.PageTypeCustom, untyped.PageType)
+	}
+	var untypedRow blog.Page
+	db.Where("slug = ?", "untyped").First(&untypedRow)
+	if untypedRow.PageType != blog.PageTypeCustom {
+		t.Errorf("Expected the stored page_type to be %q, got %q", blog.PageTypeCustom, untypedRow.PageType)
+	}
+
 	// Update page
 	createdPage.Title = "Portfolio Updated"
 	pageJSON, _ = json.Marshal(createdPage)

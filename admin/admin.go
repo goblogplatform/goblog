@@ -755,6 +755,13 @@ func (a *Admin) CreatePage(c *gin.Context) {
 		return
 	}
 
+	// An empty page_type used to fall through to the custom-content
+	// template; a page type no plugin owns now 404s instead, so keep raw API
+	// callers on the old behaviour.
+	if page.PageType == "" {
+		page.PageType = blog.PageTypeCustom
+	}
+
 	page.Slug = sanitizeSlug(page.Slug)
 	if page.Slug == "" {
 		c.JSON(http.StatusBadRequest, "Missing or invalid Slug")

@@ -71,9 +71,10 @@ func (p *Plugin) Pages() []gplugin.PageDefinition {
 	}}
 }
 
-// OnInit ensures the directory page exists in the pages table, the same way
-// the scholar plugin creates its research page. The admin can rename or
-// reorder it afterwards.
+// OnInit ensures the directory page exists in the pages table. The registry's
+// ensurePages already creates it for every plugin before OnInit runs, so this
+// normally finds the row in place and is kept as a fallback. The admin can
+// rename or reorder the page afterwards.
 //
 // blog.Page.Slug has a unique index, so if some other page already uses the
 // "plugins" slug (a different page type), creating our page would fail. That

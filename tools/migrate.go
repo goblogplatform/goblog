@@ -529,7 +529,7 @@ func cleanupEmptyTags(db *gorm.DB) {
 	}
 }
 
-// seedDefaultPages creates the default pages (Writing, Research, About) if no pages exist.
+// seedDefaultPages creates the default pages (Writing, About) if no pages exist.
 func seedDefaultPages(db *gorm.DB) {
 	var count int64
 	db.Model(&blog.Page{}).Count(&count)
@@ -561,17 +561,6 @@ I also enjoy driving, working on cars, video games, contributing to [open source
 			ShowInNav: true,
 			NavOrder:  1,
 			Enabled:   true,
-		},
-		{
-			Title:     "Research",
-			Slug:      "research",
-			HeroURL:   "/img/aidecentralized.jpg",
-			HeroType:  "image",
-			PageType:  "research", // owned by scholar plugin
-			ShowInNav: true,
-			NavOrder:  2,
-			Enabled:   true,
-			ScholarID: "SbUmSEAAAAAJ",
 		},
 		{
 			Title:     "About",

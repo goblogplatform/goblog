@@ -13,7 +13,6 @@ import (
 	"goblog/plugin/wasm"
 	"goblog/plugins/analytics"
 	"goblog/plugins/directory"
-	scholarplugin "goblog/plugins/scholar"
 	"goblog/plugins/socialicons"
 	"goblog/tools"
 	"goblog/wizard"
@@ -304,7 +303,6 @@ func main() {
 	registry := gplugin.NewRegistry(db)
 	registry.Register(analytics.New())
 	registry.Register(socialicons.New())
-	registry.Register(scholarplugin.New())
 	dir := directory.New()
 	dir.SetUserAgent("goblog-directory/" + Version)
 	registry.Register(dir)
@@ -345,13 +343,8 @@ func main() {
 		router:     router,
 	}
 
-	// Filter nav pages: hide pages owned by disabled plugins
-	_blog.PageFilter = func(page blog.Page) bool {
-		if !registry.HasPageType(page.PageType) {
-			return true // not a plugin page, always show
-		}
-		return registry.IsPageTypeEnabled(page.PageType)
-	}
+	// Filter nav pages: hide pages owned by disabled or missing plugins
+	_blog.PageFilter = blog.PluginPageFilter(registry)
 
 	router.Use(CORS())
 	router.Use(gplugin.Middleware(registry))

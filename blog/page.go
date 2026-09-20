@@ -22,7 +22,7 @@ type Page struct {
 	Content   string     `sql:"type:text;" json:"content"`
 	HeroURL   string     `json:"hero_url"`
 	HeroType  string     `json:"hero_type"` // "image" or "video"
-	PageType  string     `json:"page_type"` // "writing", "research", "about", "custom", or plugin-defined
+	PageType  string     `json:"page_type"` // "writing", "about", "custom", "tags", "archives", or plugin-defined (e.g. "research")
 	ShowInNav bool       `json:"show_in_nav"`
 	NavOrder  int        `json:"nav_order"`
 	Enabled   bool       `json:"enabled"`
