@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Theme name rule for the directory: `^[a-z0-9-]+$`, and never `default`, `minimal`, `forest`, `installed`, `shared`. On disk the loader accepts the existing `^[A-Za-z0-9_-]+$`; `installed` and `shared` are reserved there too.
+- Theme name rule for the directory: `^[a-z0-9-]+$`, and never `default`, `minimal`, `installed`, `shared`. (`forest` is deliberately *not* reserved: it ships compiled in today and is also the first directory theme; the installer refuses to install over any built-in, so the name cannot shadow it.) On disk the loader accepts the existing `^[A-Za-z0-9_-]+$`; `installed` and `shared` are reserved there too.
 - Installed themes live in `THEMES_INSTALLED_DIR` (default `themes/installed`); `theme.Dir(name)` resolves `themes/<name>` first, then the installed root; both need a `templates/` directory to count.
 - Loader order: `templates/shared/*.html` → `themes/default/templates/*.html` → the active theme's `templates/*.html` (override by name). `/theme/*` static files fall back to `themes/default/static`.
 - Archive limits: ≤ 16 MiB compressed (`MaxAssetBytes`), ≤ 2000 entries (`MaxArchiveEntries`), no symlinks, no `..`/absolute paths; only `templates/**` and `static/**` are kept; GitHub's single top-level folder is stripped. Screenshot `screenshot.png` or `screenshot.jpg` ≤ 1 MiB (`MaxScreenshotBytes`; the contents API cannot return larger files inline — deviation from the spec's 2 MiB, patched into the spec in Task 8).
@@ -907,8 +907,11 @@ type ThemeManifest struct {
 }
 
 // reservedThemeNames are directory names the loader treats specially or
-// that ship with goblog; a directory theme may not claim them.
-var reservedThemeNames = map[string]bool{"default": true, "minimal": true, "forest": true, "installed": true, "shared": true}
+// the base themes every goblog ships; a directory theme may not claim
+// them. forest is not here on purpose: it is compiled in today and is also
+// published to the directory, and the installer refuses to install over a
+// built-in anyway.
+var reservedThemeNames = map[string]bool{"default": true, "minimal": true, "installed": true, "shared": true}
 
 // ParseThemeManifest decodes and validates a theme manifest.
 func ParseThemeManifest(b []byte) (ThemeManifest, error) {
@@ -1974,7 +1977,7 @@ No build step and no release workflow: the directory downloads GitHub's archive 
 }
 ```
 
-- `name`: `^[a-z0-9-]+$`, unique among themes, becomes the directory name under `themes/installed/` and the value of the `theme` setting. Not `default`, `minimal`, `forest`, `installed` or `shared`.
+- `name`: `^[a-z0-9-]+$`, unique among themes, becomes the directory name under `themes/installed/` and the value of the `theme` setting. Not `default`, `minimal`, `installed` or `shared`, and a goblog never installs a directory theme over a built-in of the same name.
 - `license`: an SPDX identifier from the list in `plugins/directory/registry/manifest.go`.
 - `min_goblog_version`: plain semver; themes need at least `0.5.0` (the first goblog that layers themes on default).
 
@@ -1991,7 +1994,7 @@ Start from `themes/default/templates` in the goblog repository at the version yo
 
 - [ ] **Step 4: Spec patch**
 
-In the spec, §1: "`screenshot.png` or `screenshot.jpg`, ≤ 2 MiB" → "≤ 1 MiB (GitHub's contents API returns files up to 1 MiB inline)". §2 `MaxScreenshotBytes` accordingly if mentioned.
+In the spec, §1: "`screenshot.png` or `screenshot.jpg`, ≤ 2 MiB" → "≤ 1 MiB (GitHub's contents API returns files up to 1 MiB inline)"; and the reserved-name list "`name` may not be `default`, `minimal`, `forest`, `installed`, `shared`" → drop `forest`, adding "(`forest` ships compiled in and is also the first directory theme; the installer never installs over a built-in)".
 
 - [ ] **Step 5: Verify, commit, PR**
 
@@ -2936,7 +2939,7 @@ BODY
 **Files (new repo, worked in a scratch dir):** `goblog-theme.json`, `templates/` (only the files that differ from `themes/default/templates` in goblog at the PR-1 merge commit), `static/` (all of `themes/forest/static`), `README.md`, `screenshot.png`, `LICENSE` (same as goblog's), `CHANGELOG.md` (optional).
 
 - [ ] **Step 1: Assemble** — `gh repo create goblogplatform/goblog-theme-forest --public --description "Forest theme for goblog"`; clone into the scratch dir; for each file in `themes/forest/templates`, keep it only if `diff -q` against `themes/default/templates/<same>` reports a difference (forest was a full copy; the override loader makes the identical ones dead weight); copy `static/` whole.
-- [ ] **Step 2: Manifest** — `{"name":"forest","display_name":"Forest","description":"Misty greens and a soft serif — goblog's forest theme.","author":"Jason Ernst","license":"<goblog's SPDX id>","min_goblog_version":"0.5.0"}`. **Stop:** `forest` is in `reservedThemeNames` because it ships compiled in. Ruling for the executor: name it `forest-theme`? No — the reserved list exists so a directory theme can't shadow a built-in; for the built-in forest to be *also* directory-installable, remove `forest` from `reservedThemeNames` in the registry (and from the contract doc) in PR 2 **and** have the installer's `IsBuiltin` check refuse the install with `ErrBuiltin` (already the case). Apply that change in PR 2 before it merges; the theme repo then uses `"name":"forest"`. Users with the built-in forest see it under Installed (built-in) and never under Browse; a future goblog can drop the built-in copy.
+- [ ] **Step 2: Manifest** — `{"name":"forest","display_name":"Forest","description":"Misty greens and a soft serif — goblog's forest theme.","author":"Jason Ernst","license":"<goblog's SPDX id>","min_goblog_version":"0.5.0"}`. `forest` is intentionally not in the registry's reserved names (Task 4): the built-in copy stays for now, goblogs that have it see it under Installed (built-in) and never under Browse, and a future release can drop the compiled-in copy.
 - [ ] **Step 3: Screenshot** — run goblog locally with `theme=forest`, open the home page at 1280×800 with a few sample posts, save `screenshot.png` (≤ 1 MiB; use `pngquant`/`optipng` if needed). If no browser is available to the executor, report BLOCKED on this step — the controller takes the screenshot.
 - [ ] **Step 4: Validate locally** — from the goblog checkout: `go run ./... ` has no theme validator CLI; instead run `go test ./theme/ -run TestValidateFiles` against the repo by temporarily writing a test — simpler: zip the repo (`git archive --format=zip --prefix=forest-1.0.0/ HEAD > /tmp/forest.zip`) and run a throwaway Go program in the scratch dir that calls `registry.ParseArchive` + `theme.ValidateFiles` with `theme.BuiltinRoot` pointed at the goblog checkout's `themes/` and `theme.SharedDir` at its `templates/shared`. Expect no error.
 - [ ] **Step 5: Release** — commit, push, `gh release create v1.0.0 --title v1.0.0 --notes "First release: the forest theme as a directory theme."`. Then on goblog.live (after PR 2 is deployed): Admin → Plugins → Directory → Add repository, kind Theme, `goblogplatform/goblog-theme-forest`.
@@ -2953,6 +2956,6 @@ In `~/dev/iac`: in `ansible/roles/projects/tasks/main.yml` (goblog.live) and `an
 
 ## Self-review
 
-- **Spec coverage:** §1 contract → Tasks 4, 8 (doc), 11 (forest follows it); §2 registry → Tasks 4–5; §3 directory kind/pages/admin tab → Tasks 6–8; §4 loader → Tasks 1–3; §5 installer + Admin → Themes → Tasks 9–10; §6 rollout → Tasks 11–13 (+ release/deploy by the user); §7 tests → each task. Deviation: screenshot cap 1 MiB (Task 8 patches the spec); `forest` un-reserved so the built-in can also be listed (Task 11 Step 2 — apply in PR 2).
+- **Spec coverage:** §1 contract → Tasks 4, 8 (doc), 11 (forest follows it); §2 registry → Tasks 4–5; §3 directory kind/pages/admin tab → Tasks 6–8; §4 loader → Tasks 1–3; §5 installer + Admin → Themes → Tasks 9–10; §6 rollout → Tasks 11–13 (+ release/deploy by the user); §7 tests → each task. Deviations: screenshot cap 1 MiB (Task 8 patches the spec); `forest` is not a reserved name so the built-in can also be the first listed theme (Task 8 patches the spec's §1 list too).
 - **Placeholders:** none; the two "mirror `admin/plugins.go`" instructions in Task 10 point at concrete existing code and list every handler, mapping and template element.
 - **Type consistency:** `theme.Dir/List/IsBuiltin/ValidName/ValidateFiles/InstalledRoot/BuiltinRoot/SharedDir/DefaultName` (T1–2) used by T9/T10; `registry.KindPlugin/KindTheme/ParseArchive/ContentHash/ThemeManifest/FakeThemeValidator/BuildTheme/MaxScreenshotBytes` (T4–5) used by T6/T9; `directory.KindPlugin/KindTheme/ErrBadKind`, `Service.Submit(ctx, kind, …)`/`Add`/`Index(kind)`/`Detail(kind, name)` (T6) used by T7/T8; `Entry.Kind/ScreenshotURL` (T5) used by T9's harness and the admin JS; `pinstaller.Fetcher` methods exist since the plugin-directory work; `installer.Compatible/Newer` exported in T9 and used there.
