@@ -1,5 +1,10 @@
 package wasm
 
+import (
+	"reflect"
+	"strings"
+)
+
 // JSON shapes of the host contract (spec §1). Field names are the API: a
 // plugin written in any language talks to goblog through exactly these keys.
 
@@ -73,4 +78,19 @@ type renderResult struct {
 	Template string         `json:"template"`
 	Data     map[string]any `json:"data"`
 	Raw      *rawResponse   `json:"raw"`
+}
+
+// ContractFieldNames lists the JSON field names of every wire type in the
+// plugin contract, for the documentation lint.
+func ContractFieldNames() []string {
+	var out []string
+	for _, v := range []any{Identity{}, settingDef{}, pageDef{}, jobDef{}, requestCtx{}, hookInput{}, jobInput{}, initInput{}, rawResponse{}, renderResult{}} {
+		t := reflect.TypeOf(v)
+		for i := 0; i < t.NumField(); i++ {
+			if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ","); tag != "" && tag != "-" {
+				out = append(out, tag)
+			}
+		}
+	}
+	return out
 }

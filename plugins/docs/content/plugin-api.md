@@ -235,7 +235,7 @@ Decode only what you use — the scholar plugin's `hookInput` has `settings` and
 
 ## Host functions
 
-goblog adds four store functions to the module's imports in Extism's `extism:host/user` namespace. Logging and HTTP are Extism's own.
+goblog adds four store functions — `store_get`, `store_set`, `store_delete` and `store_list` — to the module's imports in Extism's `extism:host/user` namespace. Logging and HTTP are Extism's own.
 
 ### store
 
