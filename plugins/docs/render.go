@@ -40,8 +40,7 @@ func Render(src []byte) (template.HTML, []Heading, error) {
 		if !ok || !entering || h.Level < 2 || h.Level > 3 {
 			return ast.WalkContinue, nil
 		}
-		id, _ := h.AttributeString("id")
-		heads = append(heads, Heading{Level: h.Level, ID: string(id.([]byte)), Text: plainText(h, src)})
+		heads = append(heads, Heading{Level: h.Level, ID: headingID(h), Text: plainText(h, src)})
 		return ast.WalkContinue, nil
 	})
 	if err != nil {
@@ -73,4 +72,21 @@ func plainText(n ast.Node, src []byte) string {
 	}
 	walk(n)
 	return buf.String()
+}
+
+// headingID reads the auto-generated id attribute. goldmark stores it as
+// []byte today; a string is accepted too so a library change degrades to
+// an empty id (and a failing anchor test) rather than a panic at startup.
+func headingID(h *ast.Heading) string {
+	id, ok := h.AttributeString("id")
+	if !ok {
+		return ""
+	}
+	switch v := id.(type) {
+	case []byte:
+		return string(v)
+	case string:
+		return v
+	}
+	return ""
 }
