@@ -17,7 +17,6 @@ import (
 	"goblog/blog"
 	"goblog/plugin"
 	"goblog/plugin/installer"
-	"goblog/plugins/directory"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/mock"
@@ -63,7 +62,7 @@ func newPluginsHarness(t *testing.T) *pluginsHarness {
 	reg := plugin.NewRegistry(db)
 	reg.Init()
 	inst := &installer.Installer{
-		Dir: t.TempDir(), WasmDir: t.TempDir(), Registry: reg, Directory: directory.NewFetcher(srv.Client()),
+		Dir: t.TempDir(), WasmDir: t.TempDir(), Registry: reg, Directory: installer.NewFetcher(srv.Client()),
 		Version: "v0.2.7", Client: rewritingClient(srv), Enabled: true, WasmEnabled: true,
 		IndexURL: func() string { return srv.URL + "/index.json" },
 	}

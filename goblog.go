@@ -318,7 +318,7 @@ func main() {
 		Dir:         "plugins/dynamic",
 		WasmDir:     "plugins/wasm",
 		Registry:    registry,
-		Directory:   directory.NewFetcher(nil),
+		Directory:   installer.NewFetcher(nil),
 		Version:     Version,
 		Enabled:     dynamicEnabled,
 		WasmEnabled: wasmEnabled,

@@ -19,7 +19,6 @@ import (
 	"goblog/blog"
 	"goblog/plugin"
 	"goblog/plugin/wasm"
-	"goblog/plugins/directory"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -181,7 +180,7 @@ func newInstallerDB(t *testing.T, f *fixture) (*Installer, *gorm.DB) {
 		Dir:         t.TempDir(),
 		WasmDir:     t.TempDir(),
 		Registry:    reg,
-		Directory:   directory.NewFetcher(f.srv.Client()),
+		Directory:   NewFetcher(f.srv.Client()),
 		Version:     "v0.2.7",
 		Client:      f.srv.Client(),
 		Enabled:     true,

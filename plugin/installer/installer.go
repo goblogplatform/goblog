@@ -65,12 +65,12 @@ type Installer struct {
 	Dir         string // plugins/dynamic: previously installed Yaegi plugins (update/uninstall only)
 	WasmDir     string // plugins/wasm: where directory installs go
 	Registry    *plugin.Registry
-	Directory   *directory.Fetcher // own instance; not the directory plugin's
-	Version     string             // running goblog version, e.g. "v0.2.7" or "development"
-	Client      *http.Client       // downloads; nil → 30s timeout default
-	Enabled     bool               // ENABLE_DYNAMIC_PLUGINS (Yaegi); reported in Status only
-	WasmEnabled bool               // ENABLE_WASM_PLUGINS != "false"; gates Install/Update/Uninstall
-	IndexURL    func() string      // current plugin_directory_url setting
+	Directory   *Fetcher      // own instance; not the directory plugin's
+	Version     string        // running goblog version, e.g. "v0.2.7" or "development"
+	Client      *http.Client  // downloads; nil → 30s timeout default
+	Enabled     bool          // ENABLE_DYNAMIC_PLUGINS (Yaegi); reported in Status only
+	WasmEnabled bool          // ENABLE_WASM_PLUGINS != "false"; gates Install/Update/Uninstall
+	IndexURL    func() string // current plugin_directory_url setting
 
 	// mu serializes Install/Update/Uninstall so two callers acting on the
 	// same (or different) plugin names cannot interleave writes to the
