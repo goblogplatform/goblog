@@ -100,7 +100,12 @@ type Installed struct {
 	UpdateAvailable bool   `json:"update_available"`
 	LatestVersion   string `json:"latest_version,omitempty"`
 	Path            string `json:"path,omitempty"`
+	Health          string `json:"health,omitempty"` // "ok", "busy" or "closed" for plugins that report it (wasm)
 }
+
+// healthReporter is implemented by plugins that can say whether their
+// instance is currently usable (see wasm.Plugin.Health).
+type healthReporter interface{ Health() string }
 
 // Available is a directory entry that is not installed.
 type Available struct {
@@ -246,6 +251,9 @@ func (i *Installer) Status() Status {
 	for _, p := range i.Registry.Plugins() {
 		installed[p.Name()] = true
 		row := Installed{Name: p.Name(), DisplayName: p.DisplayName(), Version: p.Version(), Enabled: i.Registry.IsPluginEnabled(p.Name()), Runtime: "builtin"}
+		if h, ok := p.(healthReporter); ok {
+			row.Health = h.Health()
+		}
 		if d, ok := dynamic[p.Name()]; ok {
 			row.Dynamic = true
 			row.Runtime = d.Runtime
