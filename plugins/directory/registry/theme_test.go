@@ -3,9 +3,12 @@ package registry
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"errors"
 	"io/fs"
 	"strings"
 	"testing"
+	"time"
 )
 
 const goodThemeManifest = `{
@@ -181,4 +184,94 @@ func keys(m map[string][]byte) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func oceanSource(t *testing.T) *memSource {
+	t.Helper()
+	src := &memSource{
+		releases: map[string][]Release{"o/ocean": {
+			{Tag: "v1.0.0", Body: "First", URL: "https://github.com/o/ocean/releases/tag/v1.0.0", PublishedAt: time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)},
+		}},
+		files: map[string]string{
+			"o/ocean@v1.0.0:goblog-theme.json": goodThemeManifest,
+			"o/ocean@v1.0.0:README.md":         "# Ocean",
+			"o/ocean@v1.0.0:screenshot.png":    "\x89PNG",
+		},
+		zipballs: map[string][]byte{"o/ocean@v1.0.0": zipOf(t, "ocean-1.0.0/", map[string]string{
+			"templates/home.html": "home", "static/css/ocean.css": "css", "README.md": "# Ocean",
+		})},
+		stars: map[string]int{"o/ocean": 3},
+	}
+	return src
+}
+
+func TestValidateThemeEntry_Good(t *testing.T) {
+	v, err := ValidateThemeEntry(context.Background(), oceanSource(t), &FakeThemeValidator{}, "o/ocean")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Manifest.Name != "ocean" || v.Version != "1.0.0" || len(v.Files) != 2 || v.ScreenshotURL != "https://raw.test/o/ocean/v1.0.0/screenshot.png" {
+		t.Errorf("validated = %+v", v)
+	}
+	want := ContentHash(map[string][]byte{"templates/home.html": []byte("home"), "static/css/ocean.css": []byte("css")})
+	if v.SHA256 != want {
+		t.Errorf("sha256 = %s, want %s", v.SHA256, want)
+	}
+}
+
+func TestValidateThemeEntry_Errors(t *testing.T) {
+	cases := map[string]struct {
+		mutate func(s *memSource, tv *FakeThemeValidator)
+		want   string
+	}{
+		"missing manifest": {func(s *memSource, _ *FakeThemeValidator) { delete(s.files, "o/ocean@v1.0.0:goblog-theme.json") }, "goblog-theme.json"},
+		"bad manifest": {func(s *memSource, _ *FakeThemeValidator) {
+			s.files["o/ocean@v1.0.0:goblog-theme.json"] = `{"name":"Bad"}`
+		}, "name must match"},
+		"missing readme":     {func(s *memSource, _ *FakeThemeValidator) { delete(s.files, "o/ocean@v1.0.0:README.md") }, "README.md"},
+		"missing screenshot": {func(s *memSource, _ *FakeThemeValidator) { delete(s.files, "o/ocean@v1.0.0:screenshot.png") }, "screenshot"},
+		"jpg accepted": {func(s *memSource, _ *FakeThemeValidator) {
+			s.files["o/ocean@v1.0.0:screenshot.jpg"] = s.files["o/ocean@v1.0.0:screenshot.png"]
+			delete(s.files, "o/ocean@v1.0.0:screenshot.png")
+		}, ""},
+		"screenshot too big": {func(s *memSource, _ *FakeThemeValidator) {
+			s.files["o/ocean@v1.0.0:screenshot.png"] = strings.Repeat("x", MaxScreenshotBytes+1)
+		}, "1 MiB"},
+		"no archive":  {func(s *memSource, _ *FakeThemeValidator) { delete(s.zipballs, "o/ocean@v1.0.0") }, "no archive"},
+		"bad archive": {func(s *memSource, _ *FakeThemeValidator) { s.zipballs["o/ocean@v1.0.0"] = []byte("nope") }, "archive"},
+		"templates broken": {func(_ *memSource, tv *FakeThemeValidator) {
+			tv.Err = errors.New("templates/home.html: unexpected {{end}}")
+		}, "do not load"},
+	}
+	for name, c := range cases {
+		s, tv := oceanSource(t), &FakeThemeValidator{}
+		c.mutate(s, tv)
+		_, err := ValidateThemeEntry(context.Background(), s, tv, "o/ocean")
+		if c.want == "" {
+			if err != nil {
+				t.Errorf("%s: unexpected error %v", name, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want error containing %q, got %v", name, c.want, err)
+		}
+	}
+}
+
+func TestBuildTheme(t *testing.T) {
+	d, err := BuildTheme(context.Background(), oceanSource(t), &FakeThemeValidator{}, "o/ocean", "https://example.test/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := d.IndexEntry
+	if e.Kind != KindTheme || e.InstallType != "theme" || e.Runtime != "" || e.AllowedHosts == nil || len(e.AllowedHosts) != 0 ||
+		e.DownloadURL != "https://github.com/o/ocean/archive/refs/tags/v1.0.0.zip" ||
+		e.DetailURL != "https://example.test/themes/ocean.json" || e.ScreenshotURL != "https://raw.test/o/ocean/v1.0.0/screenshot.png" ||
+		e.Stars != 3 || e.Version != "1.0.0" || e.MinGoblogVersion != "0.5.0" || e.SourceURL != "https://github.com/o/ocean" {
+		t.Errorf("entry = %+v", e)
+	}
+	if d.ReadmeHTML != "<p># Ocean</p>" || len(d.Releases) != 1 || d.Releases[0].NotesHTML != "<p>First</p>" {
+		t.Errorf("docs = %+v", d)
+	}
 }

@@ -101,6 +101,16 @@ func (f *fakeSource) RepoStars(_ context.Context, owner, repo string) (int, erro
 	return r.stars, nil
 }
 
+// Zipball and FileURL are theme-only; no test in this package builds a
+// theme, so these are stubs to satisfy Source (see registry's theme.go).
+func (f *fakeSource) Zipball(_ context.Context, owner, repo, ref string) ([]byte, error) {
+	return nil, errors.New("no archive")
+}
+
+func (f *fakeSource) FileURL(owner, repo, ref, path string) string {
+	return "https://raw.test/" + owner + "/" + repo + "/" + ref + "/" + path
+}
+
 type fixture struct {
 	db  *gorm.DB
 	src *fakeSource

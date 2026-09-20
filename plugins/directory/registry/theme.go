@@ -3,15 +3,18 @@ package registry
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Kinds of entry the directory publishes.
@@ -187,4 +190,128 @@ func ContentHash(files map[string][]byte) string {
 		h.Write(files[p])
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ThemeValidator checks a theme's files the way goblog would load them. The
+// real one (theme.ValidateFiles, wrapped by the directory plugin) parses
+// the templates on top of the shared and default sets; tests use
+// FakeThemeValidator.
+type ThemeValidator interface {
+	Validate(ctx context.Context, files map[string][]byte) error
+}
+
+// FakeThemeValidator accepts everything unless Err is set.
+type FakeThemeValidator struct{ Err error }
+
+func (f *FakeThemeValidator) Validate(context.Context, map[string][]byte) error { return f.Err }
+
+// ValidatedTheme is a theme repository that passed every check.
+type ValidatedTheme struct {
+	Repo, Owner, Name string
+	Manifest          ThemeManifest
+	Release           Release
+	Version           string
+	Releases          []Release
+	Files             map[string][]byte // templates/** and static/**
+	SHA256            string            // ContentHash(Files)
+	ScreenshotURL     string
+}
+
+// ValidateThemeEntry checks a theme repository end to end: a vX.Y.Z
+// release, manifest, README and screenshot at that tag, and an archive
+// whose templates load.
+func ValidateThemeEntry(ctx context.Context, src Source, tv ThemeValidator, repo string) (*ValidatedTheme, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return nil, fmt.Errorf("%q: repo must be owner/name", repo)
+	}
+	latest, releases, err := latestRelease(ctx, src, repo, owner, name)
+	if err != nil {
+		return nil, err
+	}
+	version := strings.TrimPrefix(latest.Tag, "v")
+	at := repo + "@" + latest.Tag
+
+	mb, err := src.File(ctx, owner, name, latest.Tag, "goblog-theme.json")
+	if err != nil {
+		return nil, fmt.Errorf("%s: goblog-theme.json: %w", at, err)
+	}
+	manifest, err := ParseThemeManifest(mb)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", at, err)
+	}
+	if _, err := src.File(ctx, owner, name, latest.Tag, "README.md"); err != nil {
+		return nil, fmt.Errorf("%s: README.md: %w", at, err)
+	}
+	shot := ""
+	for _, candidate := range []string{"screenshot.png", "screenshot.jpg"} {
+		b, err := src.File(ctx, owner, name, latest.Tag, candidate)
+		if isNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s: %v (it must be at most 1 MiB)", at, candidate, err)
+		}
+		if len(b) > MaxScreenshotBytes {
+			return nil, fmt.Errorf("%s: %s is %d bytes; the limit is %d (1 MiB)", at, candidate, len(b), MaxScreenshotBytes)
+		}
+		shot = candidate
+		break
+	}
+	if shot == "" {
+		return nil, fmt.Errorf("%s: screenshot.png (or screenshot.jpg) is required", at)
+	}
+	zb, err := src.Zipball(ctx, owner, name, latest.Tag)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", at, err)
+	}
+	files, err := ParseArchive(zb)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", at, err)
+	}
+	if err := tv.Validate(ctx, files); err != nil {
+		return nil, fmt.Errorf("%s: templates do not load: %w", at, err)
+	}
+	return &ValidatedTheme{
+		Repo: repo, Owner: owner, Name: name, Manifest: manifest, Release: latest, Version: version, Releases: releases,
+		Files: files, SHA256: ContentHash(files), ScreenshotURL: src.FileURL(owner, name, latest.Tag, shot),
+	}, nil
+}
+
+// BuildTheme validates repo and returns the document the directory
+// publishes for it under /themes.
+func BuildTheme(ctx context.Context, src Source, tv ThemeValidator, repo, baseURL string) (DetailDoc, error) {
+	v, err := ValidateThemeEntry(ctx, src, tv, repo)
+	if err != nil {
+		return DetailDoc{}, err
+	}
+	ownerRepo := v.Owner + "/" + v.Name
+	entry := IndexEntry{
+		Kind:             KindTheme,
+		Name:             v.Manifest.Name,
+		DisplayName:      v.Manifest.DisplayName,
+		Description:      v.Manifest.Description,
+		Version:          v.Version,
+		Author:           v.Manifest.Author,
+		License:          v.Manifest.License,
+		SourceURL:        "https://github.com/" + ownerRepo,
+		DownloadURL:      fmt.Sprintf("https://github.com/%s/archive/refs/tags/%s.zip", ownerRepo, v.Release.Tag),
+		SHA256:           v.SHA256,
+		MinGoblogVersion: v.Manifest.MinGoblogVersion,
+		InstallType:      "theme",
+		AllowedHosts:     []string{},
+		ReleasedAt:       v.Release.PublishedAt.UTC().Format(time.RFC3339),
+		DetailURL:        strings.TrimSuffix(baseURL, "/") + "/themes/" + v.Manifest.Name + ".json",
+		ScreenshotURL:    v.ScreenshotURL,
+	}
+	if stars, err := src.RepoStars(ctx, v.Owner, v.Name); err != nil {
+		log.Printf("%s: stars unavailable, using 0: %v", ownerRepo, err)
+	} else {
+		entry.Stars = stars
+	}
+	readme, changelog, releases, err := renderDocs(ctx, src, v.Owner, v.Name, v.Release.Tag, v.Releases)
+	if err != nil {
+		return DetailDoc{}, err
+	}
+	return DetailDoc{IndexEntry: entry, ReadmeHTML: readme, ChangelogHTML: changelog, Releases: releases}, nil
 }

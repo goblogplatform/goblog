@@ -54,6 +54,16 @@ func (s stubSource) RenderMarkdown(_ context.Context, _, md string) (string, err
 }
 func (s stubSource) RepoStars(context.Context, string, string) (int, error) { return 7, nil }
 
+// Zipball and FileURL are theme-only; no test in this package builds a
+// theme, so these are stubs to satisfy Source (see registry's theme.go).
+func (s stubSource) Zipball(context.Context, string, string, string) ([]byte, error) {
+	return nil, fmt.Errorf("no archive")
+}
+
+func (s stubSource) FileURL(owner, repo, ref, path string) string {
+	return "https://raw.test/" + owner + "/" + repo + "/" + ref + "/" + path
+}
+
 type directoryHarness struct {
 	router *gin.Engine
 	auth   *Auth

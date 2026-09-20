@@ -67,6 +67,11 @@ type Source interface {
 	// RepoStars returns the repository's GitHub stargazer count (the
 	// directory's "top plugins" ordering).
 	RepoStars(ctx context.Context, owner, repo string) (stars int, err error)
+	// Zipball downloads the archive of ref (a tag) — at most MaxAssetBytes.
+	Zipball(ctx context.Context, owner, repo, ref string) ([]byte, error)
+	// FileURL is the public raw URL of path at ref (for hot-linked
+	// screenshots); no request is made.
+	FileURL(owner, repo, ref, path string) string
 }
 
 // GitHubSource implements Source with the GitHub REST API over net/http.
@@ -246,6 +251,29 @@ func (g *GitHubSource) RepoStars(ctx context.Context, owner, repo string) (int, 
 		return 0, fmt.Errorf("get repo %s/%s: %w", owner, repo, err)
 	}
 	return r.Stargazers, nil
+}
+
+func (g *GitHubSource) Zipball(ctx context.Context, owner, repo, ref string) ([]byte, error) {
+	req, err := g.newRequest(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/%s/zipball/%s", owner, repo, ref), nil)
+	if err != nil {
+		return nil, err
+	}
+	// The API answers with a redirect to codeload.github.com; Go's client
+	// follows it and drops the Authorization header across hosts.
+	b, err := g.do(g.assetClient, req, MaxAssetBytes)
+	if err != nil {
+		if strings.Contains(err.Error(), "exceeds") {
+			return nil, fmt.Errorf("archive of %s/%s@%s exceeds %d bytes", owner, repo, ref, MaxAssetBytes)
+		}
+		return nil, fmt.Errorf("download archive of %s/%s@%s: %w", owner, repo, ref, err)
+	}
+	return b, nil
+}
+
+// FileURL points at raw.githubusercontent.com, which serves repository
+// files publicly without API quota.
+func (g *GitHubSource) FileURL(owner, repo, ref, path string) string {
+	return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, ref, path)
 }
 
 func (g *GitHubSource) RenderMarkdown(ctx context.Context, ownerRepo, markdown string) (string, error) {

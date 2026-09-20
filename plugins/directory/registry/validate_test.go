@@ -19,6 +19,7 @@ type memSource struct {
 	rendered int                  // RenderMarkdown call count
 	stars    map[string]int       // "owner/repo" → stargazers_count
 	starsErr error                // when set, RepoStars fails for every repo
+	zipballs map[string][]byte    // "owner/repo@ref" → archive
 }
 
 func (m *memSource) Releases(_ context.Context, owner, repo string) ([]Release, error) {
@@ -59,6 +60,17 @@ func (m *memSource) RepoStars(_ context.Context, owner, repo string) (int, error
 		return n, nil
 	}
 	return 0, nil
+}
+
+func (m *memSource) Zipball(_ context.Context, owner, repo, ref string) ([]byte, error) {
+	if b, ok := m.zipballs[owner+"/"+repo+"@"+ref]; ok {
+		return b, nil
+	}
+	return nil, fmt.Errorf("%s/%s@%s: no archive", owner, repo, ref)
+}
+
+func (m *memSource) FileURL(owner, repo, ref, path string) string {
+	return "https://raw.test/" + owner + "/" + repo + "/" + ref + "/" + path
 }
 
 // helloWasm stands in for the plugin.wasm asset attached to hello v1.1.0.
