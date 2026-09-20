@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -104,7 +105,7 @@ func (a *Admin) AddDirectoryRepo(c *gin.Context) {
 	var req struct {
 		Repo string `json:"repo"`
 	}
-	if err := c.BindJSON(&req); err != nil || strings.TrimSpace(req.Repo) == "" {
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Repo) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "repo is required"})
 		return
 	}
@@ -146,7 +147,17 @@ func (a *Admin) RejectDirectoryRepo(c *gin.Context) {
 	var req struct {
 		Reason string `json:"reason"`
 	}
-	c.BindJSON(&req) // an empty body is a rejection without a reason
+	// ShouldBindJSON never writes to the response itself (unlike BindJSON,
+	// which would abort with its own 400 on a decode failure and leave us
+	// writing a second, conflicting status below); an empty body is a
+	// rejection without a reason, so only a malformed non-empty body is an
+	// error here.
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "invalid JSON body"})
+			return
+		}
+	}
 	if err := svc.Reject(id, strings.TrimSpace(req.Reason)); err != nil {
 		writeDirectoryError(c, err)
 		return

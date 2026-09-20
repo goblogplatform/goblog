@@ -207,6 +207,47 @@ func TestDirectoryAPI_Lifecycle(t *testing.T) {
 	}
 }
 
+// TestDirectoryAPI_RejectEmptyAndMalformedBody guards against a regression
+// where RejectDirectoryRepo used c.BindJSON, which writes its own 400 to the
+// response on a decode failure; the handler then went on to write 200 on
+// top of it, and an *empty* body (meant to mean "no reason") counted as such
+// a decode failure. ShouldBindJSON must be used instead, and only a
+// malformed *non-empty* body should be rejected as bad input.
+func TestDirectoryAPI_RejectEmptyAndMalformedBody(t *testing.T) {
+	h := newDirectoryHarness(t, true)
+	h.auth.On("IsAdmin", mock.Anything).Return(true)
+
+	w := h.do("POST", "/api/v1/directory/repos", `{"repo":"o/hello"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
+	var added directory.Repo
+	json.Unmarshal(w.Body.Bytes(), &added)
+	id := fmt.Sprint(added.ID)
+
+	// An empty body is a rejection without a reason, not a broken request.
+	if w := h.do("POST", "/api/v1/directory/repos/"+id+"/reject", ""); w.Code != http.StatusOK {
+		t.Fatalf("reject with empty body: %d %s", w.Code, w.Body.String())
+	}
+	w = h.do("GET", "/api/v1/directory/repos?status=rejected", "")
+	var list []directory.RepoView
+	json.Unmarshal(w.Body.Bytes(), &list)
+	if len(list) != 1 || list[0].RejectReason != "" {
+		t.Fatalf("after empty-body reject: %s", w.Body.String())
+	}
+
+	// A malformed non-empty body is still a 400, and must not change the
+	// repository's state.
+	if w := h.do("POST", "/api/v1/directory/repos/"+id+"/reject", "{not json"); w.Code != http.StatusBadRequest {
+		t.Errorf("reject with malformed body: expected 400, got %d %s", w.Code, w.Body.String())
+	}
+	w = h.do("GET", "/api/v1/directory/repos?status=rejected", "")
+	json.Unmarshal(w.Body.Bytes(), &list)
+	if len(list) != 1 || list[0].RejectReason != "" {
+		t.Errorf("status must be unchanged after malformed reject body: %s", w.Body.String())
+	}
+}
+
 func TestPluginStatus_ReportsDirectoryHosted(t *testing.T) {
 	h := newPluginsHarness(t)
 	h.auth.On("IsAdmin", mock.Anything).Return(true)
