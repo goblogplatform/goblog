@@ -86,7 +86,27 @@ func (r *Registry) RegisterDynamic(p Plugin, path string) error {
 	if r.findLocked(p.Name()) != nil {
 		return fmt.Errorf("a plugin named %q is already registered", p.Name())
 	}
+	for _, pd := range p.Pages() {
+		if owner := r.pageTypeOwnerLocked(pd.PageType); owner != nil {
+			return fmt.Errorf("page type %q is already provided by plugin %q", pd.PageType, owner.Name())
+		}
+	}
 	r.addLocked(p, path)
+	return nil
+}
+
+// pageTypeOwnerLocked returns the registered plugin declaring pageType, if any.
+func (r *Registry) pageTypeOwnerLocked(pageType string) Plugin {
+	if pageType == "" {
+		return nil
+	}
+	for _, e := range r.entries {
+		for _, pd := range e.plugin.Pages() {
+			if pd.PageType == pageType {
+				return e.plugin
+			}
+		}
+	}
 	return nil
 }
 
@@ -205,7 +225,8 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 // reservedSlugs are top-level paths goblog itself serves; a plugin page
 // there would shadow (or be shadowed by) them.
 var reservedSlugs = map[string]bool{
-	"admin": true, "api": true, "login": true, "logout": true, "search": true, "theme": true, "wizard": true,
+	"admin": true, "api": true, "comments": true, "login": true, "logout": true, "posts": true, "search": true,
+	"sitemap.xml": true, "tags": true, "test_db": true, "theme": true, "wizard": true, "wizard_db": true, "wp-content": true,
 }
 
 // ensurePages creates a blog.Page row for each page a plugin declares via
@@ -268,18 +289,23 @@ func ensurePages(db *gorm.DB, p Plugin) {
 }
 
 // DeletePages removes the blog.Page rows of the given page types — what
-// ensurePages created for a plugin that is now being uninstalled.
+// ensurePages created for a plugin that is now being uninstalled. Types a
+// still-registered plugin declares are skipped: that plugin's page is not
+// the uninstalled one's to remove.
 func (r *Registry) DeletePages(pageTypes []string) error {
-	if len(pageTypes) == 0 {
-		return nil
-	}
 	r.mu.RLock()
 	db := r.db
+	var unclaimed []string
+	for _, pt := range pageTypes {
+		if r.pageTypeOwnerLocked(pt) == nil {
+			unclaimed = append(unclaimed, pt)
+		}
+	}
 	r.mu.RUnlock()
-	if db == nil {
+	if db == nil || len(unclaimed) == 0 {
 		return nil
 	}
-	return db.Where("page_type IN ?", pageTypes).Delete(&blog.Page{}).Error
+	return db.Where("page_type IN ?", unclaimed).Delete(&blog.Page{}).Error
 }
 
 // InitPlugin seeds settings, runs OnInit and starts the scheduled jobs of one

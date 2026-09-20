@@ -289,11 +289,15 @@ func TestRenderPage_DetailFlagsBroadHosts(t *testing.T) {
 }
 
 func TestHostNote(t *testing.T) {
-	cases := map[string]string{"api.example.test": "", "*": "any host", "*.example.test": "wildcard", "localhost": "local network",
-		"127.0.0.1": "local network", "10.1.2.3": "local network", "172.20.0.1": "local network", "192.168.1.1:8080": "local network", "172.15.0.1": ""}
-	for in, want := range cases {
-		if got := hostNote(in); got != want {
-			t.Errorf("hostNote(%q) = %q, want %q", in, got, want)
+	for host, want := range map[string]string{
+		"api.example.test": "", "*": "any host", "*.example.test": "wildcard", "api.*": "wildcard",
+		"localhost": "local network", "LOCALHOST": "local network", "::1": "local network",
+		"127.0.0.1": "local network", "10.1.2.3": "local network", "192.168.1.1": "local network", "169.254.169.254": "local network",
+		"10.example.test": "local network", "192.0.2.1": "", "172.16.0.1": "local network", "172.32.0.1": "", "fd12::1": "local network", "fc00::1": "local network", "fe80::1": "local network",
+		"fd.example.test": "", "feed::1": "", "2001:db8::1": "",
+	} {
+		if got := hostNote(host); got != want {
+			t.Errorf("hostNote(%q) = %q, want %q", host, got, want)
 		}
 	}
 }

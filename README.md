@@ -85,6 +85,8 @@ Set `TRUSTED_PROXIES` so `X-Forwarded-For` headers are trusted for client IP res
 TRUSTED_PROXIES=172.16.0.0/12 ./goblog
 ```
 
+The session cookie is `HttpOnly`, `SameSite=Lax` and `Secure`, so it is only sent over HTTPS (browsers exempt `localhost`, so local development on `http://localhost:7000` still works). If you serve goblog over plain HTTP on any other host, set `SESSION_SECURE=false` or logins will not stick. Mutating `/api/v1` requests must be sent as `application/json` (`/api/v1/upload` as `multipart/form-data`); anything else gets `415 Unsupported Media Type`.
+
 ### Pinning the Admin Account
 On a fresh install the first GitHub account to complete login becomes the admin. If you pre-populate `.env` (e.g. from configuration management) and skip the wizard, anyone could win that race. Pin it to your own account by adding either or both of these to `.env`:
 ```bash
@@ -182,13 +184,13 @@ Host functions (Extism's `extism:host/user` namespace):
 | Function | Behaviour |
 |---|---|
 | `store_get(key) → value \| null` | per-plugin persistent KV (`plugin_store` table) |
-| `store_set(key, value)` | key ≤ 256 bytes, value ≤ 1 MB; errors otherwise |
+| `store_set(key, value)` | key ≤ 256 bytes, value ≤ 1 MiB, at most 10 000 keys and 16 MiB per plugin; errors otherwise |
 | `store_delete(key)` | |
 | `store_list(prefix) → [keys]` | |
 | logging | the Extism PDK's own logger (`pdk.Log`), prefixed with the plugin name — there is no separate `log` host function |
 | HTTP | Extism's built-in `http_request`, limited to the hosts in the plugin's `allowed_hosts`; none declared → no network |
 
-Limits: 10 s per `template_*`/`render_page` call, 120 s for `run_job`/`on_init`; 64 MB memory per plugin; one loaded instance per plugin, calls serialised behind a mutex. A call that hits its timeout closes the instance; the next call re-creates it from the module bytes and carries on, at most once per 30 s — a plugin that keeps timing out declines (empty hooks, 404 pages) in between. HTTP redirects are checked against `allowed_hosts` on every hop.
+Limits: 10 s per `template_*`/`render_page` call, 120 s for `run_job`/`on_init`; 64 MB memory per plugin; one loaded instance per plugin with calls serialised — `template_*` hooks wait at most 2 s for a busy instance and then skip that render (logged once), so a slow `render_page` or a long job cannot stall every page; Admin → Plugins shows a plugin as `busy` or `closed` while that is the case. A call that hits its timeout closes the instance; the next call re-creates it from the module bytes and carries on, at most once per 30 s — a plugin that keeps timing out declines (empty hooks, 404 pages) in between. HTTP redirects are checked against `allowed_hosts` on every hop.
 
 Build one with the standard Go toolchain and [`github.com/extism/go-pdk`](https://github.com/extism/go-pdk):
 ```bash
