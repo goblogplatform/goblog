@@ -3549,7 +3549,20 @@ func TestPluginStatus_ReportsDirectoryHosted(t *testing.T) {
 }
 ```
 
-`newPluginsHarness` (in `admin/plugins_test.go`) must expose the DB for the last test: add `db *gorm.DB` to `pluginsHarness` and set it in the constructor (`return &pluginsHarness{router: router, auth: a, inst: inst, srv: srv, ad: ad, db: db}`). Note `ad` there is a value (`admin.Admin`), so `h.ad.Directory = dir` works because the router handlers were bound to `ad`'s methods… **check**: if `admin.New` returns a value and the router captured method values of that copy, setting `h.ad.Directory` later has no effect. In that case change the harness to keep `ad := admin.New(...)` as a pointer (`ad` is already used as `ad.PluginStatus` — if `New` returns `Admin`, take `adp := &ad` and bind routes to `adp`, store `adp`). Add `"net/http/httptest"` to the imports of `directory_test.go`.
+`newPluginsHarness` (in `admin/plugins_test.go`) must expose the DB and a *pointer* to the admin for the last test: `admin.New` returns a value, and the router captured `&ad` of the constructor's local variable, so a copy stored in the harness would not be the one the handlers see. Change the harness to
+
+```go
+type pluginsHarness struct {
+	router *gin.Engine
+	auth   *Auth
+	inst   *installer.Installer
+	srv    *httptest.Server
+	ad     *admin.Admin
+	db     *gorm.DB
+}
+```
+
+and in the constructor `ad := admin.New(db, a, &b, "test")` → keep, then `adp := &ad`, bind every route to `adp.<Handler>`, set `adp.Installer = inst`, and `return &pluginsHarness{router: router, auth: a, inst: inst, srv: srv, ad: adp, db: db}`. Update any existing test that reads `h.ad.` accordingly (it is a pointer now; field access is unchanged). Add `"net/http/httptest"` to the imports of `directory_test.go`.
 
 - [ ] **Step 3: Run to verify failure**
 
