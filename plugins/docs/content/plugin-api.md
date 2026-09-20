@@ -81,7 +81,7 @@ func settings() int32 {
 | `nav_order` | Its position there (ascending). |
 | `description` | Help text; not shown anywhere today. |
 
-**What goblog does:** at startup and after an install or update, it creates a page row for each `page_type` that has none yet, from `title`, `slug`, `show_in_nav` and `nav_order`, enabled. The row is the admin's from then on — title, hero, nav placement and even the slug can be edited under **Admin → Pages** without touching the plugin, because requests are routed by `page_type`. A slug that is invalid, reserved, or already used by a page of another type or by a post type is logged and no page is created. Uninstalling the plugin deletes the rows it created.
+**What goblog does:** at startup and after an install or update, it creates a page row for each `page_type` that has none yet, from `title`, `slug`, `show_in_nav` and `nav_order`, enabled. The row is the admin's from then on — title, hero, nav placement and even the slug can be edited under **Admin → Pages** without touching the plugin, because requests are routed by `page_type`. A slug that is invalid, reserved, or already used by a page of another type is logged and no page is created. Uninstalling the plugin deletes the rows it created.
 
 ```go
 //go:wasmexport pages

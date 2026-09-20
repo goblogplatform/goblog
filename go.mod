@@ -22,6 +22,7 @@ require (
 	github.com/gobwas/glob v0.2.3
 	github.com/tetratelabs/wazero v1.9.0
 	github.com/traefik/yaegi v0.16.1
+	github.com/yuin/goldmark v1.8.6
 	gorm.io/driver/postgres v1.6.3
 )
 

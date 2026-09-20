@@ -45,6 +45,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 - Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
 - WebAssembly plugins (sandboxed, any language/dependencies) installable from the directory
 - Install plugins from the [directory](https://www.goblog.live/plugins) with one click under **Admin → Plugins**
+- Built-in documentation plugin (`docs`): the plugin/theme builder docs served at `/docs`; what goblog.live/docs runs
 
 ### Infrastructure
 - SQLite (file-based, zero config), MySQL, or PostgreSQL
@@ -173,7 +174,7 @@ The plugin directory installs sandboxed WebAssembly modules built with [Extism](
 
 Every export takes and returns JSON through Extism's input/output. Only `identity` is mandatory; a missing export behaves like `BasePlugin`'s no-op.
 
-The full contract — every export's input and output, `ctx`, host functions, store limits, timeouts — is documented at [goblog.live/docs/plugin-api](https://www.goblog.live/docs/plugin-api) (or `/docs/plugin-api` on any goblog running the [docs plugin](https://github.com/goblogplatform/goblog-plugin-docs)); the source of those pages is `docs/guide/`.
+The full contract — every export's input and output, `ctx`, host functions, store limits, timeouts — is documented at [goblog.live/docs/plugin-api](https://www.goblog.live/docs/plugin-api) (or `/docs/plugin-api` on any goblog with the `docs` plugin enabled); the source of those pages is `plugins/docs/content/`.
 
 Build one with the standard Go toolchain and [`github.com/extism/go-pdk`](https://github.com/extism/go-pdk):
 ```bash
