@@ -20,6 +20,7 @@
     <ul class="nav nav-tabs mb-3" role="tablist">
         <li class="nav-item"><button class="nav-link active" id="tab-installed" data-bs-toggle="tab" data-bs-target="#pane-installed" type="button" role="tab">Installed</button></li>
         <li class="nav-item"><button class="nav-link" id="tab-browse" data-bs-toggle="tab" data-bs-target="#pane-browse" type="button" role="tab">Browse</button></li>
+        <li class="nav-item" id="tab-directory-item" hidden><button class="nav-link" id="tab-directory" data-bs-toggle="tab" data-bs-target="#pane-directory" type="button" role="tab">Directory</button></li>
     </ul>
     <div class="tab-content">
         <div class="tab-pane fade show active" id="pane-installed" role="tabpanel">
@@ -41,6 +42,26 @@
                 <div class="col-md-1 d-grid"><button type="button" class="btn btn-outline-secondary" onclick="refreshDirectory()" title="Refresh the directory index" aria-label="Refresh the directory index">↻</button></div>
             </div>
             <div id="browse-cards" class="row g-3"><div class="col-12 text-muted">Loading…</div></div>
+        </div>
+        <div class="tab-pane fade" id="pane-directory" role="tabpanel">
+            <p class="text-muted">This site hosts the plugin directory. Repositories submitted at <a href="/plugins/submit">/plugins/submit</a> wait here for approval; everything approved is published in <a href="/plugins/index.json">index.json</a>.</p>
+            <form class="row g-2 mb-4" id="directory-add-form">
+                <div class="col-md-9"><input type="text" id="directory-add-repo" class="form-control" placeholder="https://github.com/owner/goblog-plugin-name" required></div>
+                <div class="col-md-3 d-grid"><button type="submit" class="btn btn-primary" id="directory-add-btn">Add repository</button></div>
+                <div class="col-12 small text-danger" id="directory-add-error"></div>
+            </form>
+            <h2 class="h5">Pending review</h2>
+            <div id="directory-pending" class="row g-3 mb-4"><div class="col-12 text-muted">Loading…</div></div>
+            <h2 class="h5">Listed</h2>
+            <table class="table align-middle">
+                <thead><tr><th>Plugin</th><th>Repository</th><th>Version</th><th>Stars</th><th>Last build</th><th></th></tr></thead>
+                <tbody id="directory-approved"><tr><td colspan="6" class="text-muted">Loading…</td></tr></tbody>
+            </table>
+            <h2 class="h5">Rejected</h2>
+            <table class="table align-middle">
+                <thead><tr><th>Repository</th><th>Reason</th><th>Decided</th><th></th></tr></thead>
+                <tbody id="directory-rejected"><tr><td colspan="4" class="text-muted">None.</td></tr></tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -171,6 +192,8 @@
       ie.hidden = !st.index_error;
       document.getElementById("plugins-index-error-text").textContent = st.index_error || "";
       renderInstalled(st);
+      document.getElementById("tab-directory-item").hidden = !st.directory_hosted;
+      if (st.directory_hosted) { loadDirectory(); }
       return loadBrowse();
     }).catch(function (e) { showError(e.message); });
   }
@@ -230,6 +253,117 @@
   document.getElementById("browse-cards").addEventListener("click", function (e) {
     var btn = e.target.closest("[data-action]");
     if (btn) { pluginAction(btn.dataset.action, btn.dataset.name, btn); }
+  });
+
+  // ---- Directory tab (only when this site hosts the directory) ----
+  function directoryError(el, msg) { el.textContent = msg || ""; }
+  function fmtDate(s) { return s ? esc(String(s).slice(0, 10)) : ""; }
+  function hostsHTML(hosts) {
+    var parts = (hosts || []).map(function (h) {
+      var note = hostNote(h);
+      return esc(h) + (note ? ' <span class="badge text-bg-warning">' + esc(note) + '</span>' : '');
+    });
+    return parts.length ? "Talks to: " + parts.join(", ") : "No network access";
+  }
+  function pendingCard(r) {
+    var source = httpURL(r.source_url);
+    return '<div class="col-md-6"><div class="card h-100" data-repo-id="' + esc(r.id) + '"><div class="card-body">' +
+      '<h5 class="card-title mb-1">' + esc(r.display_name) + ' <small class="text-muted">' + esc(r.name) + ' v' + esc(r.version) + '</small></h5>' +
+      '<p class="mb-1 small text-muted">by ' + esc(r.author) + ' · ' + esc(r.license) + ' · requires goblog ≥ ' + esc(r.min_goblog_version) + ' · submitted ' + fmtDate(r.submitted_at) + '</p>' +
+      '<p class="small text-muted mb-1">' + hostsHTML(r.allowed_hosts) + '</p>' +
+      (source ? '<a href="' + esc(source) + '" target="_blank" rel="noopener" class="me-2">' + esc(r.repo) + '</a>' : esc(r.repo)) +
+      '<button type="button" class="btn btn-sm btn-link" data-action="readme" data-id="' + esc(r.id) + '">Show README</button>' +
+      '<div class="plugin-readme border rounded p-2 mt-2" data-readme hidden></div>' +
+      '</div><div class="card-footer d-flex justify-content-end gap-2">' +
+      '<button type="button" class="btn btn-sm btn-outline-danger" data-action="reject" data-id="' + esc(r.id) + '">Reject</button>' +
+      '<button type="button" class="btn btn-sm btn-success" data-action="approve" data-id="' + esc(r.id) + '">Approve</button>' +
+      '</div><div class="small text-danger px-3 pb-2 row-error"></div></div></div>';
+  }
+  function approvedRow(r) {
+    var source = httpURL(r.source_url);
+    var build = r.last_error
+      ? '<span class="text-danger" title="' + esc(r.last_error) + '">failed ' + fmtDate(r.last_attempt_at) + '</span><br><small class="text-muted">serving v' + esc(r.version) + ' from ' + fmtDate(r.built_at) + '</small>'
+      : fmtDate(r.built_at);
+    return '<tr data-repo-id="' + esc(r.id) + '">' +
+      '<td><strong>' + esc(r.display_name) + '</strong><br><small class="text-muted">' + esc(r.name) + '</small></td>' +
+      '<td>' + (source ? '<a href="' + esc(source) + '" target="_blank" rel="noopener">' + esc(r.repo) + '</a>' : esc(r.repo)) + '</td>' +
+      '<td>v' + esc(r.version) + '</td><td>★ ' + esc(r.stars) + '</td><td>' + build + '</td>' +
+      '<td class="text-end"><button type="button" class="btn btn-sm btn-outline-secondary me-1" data-action="rebuild" data-id="' + esc(r.id) + '">Rebuild</button>' +
+      '<button type="button" class="btn btn-sm btn-outline-danger" data-action="delist" data-id="' + esc(r.id) + '">Delist</button>' +
+      '<div class="small text-danger row-error"></div></td></tr>';
+  }
+  function rejectedRow(r) {
+    return '<tr data-repo-id="' + esc(r.id) + '"><td>' + esc(r.repo) + '</td><td>' + esc(r.reject_reason) + '</td><td>' + fmtDate(r.decided_at) + '</td>' +
+      '<td class="text-end"><button type="button" class="btn btn-sm btn-success me-1" data-action="approve" data-id="' + esc(r.id) + '">Approve</button>' +
+      '<button type="button" class="btn btn-sm btn-outline-danger" data-action="delist" data-id="' + esc(r.id) + '">Delete</button>' +
+      '<div class="small text-danger row-error"></div></td></tr>';
+  }
+  function renderDirectory(list) {
+    var pending = list.filter(function (r) { return r.status === "pending"; });
+    var approved = list.filter(function (r) { return r.status === "approved"; });
+    var rejected = list.filter(function (r) { return r.status === "rejected"; });
+    document.getElementById("directory-pending").innerHTML = pending.map(pendingCard).join("") || '<div class="col-12 text-muted">Nothing waiting.</div>';
+    document.getElementById("directory-approved").innerHTML = approved.map(approvedRow).join("") || '<tr><td colspan="6" class="text-muted">Nothing listed yet — add a repository above.</td></tr>';
+    document.getElementById("directory-rejected").innerHTML = rejected.map(rejectedRow).join("") || '<tr><td colspan="4" class="text-muted">None.</td></tr>';
+    var badge = pending.length ? ' <span class="badge text-bg-warning">' + pending.length + '</span>' : '';
+    document.getElementById("tab-directory").innerHTML = "Directory" + badge;
+  }
+  window.loadDirectory = function () {
+    return api("GET", "/api/v1/directory/repos").then(renderDirectory).catch(function (e) { showError(e.message); });
+  };
+  function directoryAction(action, id, btn) {
+    var container = btn.closest("tr, .card");
+    var errEl = container ? container.querySelector(".row-error") : null;
+    if (errEl) { errEl.textContent = ""; }
+    if (action === "readme") {
+      var box = container.querySelector("[data-readme]");
+      if (!box.hidden) { box.hidden = true; btn.textContent = "Show README"; return; }
+      api("GET", "/api/v1/directory/repos/" + encodeURIComponent(id)).then(function (data) {
+        // readme_html is GitHub-rendered and sanitized, the same HTML the
+        // public directory page shows; it is the one field inserted as-is.
+        box.innerHTML = (data.detail && data.detail.readme_html) || "<em>No README.</em>";
+        box.hidden = false; btn.textContent = "Hide README";
+      }).catch(function (e) { if (errEl) { errEl.textContent = e.message; } });
+      return;
+    }
+    var body;
+    if (action === "reject") {
+      var reason = prompt("Reason for rejecting (shown only here):", "");
+      if (reason === null) { return; }
+      body = { reason: reason };
+    }
+    if (action === "delist" && !confirm("Remove this repository from the directory? It can be submitted again later.")) { return; }
+    btn.disabled = true;
+    var label = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> ' + label;
+    function restore() { btn.disabled = false; btn.innerHTML = label; }
+    var p = action === "delist"
+      ? api("DELETE", "/api/v1/directory/repos/" + encodeURIComponent(id))
+      : api("POST", "/api/v1/directory/repos/" + encodeURIComponent(id) + "/" + action, body);
+    p.then(function () { return loadDirectory().then(restore, restore); }, function (e) {
+      restore();
+      if (errEl) { errEl.textContent = e.message; } else { showError(e.message); }
+    });
+  }
+  ["directory-pending", "directory-approved", "directory-rejected"].forEach(function (id) {
+    document.getElementById(id).addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-action]");
+      if (btn) { directoryAction(btn.dataset.action, btn.dataset.id, btn); }
+    });
+  });
+  document.getElementById("directory-add-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var input = document.getElementById("directory-add-repo");
+    var btn = document.getElementById("directory-add-btn");
+    var errEl = document.getElementById("directory-add-error");
+    directoryError(errEl, "");
+    btn.disabled = true;
+    var label = btn.textContent;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Checking…';
+    api("POST", "/api/v1/directory/repos", { repo: input.value.trim() }).then(function () {
+      input.value = "";
+      return loadDirectory();
+    }).catch(function (e) { directoryError(errEl, e.message); }).then(function () { btn.disabled = false; btn.textContent = label; });
   });
 
   loadStatus();
