@@ -208,7 +208,7 @@ func fixTableLevelPrimaryKey(db *gorm.DB, table string) error {
 		if err := tx.Exec(newDDL).Error; err != nil {
 			return err
 		}
-		if err := tx.Exec("INSERT INTO `"+tempTable+"`("+colList+") SELECT "+colList+" FROM `"+table+"`").Error; err != nil {
+		if err := tx.Exec("INSERT INTO `" + tempTable + "`(" + colList + ") SELECT " + colList + " FROM `" + table + "`").Error; err != nil {
 			return err
 		}
 		if err := tx.Exec("DROP TABLE `" + table + "`").Error; err != nil {
@@ -306,6 +306,7 @@ func seedDefaultSettings(db *gorm.DB) {
 		{Key: "site_url", Type: "text", Value: "https://www.example.com"},
 		{Key: "comments_require_login", Type: "checkbox", Value: "true"},
 		{Key: "plugin_directory_url", Type: "text", Value: "https://www.goblog.live/plugins/index.json"},
+		{Key: "theme_directory_url", Type: "text", Value: "https://www.goblog.live/themes/index.json"},
 	}
 	for _, s := range defaults {
 		db.Where("key = ?", s.Key).FirstOrCreate(&s)
@@ -614,4 +615,3 @@ func linkWritingPagesToPostType(db *gorm.DB) {
 		db.Model(&page).Update("post_type_id", pt.ID)
 	}
 }
-

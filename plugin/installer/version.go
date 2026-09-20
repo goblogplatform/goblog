@@ -35,10 +35,11 @@ func cmp(a, b [3]int) int {
 	return 0
 }
 
-// compatible reports whether a goblog at version running satisfies a
-// plugin's min_goblog_version. Dev builds ("development", "latest", or
-// anything unparseable) and an unparseable minimum are treated as compatible.
-func compatible(running, min string) bool {
+// Compatible reports whether a goblog at version running satisfies a
+// plugin's (or theme's) min_goblog_version. Dev builds ("development",
+// "latest", or anything unparseable) and an unparseable minimum are
+// treated as compatible.
+func Compatible(running, min string) bool {
 	r, ok := parseVersion(running)
 	if !ok {
 		return true
@@ -50,8 +51,8 @@ func compatible(running, min string) bool {
 	return cmp(r, m) >= 0
 }
 
-// newer reports whether candidate is a strictly newer version than current.
-func newer(candidate, current string) bool {
+// Newer reports whether candidate is a strictly newer version than current.
+func Newer(candidate, current string) bool {
 	c, ok1 := parseVersion(candidate)
 	u, ok2 := parseVersion(current)
 	if !ok1 || !ok2 {

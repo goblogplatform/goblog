@@ -164,6 +164,9 @@ func (i *Installer) client() *http.Client {
 	}
 	c := *base
 	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
 		if !allowedScheme(req.URL) {
 			return fmt.Errorf("redirected to %s: download_url must be https", req.URL)
 		}
@@ -261,7 +264,7 @@ func (i *Installer) Status() Status {
 			row.Path = d.Path
 			if e, ok := byName[p.Name()]; ok {
 				row.LatestVersion = e.Version
-				row.UpdateAvailable = newer(e.Version, p.Version())
+				row.UpdateAvailable = Newer(e.Version, p.Version())
 			}
 		}
 		st.Installed = append(st.Installed, row)
@@ -274,7 +277,7 @@ func (i *Installer) Status() Status {
 		switch {
 		case e.InstallType != "wasm":
 			a.Compatible, a.Reason = false, "not installable from the directory"
-		case !compatible(i.Version, e.MinGoblogVersion):
+		case !Compatible(i.Version, e.MinGoblogVersion):
 			a.Compatible, a.Reason = false, "requires goblog "+e.MinGoblogVersion+" or newer"
 		}
 		st.Available = append(st.Available, a)
@@ -310,7 +313,7 @@ func (i *Installer) lookup(name string) (directory.Entry, error) {
 	if e.InstallType != "wasm" {
 		return directory.Entry{}, ErrNotDynamic
 	}
-	if !compatible(i.Version, e.MinGoblogVersion) {
+	if !Compatible(i.Version, e.MinGoblogVersion) {
 		return directory.Entry{}, fmt.Errorf("%w (%s; this is %s)", ErrIncompatible, e.MinGoblogVersion, i.Version)
 	}
 	return e, nil
@@ -397,7 +400,7 @@ func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
 	if _, ok := parseVersion(d.Version); !ok {
 		return Result{}, fmt.Errorf("%w: installed version %q is not semver", ErrUpToDate, d.Version)
 	}
-	if !newer(e.Version, d.Version) {
+	if !Newer(e.Version, d.Version) {
 		return Result{}, fmt.Errorf("%w: %s is at v%s; the directory has v%s", ErrUpToDate, name, d.Version, e.Version)
 	}
 	src, p, err := i.fetchAndCheck(ctx, e)

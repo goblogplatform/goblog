@@ -1,0 +1,207 @@
+{{ template "header.html" .}}
+<div class="container">
+    {{ template "admin_nav.html" . }}
+    <h1>Themes</h1>
+    <p class="text-muted">Browse the <a href="https://www.goblog.live/themes" target="_blank" rel="noopener">theme directory</a> and install themes with one click. Installed themes live under <code>themes/installed/</code>. Themes are code that renders every page, including this admin — install only themes you trust; the directory checks that a theme is well-formed, not that it is benign.</p>
+
+    <div id="themes-error" class="alert alert-danger" role="alert" hidden></div>
+    <div id="themes-disabled" class="alert alert-warning" role="alert" hidden></div>
+    <div id="themes-index-error" class="alert alert-warning" role="alert" hidden>
+        <span id="themes-index-error-text"></span> — directory URL is set under <a href="/admin/settings">Settings → theme_directory_url</a>.
+        <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="refreshDirectory()">Refresh</button>
+    </div>
+
+    <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item"><button class="nav-link active" id="tab-installed" data-bs-toggle="tab" data-bs-target="#pane-installed" type="button" role="tab">Installed</button></li>
+        <li class="nav-item"><button class="nav-link" id="tab-browse" data-bs-toggle="tab" data-bs-target="#pane-browse" type="button" role="tab">Browse</button></li>
+    </ul>
+    <div class="tab-content">
+        <div class="tab-pane fade show active" id="pane-installed" role="tabpanel">
+            <table class="table align-middle">
+                <thead><tr><th>Theme</th><th>Version</th><th>Type</th><th>Active</th><th></th></tr></thead>
+                <tbody id="installed-rows"><tr><td colspan="5" class="text-muted">Loading…</td></tr></tbody>
+            </table>
+        </div>
+        <div class="tab-pane fade" id="pane-browse" role="tabpanel">
+            <div class="row g-2 mb-3">
+                <div class="col-md-8"><input type="search" id="browse-q" class="form-control" placeholder="Search themes by name, description or author" oninput="scheduleBrowse()"></div>
+                <div class="col-md-3">
+                    <select id="browse-sort" class="form-select" onchange="loadBrowse()">
+                        <option value="stars">Most stars</option>
+                        <option value="name">Name</option>
+                        <option value="newest">Newest release</option>
+                    </select>
+                </div>
+                <div class="col-md-1 d-grid"><button type="button" class="btn btn-outline-secondary" onclick="refreshDirectory()" title="Refresh the directory index" aria-label="Refresh the directory index">↻</button></div>
+            </div>
+            <div id="browse-cards" class="row g-3"><div class="col-12 text-muted">Loading…</div></div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+  var state = { status: null, dirWritable: false };
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
+  }
+  function showError(msg) {
+    var el = document.getElementById("themes-error");
+    el.textContent = msg; el.hidden = !msg;
+  }
+  function api(method, path, body) {
+    return fetch(path, {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(function (resp) {
+      return resp.json().catch(function () { return {}; }).then(function (data) {
+        if (!resp.ok) { throw new Error(data.message || (typeof data === "string" ? data : "Request failed (" + resp.status + ")")); }
+        return data;
+      });
+    });
+  }
+
+  // httpURL returns u when it is an absolute http(s) URL, otherwise null —
+  // directory data must never reach an href/src with an unchecked scheme
+  // (e.g. javascript:). The server already sanitizes source_url/
+  // download_url/screenshot_url in Status(), but a browse search result or
+  // a misbehaving directory should not be trusted twice on just the server
+  // side.
+  function httpURL(u) {
+    return /^https?:\/\//i.test(u || "") ? u : null;
+  }
+  // safeName matches the same [a-z0-9-]+ rule the server enforces on theme
+  // names, so a directory page link is only ever built from a name we know
+  // is a plain slug.
+  function safeName(n) {
+    return /^[a-z0-9-]+$/.test(n || "") ? n : null;
+  }
+
+  function themeTypeBadge(t) {
+    return t.builtin ? '<span class="badge text-bg-light">built-in</span>' : '<span class="badge text-bg-secondary">installed</span>';
+  }
+
+  function renderInstalled(st) {
+    var rows = st.installed.map(function (t) {
+      var activeCell = t.active
+        ? '<span class="text-success" aria-label="Active theme">✓</span>'
+        : '<button type="button" class="btn btn-sm btn-outline-primary" data-action="activate" data-name="' + esc(t.name) + '">Activate</button>';
+      var actions = "";
+      if (t.update_available) {
+        actions += '<button type="button" class="btn btn-sm btn-primary me-1" data-action="update" data-name="' + esc(t.name) + '">Update to v' + esc(t.latest_version) + '</button>';
+      }
+      if (!t.builtin && !t.active) {
+        actions += '<button type="button" class="btn btn-sm btn-outline-danger me-1" data-action="uninstall" data-name="' + esc(t.name) + '">Uninstall</button>';
+      }
+      return '<tr id="installed-' + esc(t.name) + '">' +
+        '<td><strong>' + esc(t.display_name) + '</strong><br><small class="text-muted">' + esc(t.name) + '</small></td>' +
+        '<td>' + (t.version ? "v" + esc(t.version) : "") + '</td>' +
+        '<td>' + themeTypeBadge(t) + '</td>' +
+        '<td>' + activeCell + '</td>' +
+        '<td class="text-end">' + actions + '<div class="small text-danger row-error"></div></td></tr>';
+    });
+    document.getElementById("installed-rows").innerHTML = rows.join("") || '<tr><td colspan="5" class="text-muted">No themes found.</td></tr>';
+  }
+
+  function renderBrowse(list) {
+    var cards = list.map(function (t) {
+      var disabled = !state.dirWritable || !t.compatible;
+      var reason = !state.dirWritable ? "themes/installed/ is not writable" : (t.reason || "");
+      var source = httpURL(t.source_url);
+      var sourceLink = source ? '<a href="' + esc(source) + '" target="_blank" rel="noopener" class="me-2">Source</a>' : '';
+      var dirName = safeName(t.name);
+      var dirLink = dirName ? '<a href="https://www.goblog.live/themes/' + esc(dirName) + '" target="_blank" rel="noopener">Directory page</a>' : '';
+      var minVer = t.min_goblog_version ? ' · requires goblog ≥ ' + esc(t.min_goblog_version) : '';
+      var shot = httpURL(t.screenshot_url);
+      return '<div class="col-md-6"><div class="card h-100">' +
+        (shot ? '<img src="' + esc(shot) + '" class="card-img-top" alt="Screenshot of ' + esc(t.display_name) + '">' : '') +
+        '<div class="card-body">' +
+        '<h5 class="card-title mb-1">' + esc(t.display_name) + ' <small class="text-muted">v' + esc(t.version) + '</small></h5>' +
+        '<p class="mb-1 small text-muted">by ' + esc(t.author) + ' · ★ ' + esc(t.stars) + ' · ' + esc(t.license) + minVer + '</p>' +
+        '<p class="card-text">' + esc(t.description) + '</p>' +
+        sourceLink + dirLink +
+        '</div><div class="card-footer d-flex justify-content-between align-items-center">' +
+        '<span class="small text-muted">' + esc(reason) + '</span>' +
+        '<button type="button" class="btn btn-sm btn-primary" data-action="install" data-name="' + esc(t.name) + '" ' + (disabled ? "disabled" : "") + '>Install</button>' +
+        '</div><div class="small text-danger px-3 pb-2 row-error"></div></div></div>';
+    });
+    document.getElementById("browse-cards").innerHTML = cards.join("") || '<div class="col-12 text-muted">No themes match.</div>';
+  }
+
+  function loadStatus() {
+    return api("GET", "/api/v1/themes/status").then(function (st) {
+      state.status = st; state.dirWritable = st.dir_writable;
+      var disabledEl = document.getElementById("themes-disabled");
+      if (!st.dir_writable) {
+        disabledEl.innerHTML = '<code>themes/installed/</code> is not writable: ' + esc(st.dir_error || "") + '. Fix the directory permissions (or the Docker bind mount) to install themes.';
+        disabledEl.hidden = false;
+      } else {
+        disabledEl.hidden = true;
+      }
+      var ie = document.getElementById("themes-index-error");
+      ie.hidden = !st.index_error;
+      document.getElementById("themes-index-error-text").textContent = st.index_error || "";
+      renderInstalled(st);
+      return loadBrowse();
+    }).catch(function (e) { showError(e.message); });
+  }
+
+  var browseTimer = null;
+  window.scheduleBrowse = function () { clearTimeout(browseTimer); browseTimer = setTimeout(loadBrowse, 200); };
+  window.loadBrowse = function () {
+    var q = encodeURIComponent(document.getElementById("browse-q").value);
+    var sort = document.getElementById("browse-sort").value;
+    return api("GET", "/api/v1/themes/directory?q=" + q + "&sort=" + sort).then(renderBrowse).catch(function (e) { showError(e.message); });
+  };
+  window.refreshDirectory = function () {
+    showError("");
+    api("POST", "/api/v1/themes/refresh").then(loadStatus).catch(function (e) { showError(e.message); });
+  };
+  function themeAction(action, name, btn) {
+    // Only uninstall is destructive enough to confirm; activate just flips
+    // the active theme and can be undone by activating the previous one.
+    if (action === "uninstall" && !confirm("Uninstall " + name + "? Its files will be removed.")) { return; }
+    showError("");
+    var container = btn.closest("tr, .card");
+    var errEl = container ? container.querySelector(".row-error") : null;
+    if (errEl) { errEl.textContent = ""; }
+    btn.disabled = true;
+    var label = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> ' + label;
+    function restore() { btn.disabled = false; btn.innerHTML = label; }
+    var p = action === "uninstall"
+      ? api("DELETE", "/api/v1/themes/" + encodeURIComponent(name))
+      : api("POST", "/api/v1/themes/" + action, { name: name });
+    p.then(function () {
+      // loadStatus() swallows its own errors (see its .catch above) so it
+      // always resolves; restore the button on both branches here rather
+      // than relying on a single .then, so a loadStatus() hiccup after a
+      // successful action can never leave the button stuck spinning.
+      return loadStatus().then(restore, restore);
+    }, function (e) {
+      restore();
+      if (errEl) { errEl.textContent = e.message; } else { showError(e.message); }
+    });
+  }
+
+  // Delegated listeners: the Installed/Browse markup is rebuilt wholesale on
+  // every refresh, so bind once on the stable containers instead of via
+  // inline handlers carrying directory data (name/URL strings) into an HTML
+  // attribute that the browser would entity-decode before evaluating.
+  document.getElementById("installed-rows").addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-action]");
+    if (btn) { themeAction(btn.dataset.action, btn.dataset.name, btn); }
+  });
+  document.getElementById("browse-cards").addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-action]");
+    if (btn) { themeAction(btn.dataset.action, btn.dataset.name, btn); }
+  });
+
+  loadStatus();
+})();
+</script>
+{{ template "footer.html" .}}

@@ -138,6 +138,10 @@ To create a custom theme:
 
 Themes from the directory will be installable under **Admin → Themes** into `themes/installed/` once the theme installer lands (a follow-up PR); see [docs/THEME_CONTRACT.md](docs/THEME_CONTRACT.md) to publish one.
 
+**Admin → Themes** browses the [theme directory](https://www.goblog.live/themes), installs a theme into `themes/installed/` (bind-mount it in Docker, set with `THEMES_INSTALLED_DIR`, or installs vanish on restart), activates it, updates it when the directory has a newer release, and removes it. The directory URL is the `theme_directory_url` setting.
+
+A theme is code: once activated its templates render every page, including the admin, with the same template functions and data goblog's own templates get. The directory's validation checks that a theme is well-formed, not that it is benign, and a listing on goblog.live is a maintainer's approval, not a code audit — install only themes you trust, as with plugins.
+
 ## Plugins
 
 A plugin implements the `plugin.Plugin` interface (`plugin/plugin.go`). Embed `plugin.BasePlugin` to get no-op defaults and implement only the hooks you need:
@@ -243,6 +247,7 @@ With Docker, bind-mount the directory and set the flag:
 docker run -p 7000:7000 -e ENABLE_DYNAMIC_PLUGINS=true \
   -v $PWD/plugins/dynamic:/go/src/github.com/compscidr/goblog/plugins/dynamic \
   -v $PWD/plugins/wasm:/go/src/github.com/compscidr/goblog/plugins/wasm \
+  -v $PWD/themes/installed:/go/src/github.com/compscidr/goblog/themes/installed \
   compscidr/goblog:latest
 ```
 
