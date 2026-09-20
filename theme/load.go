@@ -15,6 +15,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// FuncMap is the template.FuncMap every theme is loaded with.
+func FuncMap() template.FuncMap {
+	return template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}
+}
+
 // base parses the templates every theme starts from: the shared set, then
 // the default theme. A theme's own files are parsed on top, so a template
 // it does not ship falls back to default's instead of 500ing the page.
@@ -66,7 +73,7 @@ func Load(name string, funcMap template.FuncMap) (*template.Template, string, er
 // on top of the shared and default sets. Files in subdirectories of
 // templates/ are not loaded by Load and are ignored here too.
 func ValidateFiles(files map[string][]byte) error {
-	tmpl, err := base(template.FuncMap{"rawHTML": func(s string) template.HTML { return template.HTML(s) }})
+	tmpl, err := base(FuncMap())
 	if err != nil {
 		return err
 	}

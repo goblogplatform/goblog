@@ -124,15 +124,19 @@ themes/
   default/
     templates/    # HTML templates
     static/       # CSS and assets (served at /theme/)
-  minimal/
-    templates/
-    static/
+  installed/      # themes installed from the directory (THEMES_INSTALLED_DIR; bind-mount it in Docker)
+    ocean/
+      templates/
+      static/
 ```
 
+A theme's templates are loaded **on top of `themes/default`**: it only has to ship the templates it changes, and everything else — including admin pages added by newer goblog releases — renders from default. `/theme/<file>` serves the active theme's `static/` and falls back to default's.
+
 To create a custom theme:
-1. Copy `themes/default/` to `themes/my-theme/`
-2. Customize templates and CSS
-3. Set the `theme` setting to `my-theme` in admin settings
+1. Create `themes/my-theme/templates/` and copy in only the templates you want to change (start with `header.html`, `footer.html`, `home.html`); add `static/` for CSS.
+2. Set the `theme` setting to `my-theme` in admin settings (hot-reloads, no restart).
+
+Themes from the directory are installed under **Admin → Themes** into `themes/installed/`; see [docs/THEME_CONTRACT.md](docs/THEME_CONTRACT.md) to publish one.
 
 ## Plugins
 
