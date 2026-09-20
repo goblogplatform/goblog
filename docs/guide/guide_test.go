@@ -22,18 +22,6 @@ func read(t *testing.T, file string) []byte {
 	return b
 }
 
-// pageByFile returns the manifest entry for a file name, or fails.
-func pageByFile(t *testing.T, file string) Page {
-	t.Helper()
-	for _, pg := range Pages {
-		if pg.File == file {
-			return pg
-		}
-	}
-	t.Fatalf("%s is not in Pages", file)
-	return Page{}
-}
-
 // isFence reports whether a line opens or closes a fenced code block. A
 // fence may be indented (inside a list item) and may use ``` or ~~~.
 func isFence(line string) bool {
@@ -69,9 +57,11 @@ func prose(src []byte) []byte {
 // backticks, multibyte runes — is dropped; an empty result is "heading";
 // a repeated ID gets -1, -2, … appended until it is unique. The ID is
 // generated from the heading's raw source line, so inline code
-// contributes its text without the backticks. The plugin's own tests
-// check the same anchors with real goldmark, so a divergence here fails
-// on that side, never silently.
+// contributes its text without the backticks. Only ATX headings at
+// column 0 are recognised (no setext, no headings inside blockquotes or
+// lists), which is all these pages use. The plugin's own tests check
+// the same anchors with real goldmark, so a divergence here fails on
+// that side, never silently.
 func headingIDs(src []byte) map[string]bool {
 	ids := map[string]bool{}
 	inFence := false
