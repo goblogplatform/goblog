@@ -54,7 +54,7 @@ func identity() int32 {
 The key `enabled` is special: it is the on/off switch in the plugin's card header under **Admin → Settings**, stored as `true` or `false`. Its effect:
 
 - **Template hooks and jobs:** when you declare `enabled`, goblog skips `template_head`, `template_footer`, `template_data` and `run_job` unless the stored value is `true`. Without an `enabled` setting they always run.
-- **Pages:** a page is served, and listed in the nav, only while the owning plugin's stored `enabled` is `true` — with or without a declaration. A plugin that exports `pages` must therefore declare `enabled` (with `default` `true` if it should work out of the box), or its pages answer *Page Not Available*.
+- **Pages:** a page is served, and listed in the nav, only while the owning plugin's stored `enabled` is `true` — with or without a declaration. A plugin that exports `pages` should therefore declare `enabled` (with `default` `true` if it should work out of the box) — a plugin with no settings at all has no card, so no switch — or its pages answer *Page Not Available*.
 
 ```go
 //go:wasmexport settings
@@ -96,7 +96,7 @@ func pages() int32 {
 
 **Output:** `[{"name": "…", "interval_seconds": N}]`. An `interval_seconds` of 0 or less means one hour.
 
-**What goblog does:** starts one ticker per job when the plugin is registered. The first run is one interval after start, not immediately; each tick calls `run_job` with the job's `name` and the plugin's current settings, skipping the call while `enabled` is declared and not `true`. A failed run is logged as `Plugin <name> job <job> error` and the ticker carries on.
+**What goblog does:** starts one ticker per job when the plugin is started (after `on_init` at boot, or after an install). The first run is one interval after start, not immediately; each tick calls `run_job` with the job's `name` and the plugin's current settings, skipping the call while `enabled` is declared and not `true`. A failed run is logged as `Plugin <name> job <job> error` and the ticker carries on.
 
 ```go
 //go:wasmexport jobs
@@ -148,7 +148,7 @@ func templateData() int32 {
 |---|---|
 | `{"html": "…"}` | Renders the theme's page-content template with the page's title as heading and your HTML, unescaped, as the body. |
 | `{"template": "x.html", "data": {…}}` | Renders `x.html` from the active theme with goblog's usual page data plus your `data` merged in (your keys win). |
-| `{"raw": {"status": 200, "content_type": "…", "body": "…"}}` | Writes the response as is. `status` defaults to 200 and must be 100–599; `content_type` defaults to `text/plain; charset=utf-8`. Use it for JSON, feeds, redirects and anything that is not a themed page. |
+| `{"raw": {"status": 200, "content_type": "…", "body": "…"}}` | Writes the response as is. `status` defaults to 200 and must be 100–599; `content_type` defaults to `text/plain; charset=utf-8`. Use it for JSON, feeds and anything that is not a themed page (there is no way to set headers, so no redirects). |
 
 An empty object, nothing at all, an error, or a `raw` status out of range declines the request and goblog answers 404. If more than one shape is present, `raw` wins over `template`, which wins over `html`. `render_page` waits for the instance without a time bound, unlike the template hooks.
 
@@ -307,6 +307,7 @@ Outbound HTTP is Extism's built-in `http_request`, which the Go PDK wraps as `pd
 A response body is capped at 8 MB. A request to a host outside the list, a transport failure (DNS, refused connection, TLS) or a body over the cap does not return an error to the module: it aborts the export call, which goblog logs and treats as having returned nothing. Keep fetches in `run_job`, where an abort costs one tick, and serve pages from the store.
 
 ```go
+// c is the decoded ctx and itoa an integer formatter, both echo's own.
 req := pdk.NewHTTPRequest(pdk.MethodGet, c.Request.Query["url"])
 resp := req.Send()
 return out(map[string]any{"html": "status=" + itoa(int(resp.Status())) + " body=" + string(resp.Body())})
@@ -317,8 +318,8 @@ return out(map[string]any{"html": "status=" + itoa(int(resp.Status())) + " body=
 - **Timeouts:** 10 s per call of `identity`, `settings`, `pages`, `jobs`, `template_head`, `template_footer`, `template_data` and `render_page`; 120 s for `run_job` and `on_init`.
 - **Memory:** 64 MB per plugin (1024 WebAssembly pages). Allocating past it fails the call.
 - **One instance per plugin, calls serialised.** goblog keeps one loaded instance of each module and runs one export on it at a time. `render_page`, `run_job` and `on_init` wait for their turn without bound. The three template hooks wait at most 2 s and then skip that render — logged once per busy stretch — so a slow page or a long job cannot stall every other page on the site.
-- **A timeout closes the instance.** wazero enforces the deadline by closing the module, and everything after that fails until the instance is re-created. The next call re-creates it from the module bytes and carries on, at most once per 30 s; a plugin that keeps timing out declines in between (empty hooks, 404 pages, skipped jobs), which is logged once per closed instance. A guest exit or trap is handled the same way, except that the call which finds the instance closed re-creates it and retries once.
-- **Admin → Plugins** shows the plugin as `busy` while a call holds the instance and `closed` after a timeout or exit until it is re-created; otherwise `ok`.
+- **A timeout closes the instance.** wazero enforces the deadline by closing the module, and everything after that fails until the instance is re-created. The next call re-creates it from the module bytes and carries on, at most once per 30 s; a plugin that keeps timing out declines in between (empty hooks, 404 pages, skipped jobs), which is logged once per closed instance. A guest exit (a Go panic ends in one) is handled the same way, except that the call which finds the instance closed re-creates it and retries once.
+- **Admin → Plugins** shows the plugin as `busy` while a call holds the instance and `closed` after a timeout or exit until it is re-created; otherwise no badge.
 - **Errors:** a non-zero return from a hook is logged with the message you set and treated as no output. From a load-time export it fails the load: the plugin is not registered, `validate-plugin` exits 1, and the directory rejects the release.
 - **No filesystem.** WASI is enabled for the clock, sleep and randomness (real ones, not wazero's fixed defaults), but no directories are mounted.
 

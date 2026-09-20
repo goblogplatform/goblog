@@ -77,7 +77,7 @@ func outputJSON(v any) int32 {
 }
 ```
 
-`settings` declares what appears under **Admin → Settings** for this plugin. Each entry has a `key`, a `type` (`textarea` renders a textarea; anything else is a single-line text input — there is no checkbox, so booleans are the strings `true` and `false`), a `default`, a `label` and a `description`. A setting named `enabled` is special: when you declare one, goblog does not call your template hooks or jobs unless its value is `true`. Hello checks it again anyway, which costs nothing and keeps the module correct on its own.
+`settings` declares what appears under **Admin → Settings** for this plugin. Each entry has a `key`, a `type` (`textarea` renders a textarea; anything else is a single-line text input — there is no checkbox type, so booleans are the strings `true` and `false`; the `enabled` key alone gets the card's on/off switch), a `default`, a `label` and a `description`. A setting named `enabled` is special: when you declare one, goblog does not call your template hooks or jobs unless its value is `true`. Hello checks it again anyway, which costs nothing and keeps the module correct on its own.
 
 ```go
 //go:wasmexport settings

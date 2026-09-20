@@ -125,7 +125,10 @@ func TestRenderPage(t *testing.T) {
 
 // TestTOC_OnlyForLongerPages: a page gets a table of contents iff it has
 // more than three H2/H3 headings. The reference page is the long one; the
-// short side is whichever page has three or fewer.
+// short side is whichever page has three or fewer. It assumes at least one
+// such page exists: if every page grows past three headings, the no-TOC
+// branch is untested and the final assertion fires — add a short page or
+// drop that check, do not weaken the iff.
 func TestTOC_OnlyForLongerPages(t *testing.T) {
 	p := New()
 	long, _ := p.rendered("plugin-api")
