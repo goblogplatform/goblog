@@ -46,7 +46,7 @@
         <div class="tab-pane fade" id="pane-directory" role="tabpanel">
             <p class="text-muted">Repositories submitted at <a href="/plugins/submit">/plugins/submit</a> and <a href="/themes/submit">/themes/submit</a> wait here for approval; everything approved is published in <a href="/plugins/index.json">/plugins/index.json</a> or <a href="/themes/index.json">/themes/index.json</a>.</p>
             <form class="row g-2 mb-4" id="directory-add-form">
-                <div class="col-md-7"><input type="text" id="directory-add-repo" class="form-control" placeholder="https://github.com/owner/goblog-plugin-name" required></div>
+                <div class="col-md-7"><input type="text" id="directory-add-repo" class="form-control" placeholder="https://github.com/owner/repo" required></div>
                 <div class="col-md-2 d-flex align-items-center gap-3">
                     <div class="form-check"><input class="form-check-input" type="radio" name="directory-add-kind" id="directory-add-kind-plugin" value="plugin" checked><label class="form-check-label" for="directory-add-kind-plugin">Plugin</label></div>
                     <div class="form-check"><input class="form-check-input" type="radio" name="directory-add-kind" id="directory-add-kind-theme" value="theme"><label class="form-check-label" for="directory-add-kind-theme">Theme</label></div>
@@ -283,7 +283,7 @@
     var isTheme = r.kind === "theme";
     var shot = isTheme ? httpURL(r.screenshot_url) : null;
     return '<div class="col-md-6"><div class="card h-100" data-repo-id="' + esc(r.id) + '">' +
-      (shot ? '<img src="' + esc(shot) + '" class="card-img-top" alt="">' : '') +
+      (shot ? '<img src="' + esc(shot) + '" class="card-img-top" alt="Screenshot of ' + esc(r.display_name) + '" loading="lazy">' : '') +
       '<div class="card-body">' +
       '<h5 class="card-title mb-1"><span class="badge text-bg-secondary">' + esc(r.kind) + '</span> ' + esc(r.display_name) + ' <small class="text-muted">' + esc(r.name) + ' v' + esc(r.version) + '</small></h5>' +
       '<p class="mb-1 small text-muted">by ' + esc(r.author) + ' · ' + esc(r.license) + ' · requires goblog ≥ ' + esc(r.min_goblog_version) + ' · submitted ' + fmtDate(r.submitted_at) + '</p>' +

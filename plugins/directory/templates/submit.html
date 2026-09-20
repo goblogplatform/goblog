@@ -17,5 +17,5 @@
   <div class="col-sm-3 d-grid"><button type="submit" class="btn btn-primary">Submit for review</button></div>
   <div class="d-none" aria-hidden="true"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 </form>
-<p class="mt-3 small text-muted">Validation downloads the latest release's {{ if eq .Kind "theme" }}archive and parses its templates against goblog's{{ else }}module, loads it in goblog's sandbox and checks that its name and version match the manifest and the release tag{{ end }}. Nothing is stored unless it passes.</p>
+<p class="mt-3 small text-muted">{{ if eq .Kind "theme" }}Validation checks the manifest, README and screenshot at the latest release, downloads the release's archive and parses every template on top of goblog's default theme.{{ else }}Validation downloads the latest release's module, loads it in goblog's sandbox and checks that its name and version match the manifest and the release tag.{{ end }} Nothing is stored unless it passes.</p>
 {{ end }}

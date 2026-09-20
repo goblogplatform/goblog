@@ -139,6 +139,13 @@ func TestRenderPage_SubmitAlreadyListedLinksToActualKind(t *testing.T) {
 	if !strings.Contains(html, "already listed") || !strings.Contains(html, `href="/themes/ocean"`) {
 		t.Errorf("already listed under the other kind:\n%s", html)
 	}
+	// Same kind: the link follows the request's slug (the admin may have
+	// renamed the page), not a hard-coded default.
+	ctx, _ = newRenderCtx(t, http.MethodPost, "/skins/submit", "submit", url.Values{"repo": {"o/ocean"}})
+	_, data = f.p.RenderPage(ctx, ThemePageType)
+	if html := content(t, data); !strings.Contains(html, `href="/skins/ocean"`) {
+		t.Errorf("same-kind link should use the request slug:\n%s", html)
+	}
 }
 
 func TestRenderPage_SubmitRateLimitedIs429(t *testing.T) {
