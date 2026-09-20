@@ -63,3 +63,17 @@ jobs:
         tags: |
           compscidr/goblog:${{ steps.checkout.outputs.tag }}
           compscidr/goblog:latest
+
+    # iac pins this image tag in three places and Renovate only notices a new
+    # tag when its shared queue gets round to the repo (often hours). A
+    # dispatch is repo activity iac can act on immediately: its
+    # goblog-release workflow opens the bump PR itself. IAC_TOKEN is a
+    # fine-grained PAT with Contents: read & write on compscidr/iac (what
+    # repository_dispatch requires).
+    - name: Tell iac about the release
+      env:
+        GH_TOKEN: ${{ secrets.IAC_TOKEN }}
+      run: |
+        gh api repos/compscidr/iac/dispatches \
+          -f event_type=goblog-released \
+          -f 'client_payload[tag]=${{ steps.checkout.outputs.tag }}'
