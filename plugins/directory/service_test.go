@@ -549,3 +549,31 @@ func TestService_ThemesAreSeparateFromPlugins(t *testing.T) {
 		t.Errorf("refresh with both kinds: %v", err)
 	}
 }
+
+func TestService_KindAutoDetectsFromManifest(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	r, err := f.svc.Submit(ctx, KindAuto, "o/ocean", "ip", "")
+	if err != nil || r.Kind != KindTheme {
+		t.Fatalf("theme repo submitted without a kind: %+v %v", r, err)
+	}
+	var b Build
+	f.db.Where("repo_id = ?", r.ID).First(&b)
+	if b.Kind != KindTheme || b.Name != "ocean" {
+		t.Errorf("build = %+v", b)
+	}
+	p, err := f.svc.Add(ctx, KindAuto, "o/hello", "")
+	if err != nil || p.Kind != KindPlugin {
+		t.Fatalf("plugin repo added without a kind: %+v %v", p, err)
+	}
+	if names := f.indexNames(t, KindPlugin); len(names) != 1 || names[0] != "hello" {
+		t.Errorf("plugin index = %v", names)
+	}
+	// An explicit kind still wins over detection.
+	if _, err := f.svc.Add(ctx, KindTheme, "o/zeta", ""); err == nil {
+		t.Error("forcing kind=theme on a plugin repo must fail validation (no goblog-theme.json)")
+	}
+	if _, err := f.svc.Submit(ctx, "bogus", "o/hello", "ip", ""); !errors.Is(err, ErrBadKind) {
+		t.Errorf("bad kind still refused: %v", err)
+	}
+}

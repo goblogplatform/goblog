@@ -105,10 +105,13 @@ ignored), no `..` or absolute paths.
   version, description, author, license, ★), `themes-detail.html` (large
   screenshot, metadata, README, releases), `submit.html` parameterised by
   kind (contract text and link differ).
-- Admin: `RepoView.Kind`; the Directory tab shows a kind badge, the "Add
-  repository" form gains a Plugin/Theme radio, pending theme cards show the
-  screenshot; `POST /api/v1/directory/repos {repo, kind}` (`kind` defaults
-  to `plugin`).
+- Admin: `RepoView.Kind`; the Directory tab shows a kind badge, pending
+  theme cards show the screenshot; `POST /api/v1/directory/repos {repo,
+  kind}` where `kind` is optional. **Kind is detected, not chosen:** a
+  submission (public form or admin Add) with no kind looks at which of
+  `goblog-plugin.json` / `goblog-theme.json` the latest release carries
+  (`registry.DetectKind`; both or neither is a validation error), so either
+  submit page accepts either kind and the confirmation says which it became.
 
 ## 4. Theme loader (`theme` package, new)
 

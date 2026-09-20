@@ -113,10 +113,11 @@ func TestRenderPage_SubmitPost(t *testing.T) {
 		t.Error("honeypot submissions must not be stored")
 	}
 
-	// Themes submit under KindTheme.
-	ctx, _ := newRenderCtx(t, http.MethodPost, "/themes/submit", "submit", url.Values{"repo": {"o/ocean"}})
-	_, data := f.p.RenderPage(ctx, ThemePageType)
-	if html := content(t, data); !strings.Contains(html, "Queued for review") {
+	// The kind comes from the manifest, not the form: a theme pasted into
+	// the plugins form is queued as a theme and the confirmation says so.
+	ctx, _ := newRenderCtx(t, http.MethodPost, "/plugins/submit", "submit", url.Values{"repo": {"o/ocean"}})
+	_, data := f.p.RenderPage(ctx, PageType)
+	if html := content(t, data); !strings.Contains(html, "Queued for review as a theme") || !strings.Contains(html, `<a href="/themes">themes page</a>`) {
 		t.Errorf("theme success page:\n%s", html)
 	}
 	var themeRow Repo

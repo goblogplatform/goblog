@@ -203,9 +203,10 @@ func TestDirectoryAPI_Lifecycle(t *testing.T) {
 		t.Errorf("bad kind: %d %s", w.Code, w.Body.String())
 	}
 
-	w = h.do("POST", "/api/v1/directory/repos", `{"repo":"o/ocean","kind":"theme"}`)
+	// No kind in the body: detected from the repository's manifest.
+	w = h.do("POST", "/api/v1/directory/repos", `{"repo":"o/ocean"}`)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"kind":"theme"`) {
-		t.Fatalf("add theme: %d %s", w.Code, w.Body.String())
+		t.Fatalf("add theme without a kind: %d %s", w.Code, w.Body.String())
 	}
 
 	w = h.do("GET", "/api/v1/directory/repos?status=approved", "")

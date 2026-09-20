@@ -46,22 +46,18 @@
         <div class="tab-pane fade" id="pane-directory" role="tabpanel">
             <p class="text-muted">Repositories submitted at <a href="/plugins/submit">/plugins/submit</a> and <a href="/themes/submit">/themes/submit</a> wait here for approval; everything approved is published in <a href="/plugins/index.json">/plugins/index.json</a> or <a href="/themes/index.json">/themes/index.json</a>.</p>
             <form class="row g-2 mb-4" id="directory-add-form">
-                <div class="col-md-7"><input type="text" id="directory-add-repo" class="form-control" placeholder="https://github.com/owner/repo" required></div>
-                <div class="col-md-2 d-flex align-items-center gap-3">
-                    <div class="form-check"><input class="form-check-input" type="radio" name="directory-add-kind" id="directory-add-kind-plugin" value="plugin" checked><label class="form-check-label" for="directory-add-kind-plugin">Plugin</label></div>
-                    <div class="form-check"><input class="form-check-input" type="radio" name="directory-add-kind" id="directory-add-kind-theme" value="theme"><label class="form-check-label" for="directory-add-kind-theme">Theme</label></div>
-                </div>
+                <div class="col-md-9"><input type="text" id="directory-add-repo" class="form-control" placeholder="https://github.com/owner/repo (plugin or theme — told apart by its manifest)" required></div>
                 <div class="col-md-3 d-grid"><button type="submit" class="btn btn-primary" id="directory-add-btn">Add repository</button></div>
                 <div class="col-12 small text-danger" id="directory-add-error"></div>
             </form>
-            <h2 class="h5">Pending review</h2>
+            <h2 class="fs-5">Pending review</h2>
             <div id="directory-pending" class="row g-3 mb-4"><div class="col-12 text-muted">Loading…</div></div>
-            <h2 class="h5">Listed</h2>
+            <h2 class="fs-5">Listed</h2>
             <table class="table align-middle">
                 <thead><tr><th>Plugin</th><th>Repository</th><th>Version</th><th>Stars</th><th>Last build</th><th></th></tr></thead>
                 <tbody id="directory-approved"><tr><td colspan="6" class="text-muted">Loading…</td></tr></tbody>
             </table>
-            <h2 class="h5">Rejected</h2>
+            <h2 class="fs-5">Rejected</h2>
             <table class="table align-middle">
                 <thead><tr><th>Repository</th><th>Reason</th><th>Decided</th><th></th></tr></thead>
                 <tbody id="directory-rejected"><tr><td colspan="4" class="text-muted">None.</td></tr></tbody>
@@ -376,14 +372,14 @@
   document.getElementById("directory-add-form").addEventListener("submit", function (e) {
     e.preventDefault();
     var input = document.getElementById("directory-add-repo");
-    var kindInput = document.querySelector('input[name="directory-add-kind"]:checked');
     var btn = document.getElementById("directory-add-btn");
     var errEl = document.getElementById("directory-add-error");
     directoryError(errEl, "");
     btn.disabled = true;
     var label = btn.textContent;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Checking…';
-    api("POST", "/api/v1/directory/repos", { repo: input.value.trim(), kind: kindInput ? kindInput.value : "plugin" }).then(function () {
+    // No kind: the server reads goblog-plugin.json / goblog-theme.json.
+    api("POST", "/api/v1/directory/repos", { repo: input.value.trim() }).then(function () {
       input.value = "";
       return loadDirectory();
     }).catch(function (e) { directoryError(errEl, e.message); }).then(function () { btn.disabled = false; btn.textContent = label; });

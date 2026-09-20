@@ -29,6 +29,10 @@ var (
 // validKind reports whether kind is one the directory curates.
 func validKind(k string) bool { return k == KindPlugin || k == KindTheme }
 
+// KindAuto asks the service to tell a plugin from a theme by the manifest
+// the repository's latest release carries.
+const KindAuto = ""
+
 // ValidationError is a submission that failed the plugin contract. Msg is
 // the registry's error text, the same message CI used to give.
 type ValidationError struct{ Msg string }
@@ -97,7 +101,7 @@ type RepoView struct {
 // Submit is the public path: parse, refuse duplicates, rate-limit, validate
 // and build synchronously, then queue the repository for review.
 func (s *Service) Submit(ctx context.Context, kind, input, ip, token string) (*Repo, error) {
-	if !validKind(kind) {
+	if kind != KindAuto && !validKind(kind) {
 		return nil, ErrBadKind
 	}
 	repo, err := ParseRepo(input)
@@ -120,12 +124,12 @@ func (s *Service) Submit(ctx context.Context, kind, input, ip, token string) (*R
 	if err != nil {
 		return nil, &ValidationError{Msg: err.Error()}
 	}
-	return s.save(kind, repo, doc, StatusPending, ip)
+	return s.save(doc.Kind, repo, doc, StatusPending, ip)
 }
 
 // Add is the admin path: same validation, no rate limit, listed at once.
 func (s *Service) Add(ctx context.Context, kind, input, token string) (*Repo, error) {
-	if !validKind(kind) {
+	if kind != KindAuto && !validKind(kind) {
 		return nil, ErrBadKind
 	}
 	repo, err := ParseRepo(input)
@@ -141,7 +145,7 @@ func (s *Service) Add(ctx context.Context, kind, input, token string) (*Repo, er
 	if err != nil {
 		return nil, &ValidationError{Msg: err.Error()}
 	}
-	r, err := s.save(kind, repo, doc, StatusApproved, "")
+	r, err := s.save(doc.Kind, repo, doc, StatusApproved, "")
 	if err != nil {
 		return nil, err
 	}
@@ -171,11 +175,21 @@ func (s *Service) refuseDuplicate(repo string, pendingToo bool) error {
 	return nil
 }
 
+// build validates and builds repo as kind; KindAuto looks at which manifest
+// the latest release carries first. The returned document's Kind is the
+// one that was built, which is what callers store.
 func (s *Service) build(ctx context.Context, kind, repo, token string) (registry.DetailDoc, error) {
-	if kind == KindTheme {
-		return registry.BuildTheme(ctx, s.newSource(token), s.themeValidator, repo, s.siteURL())
+	src := s.newSource(token)
+	if kind == KindAuto {
+		var err error
+		if kind, err = registry.DetectKind(ctx, src, repo); err != nil {
+			return registry.DetailDoc{}, err
+		}
 	}
-	return registry.BuildRepo(ctx, s.newSource(token), s.validator, repo, s.siteURL())
+	if kind == KindTheme {
+		return registry.BuildTheme(ctx, src, s.themeValidator, repo, s.siteURL())
+	}
+	return registry.BuildRepo(ctx, src, s.validator, repo, s.siteURL())
 }
 
 // nameTaken reports whether name is already published, under kind, by a

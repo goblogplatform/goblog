@@ -97,7 +97,7 @@ func (a *Admin) GetDirectoryRepo(c *gin.Context) {
 }
 
 // AddDirectoryRepo validates a repository and lists it at once: POST
-// {repo, kind}. An empty kind defaults to "plugin".
+// {repo, kind}. kind is optional and detected from the manifest when empty.
 func (a *Admin) AddDirectoryRepo(c *gin.Context) {
 	svc := a.requireDirectory(c)
 	if svc == nil {
@@ -111,10 +111,9 @@ func (a *Admin) AddDirectoryRepo(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "repo is required"})
 		return
 	}
+	// kind is optional: unset, the service reads the repository's manifest
+	// to tell a plugin from a theme.
 	kind := strings.TrimSpace(req.Kind)
-	if kind == "" {
-		kind = directory.KindPlugin
-	}
 	r, err := svc.Add(c.Request.Context(), kind, req.Repo, a.Directory.Token())
 	if err != nil {
 		writeDirectoryError(c, err)

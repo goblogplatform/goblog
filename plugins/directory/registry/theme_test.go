@@ -311,3 +311,26 @@ func TestBuildTheme(t *testing.T) {
 		t.Errorf("docs = %+v", d)
 	}
 }
+
+func TestDetectKind(t *testing.T) {
+	ctx := context.Background()
+	if k, err := DetectKind(ctx, helloSource(), "o/hello"); err != nil || k != KindPlugin {
+		t.Errorf("plugin repo: %q %v", k, err)
+	}
+	if k, err := DetectKind(ctx, oceanSource(t), "o/ocean"); err != nil || k != KindTheme {
+		t.Errorf("theme repo: %q %v", k, err)
+	}
+	both := oceanSource(t)
+	both.files["o/ocean@v1.0.0:goblog-plugin.json"] = goodManifest
+	if _, err := DetectKind(ctx, both, "o/ocean"); err == nil || !strings.Contains(err.Error(), "both") {
+		t.Errorf("both manifests: %v", err)
+	}
+	neither := oceanSource(t)
+	delete(neither.files, "o/ocean@v1.0.0:goblog-theme.json")
+	if _, err := DetectKind(ctx, neither, "o/ocean"); err == nil || !strings.Contains(err.Error(), "no goblog-plugin.json or goblog-theme.json") {
+		t.Errorf("no manifest: %v", err)
+	}
+	if _, err := DetectKind(ctx, helloSource(), "hello"); err == nil {
+		t.Error("bad repo string must fail")
+	}
+}

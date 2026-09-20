@@ -343,3 +343,44 @@ func BuildTheme(ctx context.Context, src Source, tv ThemeValidator, repo, baseUR
 	}
 	return DetailDoc{IndexEntry: entry, ReadmeHTML: readme, ChangelogHTML: changelog, Releases: releases}, nil
 }
+
+// DetectKind tells a plugin repository from a theme one by which manifest
+// its latest release carries, so submitters need not say. Exactly one of
+// goblog-plugin.json / goblog-theme.json must be present at the tag.
+func DetectKind(ctx context.Context, src Source, repo string) (string, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return "", fmt.Errorf("%q: repo must be owner/name", repo)
+	}
+	latest, _, err := latestRelease(ctx, src, repo, owner, name)
+	if err != nil {
+		return "", err
+	}
+	has := func(path string) (bool, error) {
+		_, err := src.File(ctx, owner, name, latest.Tag, path)
+		if err == nil {
+			return true, nil
+		}
+		if isNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	plugin, err := has("goblog-plugin.json")
+	if err != nil {
+		return "", err
+	}
+	theme, err := has("goblog-theme.json")
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case plugin && theme:
+		return "", fmt.Errorf("%s@%s: has both goblog-plugin.json and goblog-theme.json; a repository is one or the other", repo, latest.Tag)
+	case plugin:
+		return KindPlugin, nil
+	case theme:
+		return KindTheme, nil
+	}
+	return "", fmt.Errorf("%s@%s: no goblog-plugin.json or goblog-theme.json at the root; see docs/PLUGIN_CONTRACT.md or docs/THEME_CONTRACT.md", repo, latest.Tag)
+}
