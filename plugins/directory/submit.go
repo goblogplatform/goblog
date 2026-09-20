@@ -76,7 +76,7 @@ func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base string) (string, gi
 	if c.PostForm("website") != "" {
 		return page(submitView{Base: base, Done: true})
 	}
-	_, err := p.svc.Submit(c.Request.Context(), repo, c.ClientIP(), ctx.Settings["github_token"])
+	_, err := p.svc.Submit(c.Request.Context(), KindPlugin, repo, c.ClientIP(), ctx.Settings["github_token"])
 	switch {
 	case err == nil:
 		return page(submitView{Base: base, Done: true})

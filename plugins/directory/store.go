@@ -18,12 +18,19 @@ const (
 	StatusRejected = "rejected"
 )
 
+// Kinds of entry the directory curates; aliases of the registry's.
+const (
+	KindPlugin = registry.KindPlugin
+	KindTheme  = registry.KindTheme
+)
+
 // Repo is one GitHub repository that was ever submitted to this directory:
 // the curation record. Its build (what gets published) is a separate row
 // because the two change on different schedules.
 type Repo struct {
 	ID           uint       `gorm:"primaryKey" json:"id"`
-	Repo         string     `gorm:"uniqueIndex;size:255" json:"repo"` // owner/name, lower-case
+	Repo         string     `gorm:"uniqueIndex;size:255" json:"repo"` // owner/name, lower-case; a repo is one kind
+	Kind         string     `gorm:"index;size:16" json:"kind"`        // plugin or theme
 	Status       string     `gorm:"index;size:16" json:"status"`
 	SubmittedAt  time.Time  `json:"submitted_at"`
 	DecidedAt    *time.Time `json:"decided_at"`
@@ -42,7 +49,8 @@ func (Repo) TableName() string { return "directory_repos" }
 type Build struct {
 	ID      uint   `gorm:"primaryKey"`
 	RepoID  uint   `gorm:"uniqueIndex"`
-	Name    string `gorm:"uniqueIndex;size:128"` // plugin name; routes /plugins/<name>
+	Kind    string `gorm:"uniqueIndex:idx_directory_builds_kind_name;size:16"`
+	Name    string `gorm:"uniqueIndex:idx_directory_builds_kind_name;size:128"` // routes /plugins/<name> or /themes/<name>
 	Version string `gorm:"size:32"`
 	Stars   int
 	// No type tag: gorm's default column for a Go string is already
@@ -57,9 +65,25 @@ type Build struct {
 
 func (Build) TableName() string { return "directory_builds" }
 
-// Migrate creates or updates the directory's tables.
+// Migrate creates or updates the directory's tables. Rows from before
+// themes existed carry no kind and are plugins; the pre-kind unique index
+// on name alone is dropped so a theme and a plugin may share a name.
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate(&Repo{}, &Build{})
+	if err := db.AutoMigrate(&Repo{}, &Build{}); err != nil {
+		return err
+	}
+	for _, model := range []any{&Repo{}, &Build{}} {
+		if err := db.Model(model).Where("kind = ? OR kind IS NULL", "").Update("kind", KindPlugin).Error; err != nil {
+			return err
+		}
+	}
+	m := db.Migrator()
+	if m.HasIndex(&Build{}, "idx_directory_builds_name") {
+		if err := m.DropIndex(&Build{}, "idx_directory_builds_name"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Detail decodes the stored document.
@@ -85,12 +109,12 @@ func (b *Build) SetDoc(d registry.DetailDoc) error {
 	return nil
 }
 
-// approvedDocs returns the documents of every approved repository, sorted
-// by plugin name — the content of index.json.
-func approvedDocs(db *gorm.DB) ([]registry.DetailDoc, error) {
+// approvedDocs returns the documents of every approved repository of kind,
+// sorted by name — the content of index.json.
+func approvedDocs(db *gorm.DB, kind string) ([]registry.DetailDoc, error) {
 	var builds []Build
 	err := db.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
-		Where("directory_repos.status = ?", StatusApproved).Find(&builds).Error
+		Where("directory_repos.status = ? AND directory_builds.kind = ?", StatusApproved, kind).Find(&builds).Error
 	if err != nil {
 		return nil, err
 	}

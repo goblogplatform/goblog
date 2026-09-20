@@ -109,7 +109,7 @@ func (a *Admin) AddDirectoryRepo(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "repo is required"})
 		return
 	}
-	r, err := svc.Add(c.Request.Context(), req.Repo, a.Directory.Token())
+	r, err := svc.Add(c.Request.Context(), directory.KindPlugin, req.Repo, a.Directory.Token())
 	if err != nil {
 		writeDirectoryError(c, err)
 		return

@@ -191,7 +191,7 @@ func TestDirectoryAPI_Lifecycle(t *testing.T) {
 	if w := h.do("POST", "/api/v1/directory/repos/"+id+"/approve", ""); w.Code != http.StatusOK {
 		t.Errorf("approve: %d", w.Code)
 	}
-	if raw, _ := h.dir.Service().Index(); !strings.Contains(string(raw), `"name": "hello"`) {
+	if raw, _ := h.dir.Service().Index(directory.KindPlugin); !strings.Contains(string(raw), `"name": "hello"`) {
 		t.Errorf("approve must regenerate the index: %s", raw)
 	}
 

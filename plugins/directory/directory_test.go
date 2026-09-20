@@ -113,7 +113,7 @@ func TestOnInit_SlugCollision(t *testing.T) {
 
 func TestScheduledJob(t *testing.T) {
 	f := newPluginFixture(t)
-	r, _ := f.svc.Add(context.Background(), "o/hello", "")
+	r, _ := f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
 	jobs := f.p.ScheduledJobs()
 	if len(jobs) != 1 || jobs[0].Interval != time.Minute {
 		t.Fatalf("jobs: %+v", jobs)
@@ -185,8 +185,8 @@ func TestRenderPage_Listing(t *testing.T) {
 		t.Errorf("empty listing: %q %v", tmpl, data)
 	}
 
-	f.svc.Add(context.Background(), "o/zeta", "")
-	f.svc.Add(context.Background(), "o/hello", "")
+	f.svc.Add(context.Background(), KindPlugin, "o/zeta", "")
+	f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
 	ctx, _ = newRenderCtx(t, http.MethodGet, "/plugins", "", nil)
 	_, data = f.p.RenderPage(ctx, PageType)
 	html := content(t, data)
@@ -213,7 +213,7 @@ func TestRenderPage_Listing(t *testing.T) {
 
 func TestRenderPage_ListingEscapesStrings(t *testing.T) {
 	f := newPluginFixture(t)
-	r := seed(t, f.db, "o/evil", StatusApproved, func() registry.DetailDoc {
+	r := seed(t, f.db, KindPlugin, "o/evil", StatusApproved, func() registry.DetailDoc {
 		d := doc("evil", "1.0.0", 0)
 		d.DisplayName, d.SourceURL = "<script>alert(1)</script>", "javascript:alert(1)"
 		return d
@@ -236,10 +236,10 @@ func TestRenderPage_IndexJSON(t *testing.T) {
 	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "[]" || w.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("empty index: %d %q %q", w.Code, w.Body.String(), w.Header().Get("Content-Type"))
 	}
-	f.svc.Add(context.Background(), "o/hello", "")
+	f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
 	ctx, w = newRenderCtx(t, http.MethodGet, "/plugins/index.json", "index.json", nil)
 	f.p.RenderPage(ctx, PageType)
-	raw, _ := f.svc.Index()
+	raw, _ := f.svc.Index(KindPlugin)
 	if w.Code != http.StatusOK || w.Body.String() != string(raw) || w.Header().Get("Cache-Control") != "public, max-age=300" {
 		t.Errorf("index.json: %d %q cache=%q", w.Code, w.Body.String(), w.Header().Get("Cache-Control"))
 	}
@@ -247,8 +247,8 @@ func TestRenderPage_IndexJSON(t *testing.T) {
 
 func TestRenderPage_DetailAndDetailJSON(t *testing.T) {
 	f := newPluginFixture(t)
-	f.svc.Add(context.Background(), "o/hello", "")
-	z, _ := f.svc.Submit(context.Background(), "o/zeta", "ip", "")
+	f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
+	z, _ := f.svc.Submit(context.Background(), KindPlugin, "o/zeta", "ip", "")
 
 	ctx, _ := newRenderCtx(t, http.MethodGet, "/plugins/hello", "hello", nil)
 	tmpl, data := f.p.RenderPage(ctx, PageType)
@@ -280,7 +280,7 @@ func TestRenderPage_DetailAndDetailJSON(t *testing.T) {
 
 func TestRenderPage_DetailFlagsBroadHosts(t *testing.T) {
 	f := newPluginFixture(t)
-	seed(t, f.db, "o/wide", StatusApproved, func() registry.DetailDoc {
+	seed(t, f.db, KindPlugin, "o/wide", StatusApproved, func() registry.DetailDoc {
 		d := doc("wide", "1.0.0", 0)
 		d.AllowedHosts = []string{"api.example.test", "*.example.test", "localhost"}
 		return d
@@ -311,7 +311,7 @@ func TestHostNote(t *testing.T) {
 
 func TestBasePathFollowsSlug(t *testing.T) {
 	f := newPluginFixture(t)
-	f.svc.Add(context.Background(), "o/hello", "")
+	f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
 	ctx, _ := newRenderCtx(t, http.MethodGet, "/extensions", "", nil)
 	_, data := f.p.RenderPage(ctx, PageType)
 	if html := content(t, data); !strings.Contains(html, `href="/extensions/hello"`) || !strings.Contains(html, `href="/extensions/submit"`) {

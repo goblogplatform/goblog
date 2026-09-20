@@ -20,10 +20,19 @@ import (
 	"goblog/blog"
 	gplugin "goblog/plugin"
 	"goblog/plugins/directory/registry"
+	"goblog/theme"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// fsThemeValidator checks a theme's files against this goblog's shared and
+// default templates — the same rule the installer applies.
+type fsThemeValidator struct{}
+
+func (fsThemeValidator) Validate(_ context.Context, files map[string][]byte) error {
+	return theme.ValidateFiles(files)
+}
 
 // PageType is the page type this plugin owns.
 const PageType = "plugin-directory"
@@ -36,16 +45,17 @@ const (
 // Plugin is the directory plugin. Its Service exists once OnInit has run.
 type Plugin struct {
 	gplugin.BasePlugin
-	userAgent string
-	db        *gorm.DB
-	svc       *Service
-	validator registry.Validator
-	newSource func(token string) registry.Source // nil → GitHub; tests inject a fake
+	userAgent      string
+	db             *gorm.DB
+	svc            *Service
+	validator      registry.Validator
+	themeValidator registry.ThemeValidator
+	newSource      func(token string) registry.Source // nil → GitHub; tests inject a fake
 }
 
 // New creates the directory plugin.
 func New() *Plugin {
-	return &Plugin{userAgent: "goblog-directory", validator: registry.WasmValidator{}}
+	return &Plugin{userAgent: "goblog-directory", validator: registry.WasmValidator{}, themeValidator: fsThemeValidator{}}
 }
 
 func (p *Plugin) Name() string        { return "directory" }
@@ -60,6 +70,9 @@ func (p *Plugin) SetSource(f func(token string) registry.Source) { p.newSource =
 
 // SetValidator replaces the module validator (tests).
 func (p *Plugin) SetValidator(v registry.Validator) { p.validator = v }
+
+// SetThemeValidator replaces the theme validator (tests).
+func (p *Plugin) SetThemeValidator(v registry.ThemeValidator) { p.themeValidator = v }
 
 // Service is the registry behind the pages; nil until OnInit has run.
 func (p *Plugin) Service() *Service { return p.svc }
@@ -112,7 +125,7 @@ func (p *Plugin) OnInit(db *gorm.DB) error {
 	}
 	p.db = db
 	if p.svc == nil {
-		p.svc = NewService(db, p.source, p.validator, func() string { return siteURL(db) })
+		p.svc = NewService(db, p.source, p.validator, p.themeValidator, func() string { return siteURL(db) })
 	}
 
 	var page blog.Page
@@ -211,7 +224,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 
 	switch {
 	case ctx.SubPath == "":
-		_, entries := p.svc.Index()
+		_, entries := p.svc.Index(KindPlugin)
 		sorted := append([]Entry(nil), entries...)
 		sort.SliceStable(sorted, func(i, j int) bool {
 			if sorted[i].Stars != sorted[j].Stars {
@@ -227,7 +240,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html}
 
 	case ctx.SubPath == "index.json":
-		raw, _ := p.svc.Index()
+		raw, _ := p.svc.Index(KindPlugin)
 		c.Header("Cache-Control", "public, max-age=300")
 		c.Data(http.StatusOK, "application/json", raw)
 		return "", nil
@@ -236,7 +249,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return p.renderSubmit(ctx, base)
 
 	case strings.HasSuffix(ctx.SubPath, ".json") && validName(strings.TrimSuffix(ctx.SubPath, ".json")):
-		d, ok := p.svc.Detail(strings.TrimSuffix(ctx.SubPath, ".json"))
+		d, ok := p.svc.Detail(KindPlugin, strings.TrimSuffix(ctx.SubPath, ".json"))
 		if !ok {
 			return "", nil
 		}
@@ -250,7 +263,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "", nil
 
 	case validName(ctx.SubPath):
-		d, ok := p.svc.Detail(ctx.SubPath)
+		d, ok := p.svc.Detail(KindPlugin, ctx.SubPath)
 		if !ok {
 			return "", nil
 		}
