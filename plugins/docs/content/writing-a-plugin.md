@@ -52,7 +52,7 @@ In Go, an export is a function that:
 1. is marked `//go:wasmexport <name>` and takes no arguments;
 2. reads its input with `pdk.Input()` (a `[]byte` of JSON) and decodes it;
 3. writes its result with `pdk.OutputJSON` or `pdk.OutputString`;
-4. returns `0` on success, or calls `pdk.SetErrorString` and returns `1` — goblog logs the message and treats the hook as if it had returned nothing.
+4. returns `0` on success, or calls `pdk.SetErrorString` and returns `1`. For the hooks (`template_head`, `template_footer`, `template_data`, `render_page`, `run_job`) goblog logs the message and treats the call as if it had returned nothing. An error from `identity`, `settings`, `pages` or `jobs` is different: goblog reads those four once, when it loads the module, and an error there fails the load — the plugin is not registered at startup, `validate-plugin` reports the error, and the directory rejects the release.
 
 Only `identity` is mandatory. A missing export is the same as a compiled-in plugin that leaves the hook at its no-op default, so hello implements just three. Here they are, verbatim from `main.go`.
 

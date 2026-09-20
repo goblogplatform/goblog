@@ -34,7 +34,7 @@ Themes installed from the directory land in `themes/installed/<name>/` (bind-mou
 
 ## Trust model
 
-A plugin is **sandboxed**. The fences are: no filesystem; network only to the hosts it declared, checked on every request and every redirect hop; a memory cap of 64 MB; a timeout on every call; a store capped per plugin; and one loaded instance per plugin, so a slow call cannot take every page down with it. What it is trusted with is exactly what it declares — the hosts it may talk to and the settings an admin types in — and the directory shows those hosts as "Talks to: …" before you install.
+A plugin is **sandboxed**. The fences are: no filesystem; network only to the hosts it declared, checked on every request and every redirect hop; a memory cap of 64 MB; a timeout on every call; a store capped per plugin; and one loaded instance per plugin, so a slow call cannot take every page down with it. What it is trusted with is exactly what it declares — the hosts it may talk to and the settings an admin types in. The directory publishes that host list in its index, and your own **Admin → Plugins** page shows it as "Talks to: …" (or "No network access") before you click Install.
 
 A theme is **code**. Once activated its templates render every page, including the admin, with the same template functions and data goblog's own templates get. There is no sandbox around a template.
 
