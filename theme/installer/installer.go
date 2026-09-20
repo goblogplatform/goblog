@@ -400,7 +400,12 @@ func (i *Installer) place(e directory.Entry, files map[string][]byte) error {
 	}
 	if err := os.Rename(tmp, final); err != nil {
 		if hadPrev {
-			os.Rename(prev, final)
+			// The previous theme was set aside a moment ago; if it cannot be
+			// put back the site has no copy of it at all, which the operator
+			// must hear about alongside the original failure.
+			if rerr := os.Rename(prev, final); rerr != nil {
+				return fmt.Errorf("%w: %v (and restoring the previous theme from %s failed: %v)", ErrWrite, err, prev, rerr)
+			}
 		}
 		return fmt.Errorf("%w: %v", ErrWrite, err)
 	}

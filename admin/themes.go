@@ -36,12 +36,13 @@ func themeStatus(err error) int {
 	case errors.Is(err, tinstaller.ErrBuiltin), errors.Is(err, tinstaller.ErrIncompatible), errors.Is(err, tinstaller.ErrNotTheme),
 		errors.Is(err, tinstaller.ErrChecksum), errors.Is(err, tinstaller.ErrLoad):
 		return http.StatusUnprocessableEntity
-	case errors.Is(err, tinstaller.ErrDirectoryUnavailable):
-		return http.StatusServiceUnavailable
-	case errors.Is(err, tinstaller.ErrDownload):
+	// Upstream (the directory or the download) and disk failures get the
+	// same codes as the plugin installer: 502 says "not us", 507 says "fix
+	// the directory permissions", so the page can phrase them accordingly.
+	case errors.Is(err, tinstaller.ErrDirectoryUnavailable), errors.Is(err, tinstaller.ErrDownload):
 		return http.StatusBadGateway
 	case errors.Is(err, tinstaller.ErrWrite):
-		return http.StatusInternalServerError
+		return http.StatusInsufficientStorage
 	}
 	return 0
 }
