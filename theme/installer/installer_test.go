@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"goblog/plugins/directory"
 	"goblog/plugins/directory/registry"
@@ -81,6 +82,11 @@ func newHarness(t *testing.T) *harness {
 			w.Write(z)
 			return
 		}
+		if r.URL.Path == "/loop" {
+			// Redirects to itself forever, for the redirect-hop-limit test.
+			http.Redirect(w, r, "/loop", http.StatusFound)
+			return
+		}
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(h.srv.Close)
@@ -94,6 +100,10 @@ func newHarness(t *testing.T) *harness {
 		entry("broken", "1.0.0", map[string][]byte{"templates/home.html": []byte("{{ if }}")}, "0.5.0"),
 		entry("future", "1.0.0", oceanFiles, "9.0.0"),
 		{Kind: registry.KindPlugin, Name: "hello", Version: "1.0.0", InstallType: "wasm", DownloadURL: h.srv.URL + "/x"},
+		// A theme-kind entry whose install_type is not "theme": Status must
+		// mark it incompatible rather than letting Install fail on it later.
+		{Kind: registry.KindTheme, Name: "mismatched", DisplayName: "MISMATCHED", Description: "d", Version: "1.0.0", Author: "a", License: "MIT",
+			SourceURL: "https://github.com/o/mismatched", DownloadURL: h.srv.URL + "/x", SHA256: "00", MinGoblogVersion: "0.5.0", InstallType: "wasm", AllowedHosts: []string{}, Stars: 1},
 	}
 	h.inst = &Installer{
 		Dir: installed, Directory: pinstaller.NewFetcher(h.srv.Client()), Version: "v0.5.0", Client: h.srv.Client(),
@@ -121,8 +131,11 @@ func TestStatus(t *testing.T) {
 	for _, a := range st.Available {
 		avail[a.Name] = a
 	}
-	if len(avail) != 3 || !avail["ocean"].Compatible || avail["future"].Compatible || avail["future"].Reason == "" {
+	if len(avail) != 4 || !avail["ocean"].Compatible || avail["future"].Compatible || avail["future"].Reason == "" {
 		t.Errorf("available = %+v", st.Available)
+	}
+	if avail["mismatched"].Compatible || avail["mismatched"].Reason == "" {
+		t.Errorf("theme-kind entry with a non-theme install_type must be marked incompatible: %+v", avail["mismatched"])
 	}
 	if _, ok := avail["hello"]; ok {
 		t.Error("plugins in the index must be ignored")
@@ -145,6 +158,9 @@ func TestInstallActivateUpdateUninstall(t *testing.T) {
 	var m registry.ThemeManifest
 	if b, err := os.ReadFile(filepath.Join(h.root, "ocean", "goblog-theme.json")); err != nil || json.Unmarshal(b, &m) != nil || m.Name != "ocean" {
 		t.Errorf("manifest not written: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(h.root, "ocean")); err != nil || info.Mode().Perm() != 0o755 {
+		t.Errorf("theme dir mode = %v (err %v), want 0755", info, err)
 	}
 	if _, err := h.inst.Install(ctx, "ocean"); !errors.Is(err, ErrAlreadyInstalled) {
 		t.Errorf("install twice: %v", err)
@@ -263,5 +279,24 @@ func TestUpdateRollsBack(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(h.root); len(entries) != 1 {
 		t.Errorf("no temp/prev dirs may linger: %v", entries)
+	}
+}
+
+func TestInstallRefusesRedirectLoop(t *testing.T) {
+	h := newHarness(t)
+	h.index = append(h.index, directory.Entry{
+		Kind: registry.KindTheme, Name: "loopy", DisplayName: "LOOPY", Description: "d", Version: "1.0.0", Author: "a", License: "MIT",
+		SourceURL: "https://github.com/o/loopy", DownloadURL: h.srv.URL + "/loop", SHA256: "00",
+		MinGoblogVersion: "0.5.0", InstallType: "theme", AllowedHosts: []string{}, Stars: 1,
+	})
+	if err := h.inst.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := h.inst.Install(context.Background(), "loopy"); !errors.Is(err, ErrDownload) {
+		t.Errorf("redirect loop: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("install took %v; the redirect-hop limit should stop it promptly, not wait out the client timeout", elapsed)
 	}
 }

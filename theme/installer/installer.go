@@ -60,7 +60,7 @@ type Installer struct {
 	Dir         string                  // where installs go (theme.InstalledRoot())
 	Directory   *pinstaller.Fetcher     // own instance, pointed at the themes index
 	Version     string                  // running goblog version
-	Client      *http.Client            // downloads; nil → 30s timeout default
+	Client      *http.Client            // downloads; nil → 60s timeout default
 	IndexURL    func() string           // theme_directory_url setting
 	ActiveTheme func() string           // the theme currently rendering
 	Activate    func(name string) error // persist the setting and hot-reload
@@ -131,6 +131,9 @@ func (i *Installer) client() *http.Client {
 	}
 	c := *base
 	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
 		if !allowedScheme(req.URL) {
 			return fmt.Errorf("redirected to %s: download_url must be https", req.URL)
 		}
@@ -227,7 +230,10 @@ func (i *Installer) Status() Status {
 			continue
 		}
 		a := Available{Entry: e, Compatible: true}
-		if !pinstaller.Compatible(i.Version, e.MinGoblogVersion) {
+		switch {
+		case e.InstallType != "theme":
+			a.Compatible, a.Reason = false, "not installable from the directory"
+		case !pinstaller.Compatible(i.Version, e.MinGoblogVersion):
 			a.Compatible, a.Reason = false, "requires goblog "+e.MinGoblogVersion+" or newer"
 		}
 		st.Available = append(st.Available, a)
@@ -360,6 +366,12 @@ func (i *Installer) place(e directory.Entry, files map[string][]byte) error {
 		return fmt.Errorf("%w: %v", ErrWrite, err)
 	}
 	defer os.RemoveAll(tmp)
+	// MkdirTemp creates the directory 0700; loosen it so the installed
+	// theme is readable by other uids (e.g. a web server running as a
+	// different user on a bind mount) once it is renamed into place.
+	if err := os.Chmod(tmp, 0o755); err != nil {
+		return fmt.Errorf("%w: %v", ErrWrite, err)
+	}
 	for p, b := range files {
 		full := filepath.Join(tmp, filepath.FromSlash(p))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -369,8 +381,8 @@ func (i *Installer) place(e directory.Entry, files map[string][]byte) error {
 			return fmt.Errorf("%w: %v", ErrWrite, err)
 		}
 	}
-	m := registry.ThemeManifest{Name: e.Name, DisplayName: e.DisplayName, Description: e.Description, Author: e.Author, License: e.License, MinGoblogVersion: e.MinGoblogVersion, Homepage: e.SourceURL}
-	m.Homepage = "" // not in the index; leave unset rather than guess
+	// Homepage is not in the index; leave it unset rather than guess.
+	m := registry.ThemeManifest{Name: e.Name, DisplayName: e.DisplayName, Description: e.Description, Author: e.Author, License: e.License, MinGoblogVersion: e.MinGoblogVersion}
 	mb, _ := json.MarshalIndent(installedManifest{m, e.Version}, "", "  ")
 	if err := os.WriteFile(filepath.Join(tmp, manifestFile), mb, 0o644); err != nil {
 		return fmt.Errorf("%w: %v", ErrWrite, err)
