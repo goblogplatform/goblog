@@ -555,10 +555,12 @@ func sessionOptions(secureEnv string) sessions.Options {
 }
 
 // requireJSON rejects mutating /api/v1 requests whose body is not JSON
-// (multipart is allowed for uploads). Every goblog client sends
+// (multipart is allowed for /api/v1/upload only). Every goblog client sends
 // application/json; an HTML form on another site can only send form
 // encodings or text/plain, so with SameSite this closes the CSRF avenue
-// through gin's binders, which accept any content type.
+// through gin's binders, which accept any content type. Returning without
+// Abort lets gin continue to the handler; Next is only needed to run code
+// after it.
 func requireJSON() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !strings.HasPrefix(c.Request.URL.Path, "/api/v1/") {
@@ -574,7 +576,7 @@ func requireJSON() gin.HandlerFunc {
 			return // no body, e.g. DELETE /api/v1/plugins/:name
 		}
 		mt, _, err := mime.ParseMediaType(ct)
-		if err != nil || (mt != "application/json" && mt != "multipart/form-data") {
+		if err != nil || !(mt == "application/json" || (mt == "multipart/form-data" && c.Request.URL.Path == "/api/v1/upload")) {
 			c.AbortWithStatusJSON(http.StatusUnsupportedMediaType, gin.H{"error": "Content-Type must be application/json"})
 		}
 	}

@@ -46,6 +46,7 @@ func TestRequireJSON(t *testing.T) {
 		{"missing type with body rejected", "POST", "/api/v1/posts", "", `{}`, 415},
 		{"no body allowed", "DELETE", "/api/v1/plugins/hello", "", "", 200},
 		{"multipart upload allowed", "POST", "/api/v1/upload", "multipart/form-data; boundary=x", "--x--", 200},
+		{"multipart elsewhere rejected", "POST", "/api/v1/posts", "multipart/form-data; boundary=x", "--x--", 415},
 		{"GET untouched", "GET", "/api/v1/posts", "", "", 200},
 		{"login form untouched", "POST", "/api/login", "application/x-www-form-urlencoded", "a=b", 200},
 		{"wizard untouched", "POST", "/wizard_db", "application/x-www-form-urlencoded", "a=b", 200},
