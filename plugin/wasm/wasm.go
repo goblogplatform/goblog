@@ -210,6 +210,9 @@ func (p *Plugin) lock(wait time.Duration) bool {
 		return true
 	default:
 	}
+	if wait == 0 {
+		return false
+	}
 	t := time.NewTimer(wait)
 	defer t.Stop()
 	select {

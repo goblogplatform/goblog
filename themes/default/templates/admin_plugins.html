@@ -94,7 +94,7 @@
     h = String(h == null ? "" : h).toLowerCase();
     if (h === "*") { return "any host"; }
     if (h.indexOf("*") !== -1) { return "wildcard"; }
-    if (h === "localhost" || h === "::1" || h === "0.0.0.0" || /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|fd|fe80:)/.test(h)) { return "local network"; }
+    if (h === "localhost" || h === "::1" || h === "0.0.0.0" || /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/.test(h)) { return "local network"; }
     return "";
   }
 
@@ -104,6 +104,7 @@
     var badge;
     if (p.runtime === "wasm") { badge = '<span class="badge text-bg-secondary">wasm</span>'; }
     else if (p.runtime === "go") { badge = '<span class="badge text-bg-secondary">go (local)</span>'; }
+    else if (p.runtime !== "builtin" && p.dynamic) { badge = '<span class="badge text-bg-secondary">dynamic</span>'; } // runtime unknown: an older goblog
     else { badge = '<span class="badge text-bg-light">built-in</span>'; }
     // health comes from the plugin's runtime: "busy" while a call holds the
     // instance, "closed" after a timeout or exit until it is re-created.

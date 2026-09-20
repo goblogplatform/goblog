@@ -463,9 +463,12 @@ func TestTemplateHooksDeclineWhileBusy(t *testing.T) {
 		defer close(done)
 		p.RenderPage(hookCtx(settings, "/echo/spin", "spin"), "echo") // holds the instance until callTimeout
 	}()
-	time.Sleep(100 * time.Millisecond)
-	if h := p.Health(); h != "busy" {
-		t.Errorf("health while spinning = %q, want busy", h)
+	deadline := time.Now().Add(2 * time.Second)
+	for p.Health() != "busy" {
+		if time.Now().After(deadline) {
+			t.Fatal("the spinning render_page never showed up as busy")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	start := time.Now()
 	head := p.TemplateHead(hookCtx(settings, "/", ""))

@@ -44,7 +44,7 @@ func hostNote(host string) string {
 	case h == "localhost", h == "::1", h == "0.0.0.0",
 		strings.HasPrefix(h, "127."), strings.HasPrefix(h, "10."),
 		strings.HasPrefix(h, "192.168."), strings.HasPrefix(h, "169.254."),
-		rfc1918Class16.MatchString(h), strings.HasPrefix(h, "fd"), strings.HasPrefix(h, "fe80:"):
+		rfc1918Class16.MatchString(h), ipv6Local.MatchString(h):
 		return "local network"
 	}
 	return ""
@@ -52,6 +52,11 @@ func hostNote(host string) string {
 
 // rfc1918Class16 matches 172.16.0.0/12.
 var rfc1918Class16 = regexp.MustCompile(`^172\.(1[6-9]|2[0-9]|3[01])\.`)
+
+// ipv6Local matches unique-local (fc00::/7) and link-local (fe80::/10)
+// addresses by their first hextet, so a hostname such as fd.example.test
+// is not flagged.
+var ipv6Local = regexp.MustCompile(`^(f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):`)
 
 // namePattern is the registry's rule for plugin names; anything else in a
 // sub-path is not a plugin page.
