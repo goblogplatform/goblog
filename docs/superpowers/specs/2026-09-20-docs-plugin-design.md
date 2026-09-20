@@ -116,6 +116,6 @@ Rollout: this branch (PR #591) is reworked in place so goblog ships the
 trims and contract pointers; the plugin repo is created, synced from the
 goblog tag, and released as `docs` 1.0.0; it is submitted to the
 directory and installed on goblog.live from **Admin → Plugins**, then
-enabled, at which point the Docs nav entry and the directory footer
-links to it appear. A documentation change is a goblog PR (the lint runs
+enabled, at which point the Docs nav entry appears and the directory
+footer links to it resolve. A documentation change is a goblog PR (the lint runs
 there) followed by a plugin release that re-syncs the content.

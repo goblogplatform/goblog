@@ -127,7 +127,7 @@ func read(t *testing.T, file string) []byte {
 }
 
 // headingID mirrors goldmark's parser.WithAutoHeadingID(): lowercase,
-// alphanumerics, '-' and '_' kept, spaces become '-', everything else
+// alphanumerics and '-' kept, '_' and spaces become '-', everything else
 // dropped; a repeated ID gets -1, -2, … appended. The plugin's own tests
 // check the same anchors with real goldmark, so a divergence here fails
 // on that side, never silently.
@@ -153,9 +153,9 @@ func headingIDs(src []byte) map[string]bool {
 		var b strings.Builder
 		for _, r := range strings.ToLower(text) {
 			switch {
-			case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
 				b.WriteRune(r)
-			case r == ' ':
+			case r == ' ', r == '_':
 				b.WriteByte('-')
 			}
 		}
