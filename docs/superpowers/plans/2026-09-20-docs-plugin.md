@@ -1,5 +1,7 @@
 # Documentation on goblog.live — Implementation Plan
 
+> Superseded for Tasks 1–2, 7–8 by `2026-09-20-docs-plugin-rev2.md`; the content tasks (3–6) stand.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** goblog.live/docs documents how to build and publish plugins and themes, with the API references a builder needs, from markdown that ships inside the goblog binary.

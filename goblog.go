@@ -13,7 +13,6 @@ import (
 	"goblog/plugin/wasm"
 	"goblog/plugins/analytics"
 	"goblog/plugins/directory"
-	"goblog/plugins/docs"
 	"goblog/plugins/socialicons"
 	"goblog/theme"
 	tinstaller "goblog/theme/installer"
@@ -308,7 +307,6 @@ func main() {
 	dir := directory.New()
 	dir.SetUserAgent("goblog-directory/" + Version)
 	registry.Register(dir)
-	registry.Register(docs.New())
 	dynamicEnabled := os.Getenv("ENABLE_DYNAMIC_PLUGINS") == "true"
 	if dynamicEnabled {
 		gplugin.LoadDynamicPlugins(registry, "plugins/dynamic")
