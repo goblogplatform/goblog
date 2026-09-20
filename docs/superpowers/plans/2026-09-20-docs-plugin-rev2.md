@@ -161,18 +161,16 @@ func headingIDs(src []byte) map[string]bool {
 		}
 		id := b.String()
 		if n := seen[id]; n > 0 {
-			id = id + "-" + strings.Repeat("", 0) + itoa(n)
+			id += "-" + strconv.Itoa(n) // goldmark: second "foo" is "foo-1"
 		}
 		seen[b.String()]++
 		ids[id] = true
 	}
 	return ids
 }
-
-func itoa(n int) string { return strings.TrimSpace(strings.Repeat(" ", 0) + fmtInt(n)) }
 ```
 
-(Use `strconv.Itoa` — the helper above is a placeholder the implementer replaces with `strconv.Itoa(n)`; goldmark appends `-1` for the first duplicate.)
+(add `strconv` to the imports.)
 
 Tests to write, each asserting on the markdown:
 
@@ -375,5 +373,5 @@ No remote yet — the controller creates the GitHub repo and pushes.
 ## Self-review
 
 - Spec rev 2 coverage: pages + lint in goblog (T1); serving in the plugin with vendored content, `html` form, identical layout (T2); rollout is controller/user work (repo creation, force-push of #591, release, sync at tag, plugin v1.0.0, directory submission, enable).
-- Placeholders: the `headingID` helper sketch names `strconv.Itoa` as the replacement for its stub — implementer replaces it; everything else is concrete.
+- Placeholders: none; every code step is concrete.
 - Type consistency: `Pages`/`Page` (goblog `guide`) vs `pages`/`page` (plugin) are deliberately separate — different modules; the sync script is the bridge and a test on each side checks the seven file names.
