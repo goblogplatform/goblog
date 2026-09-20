@@ -68,10 +68,10 @@ ignored), no `..` or absolute paths.
   `GET /repos/{o}/{r}/zipball/{tag}` (follows the redirect; `MaxAssetBytes`
   cap) — and `FileURL(owner, repo, tag, path) string` for the raw screenshot
   URL.
-- `theme.go`: `ThemeManifest` + `ParseThemeManifest`; `Archive` (parsed zip:
-  `map[path][]byte` restricted to `templates/` and `static/`, with the entry
-  and size checks above; the single top-level folder GitHub adds is
-  stripped); `ContentHash(files) string` — sha256 over
+- `theme.go`: `ThemeManifest` + `ParseThemeManifest`; `ParseArchive(zip
+  []byte) (map[string][]byte, error)` (the zip's files restricted to
+  `templates/` and `static/`, with the entry and size checks above; the
+  single top-level folder GitHub adds is stripped); `ContentHash(files) string` — sha256 over
   `path\0len\0bytes` for every file, sorted by path; `ValidateThemeEntry(ctx,
   src, tv ThemeValidator, repo)` and `BuildTheme(ctx, src, tv, repo,
   baseURL) (DetailDoc, error)`, sharing `latestRelease`, README/changelog
