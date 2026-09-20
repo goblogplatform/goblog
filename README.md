@@ -138,6 +138,8 @@ To create a custom theme:
 
 Themes from the directory are installed under **Admin → Themes** into `themes/installed/`; see [docs/THEME_CONTRACT.md](docs/THEME_CONTRACT.md) to publish one.
 
+**Admin → Themes** browses the [theme directory](https://www.goblog.live/themes), installs a theme into `themes/installed/` (bind-mount it in Docker or installs vanish on restart), activates it, updates it when the directory has a newer release, and removes it. The directory URL is the `theme_directory_url` setting.
+
 ## Plugins
 
 A plugin implements the `plugin.Plugin` interface (`plugin/plugin.go`). Embed `plugin.BasePlugin` to get no-op defaults and implement only the hooks you need:

@@ -15,6 +15,7 @@ import (
 	"goblog/plugins/directory"
 	"goblog/plugins/socialicons"
 	"goblog/theme"
+	tinstaller "goblog/theme/installer"
 	"goblog/tools"
 	"goblog/wizard"
 	"gorm.io/gorm"
@@ -36,14 +37,14 @@ import (
 var Version = "development"
 
 type goblog struct {
-	_wizard            *wizard.Wizard
-	_blog              *blog.Blog
-	_auth              *auth.Auth
-	_admin             *admin.Admin
-	_registry          *gplugin.Registry
-	sessionKey         string
-	router             *gin.Engine
-	routesOnce         sync.Once
+	_wizard    *wizard.Wizard
+	_blog      *blog.Blog
+	_auth      *auth.Auth
+	_admin     *admin.Admin
+	_registry  *gplugin.Registry
+	sessionKey string
+	router     *gin.Engine
+	routesOnce sync.Once
 }
 
 func envFilePresent() bool {
@@ -379,6 +380,25 @@ func main() {
 	}
 	loadTheme(activeTheme)
 
+	themeInstaller := &tinstaller.Installer{
+		Dir:         theme.InstalledRoot(),
+		Directory:   installer.NewFetcher(nil),
+		Version:     Version,
+		IndexURL:    func() string { return _blog.SettingValue("theme_directory_url", tinstaller.DefaultIndexURL) },
+		ActiveTheme: func() string { return activeTheme },
+		Activate: func(name string) error {
+			if db != nil {
+				if err := db.Save(&blog.Setting{Key: "theme", Type: "text", Value: name}).Error; err != nil {
+					return err
+				}
+			}
+			loadTheme(name)
+			return nil
+		},
+	}
+	themeInstaller.Directory.SetUserAgent("goblog-theme-installer/" + Version)
+	_admin.Themes = themeInstaller
+
 	// Wire up hot-reload callback so theme changes take effect without restart
 	_admin.OnThemeChange = func(theme string) {
 		loadTheme(theme)
@@ -401,6 +421,13 @@ func main() {
 	router.POST("/api/v1/plugins/update", goblog._admin.UpdatePlugin)
 	router.DELETE("/api/v1/plugins/:name", goblog._admin.UninstallPlugin)
 	router.POST("/api/v1/plugins/refresh", goblog._admin.RefreshPluginDirectory)
+	router.GET("/api/v1/themes/status", goblog._admin.ThemeStatus)
+	router.GET("/api/v1/themes/directory", goblog._admin.ThemeDirectory)
+	router.POST("/api/v1/themes/install", goblog._admin.InstallTheme)
+	router.POST("/api/v1/themes/update", goblog._admin.UpdateTheme)
+	router.POST("/api/v1/themes/activate", goblog._admin.ActivateTheme)
+	router.DELETE("/api/v1/themes/:name", goblog._admin.UninstallTheme)
+	router.POST("/api/v1/themes/refresh", goblog._admin.RefreshThemeDirectory)
 	router.GET("/api/v1/directory/repos", goblog._admin.ListDirectoryRepos)
 	router.POST("/api/v1/directory/repos", goblog._admin.AddDirectoryRepo)
 	router.GET("/api/v1/directory/repos/:id", goblog._admin.GetDirectoryRepo)
@@ -493,6 +520,7 @@ func (g *goblog) addRoutesInner() {
 	g.router.GET("/admin/comments", g._admin.AdminComments)
 	g.router.GET("/admin/users", g._admin.AdminUsers)
 	g.router.GET("/admin/plugins", g._admin.AdminPlugins)
+	g.router.GET("/admin/themes", g._admin.AdminThemes)
 	g.router.GET("/admin/pages/:id", g._admin.AdminEditPage)
 	g.router.GET("/admin/post-types", g._admin.AdminPostTypes)
 	g.router.GET("/admin/post-types/:id", g._admin.AdminEditPostType)
