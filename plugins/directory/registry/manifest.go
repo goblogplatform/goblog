@@ -84,7 +84,7 @@ func ParseManifest(b []byte) (Manifest, error) {
 		problems = append(problems, fmt.Sprintf("license %q is not a known SPDX identifier", m.License))
 	}
 	if m.Runtime != "wasm" {
-		problems = append(problems, "runtime must be \"wasm\": the directory only lists WebAssembly plugins; see docs/PLUGIN_CONTRACT.md")
+		problems = append(problems, "runtime must be \"wasm\": the directory only lists WebAssembly plugins; see /docs/publishing-a-plugin")
 	}
 	if !entryPattern.MatchString(m.Entry) {
 		problems = append(problems, "entry must be a .wasm release asset name (letters, digits, `_`, `.`, `-`)")

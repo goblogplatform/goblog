@@ -136,7 +136,7 @@ To create a custom theme:
 1. Create `themes/my-theme/templates/` and copy in only the templates you want to change (start with `header.html`, `footer.html`, `home.html`); add `static/` for CSS.
 2. Set the `theme` setting to `my-theme` in admin settings (hot-reloads, no restart).
 
-Themes from the directory will be installable under **Admin → Themes** into `themes/installed/` once the theme installer lands (a follow-up PR); see [docs/THEME_CONTRACT.md](docs/THEME_CONTRACT.md) to publish one.
+Themes from the directory will be installable under **Admin → Themes** into `themes/installed/` once the theme installer lands (a follow-up PR); see [Publishing a theme](https://www.goblog.live/docs/publishing-a-theme) to publish one.
 
 **Admin → Themes** browses the [theme directory](https://www.goblog.live/themes), installs a theme into `themes/installed/` (bind-mount it in Docker, set with `THEMES_INSTALLED_DIR`, or installs vanish on restart), activates it, updates it when the directory has a newer release, and removes it. The directory URL is the `theme_directory_url` setting.
 
@@ -267,7 +267,7 @@ docker run --rm --network none -v "$PWD:/p" --entrypoint /go/src/github.com/comp
 This is the same check goblog.live runs on every submission to the plugin directory.
 
 ### Plugin directory
-[goblog.live/plugins](https://goblog.live/plugins) lists published plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`, `runtime`, `allowed_hosts`) and `/plugins/<name>.json` carries one plugin's README, changelog and release history. Plugins are individual GitHub repositories with releases — see [docs/PLUGIN_CONTRACT.md](docs/PLUGIN_CONTRACT.md). To publish one, paste its URL at [goblog.live/plugins/submit](https://goblog.live/plugins/submit): it is validated on the spot (latest release, manifest, `plugin.wasm` loads and its name/version match) and listed once a maintainer approves it.
+[goblog.live/plugins](https://goblog.live/plugins) lists published plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`, `runtime`, `allowed_hosts`) and `/plugins/<name>.json` carries one plugin's README, changelog and release history. Plugins are individual GitHub repositories with releases — see [Publishing a plugin](https://www.goblog.live/docs/publishing-a-plugin). To publish one, paste its URL at [goblog.live/plugins/submit](https://goblog.live/plugins/submit): it is validated on the spot (latest release, manifest, `plugin.wasm` loads and its name/version match) and listed once a maintainer approves it.
 
 The directory is the built-in `directory` plugin, so any goblog can host one: turn it on under **Admin → Settings → Plugin Directory** (`enabled` = `true`). Submissions are stored in the site's database and reviewed under **Admin → Plugins → Directory**, where you can also add repositories yourself, rebuild an entry or delist it. Listed plugins are re-checked every `refresh_minutes` (default 360) for new releases and star counts. The GitHub API allows 60 anonymous requests per hour; set `github_token` (any token, no scopes needed) to raise that to 5000 if you list more than a handful of plugins. README, changelog and release-note HTML is rendered by GitHub's markdown API and shown as-is on the directory pages; the admin sees it in the pending card before approving.
 

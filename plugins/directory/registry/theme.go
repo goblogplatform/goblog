@@ -382,5 +382,5 @@ func DetectKind(ctx context.Context, src Source, repo string) (string, error) {
 	case theme:
 		return KindTheme, nil
 	}
-	return "", fmt.Errorf("%s@%s: no goblog-plugin.json or goblog-theme.json at the root; see docs/PLUGIN_CONTRACT.md or docs/THEME_CONTRACT.md", repo, latest.Tag)
+	return "", fmt.Errorf("%s@%s: no goblog-plugin.json or goblog-theme.json at the root; see the publishing docs", repo, latest.Tag)
 }
