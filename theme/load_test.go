@@ -98,6 +98,23 @@ func TestValidateFiles(t *testing.T) {
 	}
 }
 
+func TestValidateFiles_SizeCap(t *testing.T) {
+	roots(t)
+	withShared(t)
+
+	tooBig := bytes.Repeat([]byte("a"), MaxTemplateBytes+1)
+	err := ValidateFiles(map[string][]byte{"templates/home.html": tooBig})
+	if err == nil || !strings.Contains(err.Error(), "templates/home.html") {
+		t.Errorf("want the oversized file named, got %v", err)
+	}
+
+	// Exactly at the cap, and valid template text, must still pass.
+	atCap := bytes.Repeat([]byte(" "), MaxTemplateBytes)
+	if err := ValidateFiles(map[string][]byte{"templates/home.html": atCap}); err != nil {
+		t.Errorf("a file exactly at the cap should pass: %v", err)
+	}
+}
+
 func TestStaticHandler_FallsBackToDefault(t *testing.T) {
 	builtin, installed := roots(t)
 	os.MkdirAll(filepath.Join(builtin, DefaultName, "static", "css"), 0o755)

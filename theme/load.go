@@ -15,6 +15,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// MaxTemplateBytes caps one template file before it is parsed. The parser
+// recurses once per nested {{if}}/{{with}}/{{range}}, so an unbounded file
+// can exhaust the stack (a fatal error, not a panic); goblog's largest real
+// template is under 32 KiB.
+const MaxTemplateBytes = 256 << 10
+
 // FuncMap is the template.FuncMap every theme is loaded with.
 func FuncMap() template.FuncMap {
 	return template.FuncMap{
@@ -88,6 +94,9 @@ func ValidateFiles(files map[string][]byte) error {
 	}
 	sort.Strings(names) // deterministic first error
 	for _, p := range names {
+		if len(files[p]) > MaxTemplateBytes {
+			return fmt.Errorf("%s: %d bytes; the limit is %d (256 KiB)", p, len(files[p]), MaxTemplateBytes)
+		}
 		if _, err := tmpl.New(path.Base(p)).Parse(string(files[p])); err != nil {
 			return fmt.Errorf("%s: %w", p, err)
 		}
