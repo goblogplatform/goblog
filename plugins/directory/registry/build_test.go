@@ -69,6 +69,24 @@ func TestBuildRepo_StarsAreBestEffort(t *testing.T) {
 	}
 }
 
+func TestBuildRepo_RenderedReadmeOverLimitIsRefused(t *testing.T) {
+	src := helloSource()
+	src.files["o/hello@v1.1.0:README.md"] = strings.Repeat("a", MaxRenderedBytes+1)
+	_, err := BuildRepo(context.Background(), src, helloValidator(), "o/hello", "")
+	if err == nil || !strings.Contains(err.Error(), "README.md") || !strings.Contains(err.Error(), "limit") {
+		t.Errorf("want a README size-limit error, got %v", err)
+	}
+}
+
+func TestBuildRepo_RenderedChangelogOverLimitIsRefused(t *testing.T) {
+	src := helloSource()
+	src.files["o/hello@v1.1.0:CHANGELOG.md"] = strings.Repeat("a", MaxRenderedBytes+1)
+	_, err := BuildRepo(context.Background(), src, helloValidator(), "o/hello", "")
+	if err == nil || !strings.Contains(err.Error(), "CHANGELOG.md") || !strings.Contains(err.Error(), "limit") {
+		t.Errorf("want a CHANGELOG size-limit error, got %v", err)
+	}
+}
+
 func TestBuildRepo_ValidationErrorsPropagate(t *testing.T) {
 	src := helloSource()
 	delete(src.files, "o/hello@v1.1.0:README.md")

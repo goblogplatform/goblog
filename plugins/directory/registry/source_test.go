@@ -171,3 +171,32 @@ func TestGitHubSource_RateLimitIsExplained(t *testing.T) {
 		t.Errorf("want a rate-limit error naming github_token, got %v", err)
 	}
 }
+
+// TestGitHubSource_ReleasesCapsAtMaxPages checks that Releases stops after
+// maxReleasePages even when the API keeps reporting full pages (a
+// repository with thousands of releases must not cost one call per 100 of
+// them or grow the result without bound).
+func TestGitHubSource_ReleasesCapsAtMaxPages(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		rels := make([]map[string]any, 100)
+		for i := range rels {
+			rels[i] = map[string]any{"tag_name": "v1.0.0", "name": "v1.0.0"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rels)
+	}))
+	t.Cleanup(srv.Close)
+	src := NewGitHubSource("", srv.URL)
+	rels, err := src.Releases(context.Background(), "o", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != maxReleasePages {
+		t.Errorf("requests = %d, want %d", requests, maxReleasePages)
+	}
+	if len(rels) != maxReleasePages*100 {
+		t.Errorf("releases = %d, want %d", len(rels), maxReleasePages*100)
+	}
+}

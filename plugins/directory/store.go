@@ -40,15 +40,19 @@ func (Repo) TableName() string { return "directory_repos" }
 // rebuild leaves Doc alone and records LastError, so one broken release
 // never takes a plugin off the directory.
 type Build struct {
-	ID            uint   `gorm:"primaryKey"`
-	RepoID        uint   `gorm:"uniqueIndex"`
-	Name          string `gorm:"uniqueIndex;size:128"` // plugin name; routes /plugins/<name>
-	Version       string `gorm:"size:32"`
-	Stars         int
-	Doc           string `gorm:"type:text"` // registry.DetailDoc as JSON
+	ID      uint   `gorm:"primaryKey"`
+	RepoID  uint   `gorm:"uniqueIndex"`
+	Name    string `gorm:"uniqueIndex;size:128"` // plugin name; routes /plugins/<name>
+	Version string `gorm:"size:32"`
+	Stars   int
+	// No type tag: gorm's default column for a Go string is already
+	// unbounded (longtext on MySQL, text on sqlite/postgres). A fixed
+	// "text" tag would cap this at MySQL's 64 KiB text limit, which a
+	// detail doc (README + changelog + per-release notes HTML) can exceed.
+	Doc           string // registry.DetailDoc as JSON
 	BuiltAt       time.Time
 	LastAttemptAt *time.Time
-	LastError     string `gorm:"type:text"`
+	LastError     string
 }
 
 func (Build) TableName() string { return "directory_builds" }

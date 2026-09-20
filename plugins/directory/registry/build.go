@@ -39,6 +39,14 @@ type ReleaseDoc struct {
 	URL        string        `json:"url"`
 }
 
+// MaxRenderedBytes caps the README and changelog HTML BuildRepo will
+// accept from GitHub's markdown API — a detail doc is stored whole in
+// directory_builds.doc and served on every page view, so an oversized
+// render (an author's README with an embedded base64 image, say) must be
+// refused at build time rather than silently ballooning the database and
+// every response.
+const MaxRenderedBytes = 1 << 20
+
 // DetailDoc is /plugins/<name>.json: the index entry plus rendered README,
 // changelog and release history. The *_html fields come from GitHub's
 // markdown API, which sanitizes them; they are the only fields pages insert
@@ -97,10 +105,16 @@ func buildDetail(ctx context.Context, src Source, v *Validated, baseURL string) 
 	if err != nil {
 		return DetailDoc{}, err
 	}
+	if len(readmeHTML) > MaxRenderedBytes {
+		return DetailDoc{}, fmt.Errorf("%s: rendered README.md is %d bytes; the limit is %d (1 MiB)", ownerRepo, len(readmeHTML), MaxRenderedBytes)
+	}
 	changelogHTML := ""
 	if cl, err := src.File(ctx, v.Owner, v.Name, v.Release.Tag, "CHANGELOG.md"); err == nil {
 		if changelogHTML, err = src.RenderMarkdown(ctx, ownerRepo, string(cl)); err != nil {
 			return DetailDoc{}, err
+		}
+		if len(changelogHTML) > MaxRenderedBytes {
+			return DetailDoc{}, fmt.Errorf("%s: rendered CHANGELOG.md is %d bytes; the limit is %d (1 MiB)", ownerRepo, len(changelogHTML), MaxRenderedBytes)
 		}
 	} else if !isNotFound(err) {
 		return DetailDoc{}, fmt.Errorf("CHANGELOG.md: %w", err)

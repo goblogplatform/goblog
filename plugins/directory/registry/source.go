@@ -23,6 +23,13 @@ const MaxAssetBytes = 16 << 20
 // maxAPIBytes caps a JSON or markdown response from the API.
 const maxAPIBytes = 8 << 20
 
+// maxReleasePages caps how many pages of releases Releases will fetch. The
+// directory only ever needs the newest releases (ValidateEntry looks at the
+// latest non-draft, non-prerelease tag); a repository with thousands of
+// releases would otherwise cost one API call per 100 of them and hold all
+// of them in memory for nothing.
+const maxReleasePages = 10
+
 // Asset is a file attached to a GitHub release.
 type Asset struct {
 	ID          int64
@@ -163,7 +170,7 @@ type apiRelease struct {
 
 func (g *GitHubSource) Releases(ctx context.Context, owner, repo string) ([]Release, error) {
 	var out []Release
-	for page := 1; ; page++ {
+	for page := 1; page <= maxReleasePages; page++ {
 		var rels []apiRelease
 		path := fmt.Sprintf("/repos/%s/%s/releases?per_page=100&page=%d", owner, repo, page)
 		if err := g.getJSON(ctx, path, &rels); err != nil {
@@ -180,9 +187,10 @@ func (g *GitHubSource) Releases(ctx context.Context, owner, repo string) ([]Rele
 			out = append(out, rel)
 		}
 		if len(rels) < 100 {
-			return out, nil
+			break
 		}
 	}
+	return out, nil
 }
 
 func (g *GitHubSource) File(ctx context.Context, owner, repo, ref, path string) ([]byte, error) {

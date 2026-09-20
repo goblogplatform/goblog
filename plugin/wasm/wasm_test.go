@@ -119,6 +119,22 @@ func TestLoad_IdentitySettingsPagesJobs(t *testing.T) {
 	var _ plugin.Plugin = p
 }
 
+// TestLoad_NoCache checks that a NoCache load — used to validate a public
+// submission without pinning its compiled code in the shared cache — still
+// loads, reports identity and closes cleanly.
+func TestLoad_NoCache(t *testing.T) {
+	p, err := LoadBytes(echoBytes(t), Options{Store: newMemStore(), NoCache: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name() != "echo" || p.Version() != "1.2.3" {
+		t.Errorf("identity = %q %q", p.Name(), p.Version())
+	}
+	if err := p.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
+
 func TestLoad_RejectsNonPluginAndMissingIdentity(t *testing.T) {
 	if _, err := LoadBytes([]byte("not wasm"), Options{}); err == nil {
 		t.Error("garbage should fail to load")

@@ -105,4 +105,7 @@ func TestRenderPage_SubmitRateLimitedIs429(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Errorf("6th attempt should set 429, got %d", w.Code)
 	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/html; charset=utf-8", ct)
+	}
 }

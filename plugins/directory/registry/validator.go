@@ -35,7 +35,10 @@ func (WasmValidator) Validate(ctx context.Context, module []byte) (plugin.Info, 
 	if err := ctx.Err(); err != nil {
 		return plugin.Info{}, err
 	}
-	p, err := wasm.LoadBytes(module, wasm.Options{Logf: func(string, ...any) {}})
+	// NoCache: a validated module may never be installed, and the public
+	// submit form makes this reachable by anyone — the compiled code must
+	// not stay resident in the shared cache after Close.
+	p, err := wasm.LoadBytes(module, wasm.Options{Logf: func(string, ...any) {}, NoCache: true})
 	if err != nil {
 		return plugin.Info{}, err
 	}

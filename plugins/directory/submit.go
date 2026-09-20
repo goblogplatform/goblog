@@ -89,7 +89,10 @@ func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base string) (string, gi
 		// gin buffers a status set with c.Status and blog's later
 		// Render(c, 200, …) would replace it; writing the header now makes
 		// the 429 stick (gin logs a one-line warning when blog then tries
-		// 200 — accepted).
+		// 200 — accepted). Content-Type has to be set before the header is
+		// flushed too, or net/http sniffs one from the body instead of
+		// honouring blog's later Render call.
+		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.Status(http.StatusTooManyRequests)
 		c.Writer.WriteHeaderNow()
 		return page(submitView{Base: base, Repo: repo, Error: err.Error()})

@@ -462,9 +462,13 @@ func (s *Service) Index() ([]byte, []registry.IndexEntry) {
 // Detail returns the document of an approved plugin by name.
 func (s *Service) Detail(name string) (registry.DetailDoc, bool) {
 	var b Build
-	err := s.db.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
-		Where("directory_builds.name = ? AND directory_repos.status = ?", name, StatusApproved).First(&b).Error
-	if err != nil {
+	// Limit(1).Find instead of First: crawlers hit /plugins/<unknown-name>
+	// constantly, and First logs a gorm ERROR "record not found" for every
+	// one of them; Find with RowsAffected treats a miss as the routine case
+	// it is.
+	res := s.db.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
+		Where("directory_builds.name = ? AND directory_repos.status = ?", name, StatusApproved).Limit(1).Find(&b)
+	if res.Error != nil || res.RowsAffected == 0 {
 		return registry.DetailDoc{}, false
 	}
 	d, err := b.Detail()
