@@ -68,7 +68,7 @@ jobs:
     # tag when its shared queue gets round to the repo (often hours). A
     # dispatch is repo activity iac can act on immediately: its
     # goblog-release workflow opens the bump PR itself. IAC_TOKEN is a
-    # fine-grained PAT with Contents: write on compscidr/iac (what
+    # fine-grained PAT with Contents: read & write on compscidr/iac (what
     # repository_dispatch requires).
     - name: Tell iac about the release
       env:
