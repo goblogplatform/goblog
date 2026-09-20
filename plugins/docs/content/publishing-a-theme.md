@@ -13,14 +13,14 @@ At the root of the repository, at the release tag being published (submission ch
 | File | Required | Notes |
 |---|---|---|
 | `goblog-theme.json` | yes | the manifest, below |
-| `templates/*.html` | yes (at least 1) | only the templates you change; goblog loads them on top of its `default` theme, so everything you don't ship renders from default. Each file must be **256 KiB or smaller**. Only files directly under `templates/` are loaded; subdirectories are ignored. |
+| `templates/*.html` | yes (at least 1) | only the templates you change; goblog loads them on top of its `default` theme, so everything you don't ship renders from default. Each file must be **256 KiB or smaller**. Only files directly under `templates/` are loaded as templates; files in subdirectories are still extracted, counted, hashed and installed, but never parsed. |
 | `static/` | no | CSS and images, served at `/theme/…`; files you don't ship fall back to default's |
 | `README.md` | yes | shown on the theme's directory page; its rendered HTML must be 1 MiB or smaller |
 | `screenshot.png` or `screenshot.jpg` | yes | **1 MiB or smaller**, shown in the listing, hot-linked from the tag on GitHub. `.png` is looked for first. |
 | `CHANGELOG.md` | no | shown when present; same 1 MiB limit on the rendered HTML |
 | `LICENSE` | recommended | not checked by the validator; state the same license as `license` in the manifest |
 
-The archive of the tag must be **16 MiB or smaller**, with **at most 2000 entries**, **no symlinks**, and no entry whose extracted size — alone or in total — exceeds 16 MiB. Only `templates/` and `static/` are extracted and installed; everything else in the repository (the manifest, README, screenshot, your tooling) is read individually and never copied to a site. Paths with a backslash, a NUL, a leading `/` or `..` are refused.
+The archive of the tag must be **16 MiB or smaller**, with **at most 2000 entries**, **no symlinks**, and no entry whose extracted size — alone or in total — exceeds 16 MiB. Only `templates/` and `static/` are extracted and installed; everything else in the repository (the manifest, README, screenshot, your tooling) is read individually and never copied to a site. Paths with a backslash, a NUL, a leading `/` or `..` are refused, and so is a path that appears twice in the archive.
 
 ## The manifest
 
@@ -99,7 +99,7 @@ A theme is [code](/docs#trust-model): once an operator activates it, its templat
 
 ## Common validation errors
 
-Messages are prefixed with the repository and tag they were found at (`owner/name@v1.2.0: …`). Manifest problems are joined with `;` after `goblog-theme.json:`; archive problems start with `archive:`; template problems start with `templates do not load:`.
+Messages are prefixed with the repository (`owner/name: …`) and, once a release has been picked, its tag too (`owner/name@v1.2.0: …`); the release-level errors (`no published release`, `release tag … must be vX.Y.Z`) carry the repository only. Manifest problems are joined with `;` after `goblog-theme.json:`; archive problems start with `archive:`; template problems start with `templates do not load:`.
 
 | Error | What to do |
 |---|---|
@@ -122,7 +122,8 @@ Messages are prefixed with the repository and tag they were found at (`owner/nam
 | `archive has … entries; the limit is 2000` | Too many files in the tag; a theme is a few dozen. Drop vendored or generated trees. |
 | `archive: … is a symlink` | Replace the symlink with the file it points to. |
 | `archive: unsafe path "…"` | A path with `..`, a leading `/`, a backslash or a NUL. Rename it. |
-| `archive: templates/… is … bytes; the limit is 262144 (256 KiB)` | Split or shrink the template. goblog's largest real template is under 32 KiB. |
+| `archive: duplicate entry "…"` | The same `templates/` or `static/` path appears twice in the zip. Rebuild the archive from a clean checkout. |
+| `archive: …/templates/… is … bytes; the limit is 262144 (256 KiB)` | Split or shrink the template. goblog's largest real template is under 32 KiB. |
 | `archive: extracted size exceeds 16777216 bytes` | `templates/` and `static/` together unpack to more than 16 MiB. Move large assets out of `static/`. |
 | `templates do not load: no templates/*.html files: a theme must ship at least one template` | Add at least one `.html` file directly under `templates/`. |
 | `templates do not load: templates/home.html: template: home.html:12: …` | A Go template parse error at that file and line. Fix it and re-tag; the same check runs when a site installs the theme. |

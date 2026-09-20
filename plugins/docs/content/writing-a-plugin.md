@@ -36,7 +36,7 @@ You do not need goblog's source, a fork, or a rebuild. A plugin is a separate re
 | `author` | Required. |
 | `license` | An SPDX identifier from the directory's short list (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, Unlicense, 0BSD, and the GPL/LGPL/AGPL `-only`/`-or-later` forms). |
 | `runtime` | Must be `wasm`. Anything else is rejected. |
-| `entry` | The name of the `.wasm` asset attached to each release. Defaults to `plugin.wasm`; letters, digits, `_`, `.` and `-` only, no path. |
+| `entry` | The name of the `.wasm` asset attached to each release. Defaults to `plugin.wasm`; letters, digits, `_`, `.` and `-` only, ending in `.wasm`, no path. |
 | `allowed_hosts` | Hostnames, IPs or globs (`*.example.com`) the module may reach over HTTP, each optionally with a port, never a scheme or path. Empty or omitted means no network. `*` alone is rejected. |
 | `min_goblog_version` | Plain semver, three numbers, no `v`: the oldest goblog your plugin works with. WebAssembly plugins need at least `0.2.9`. |
 | `homepage` | Optional. |

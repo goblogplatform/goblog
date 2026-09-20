@@ -25,7 +25,7 @@ And attached to every release: the compiled module, named as `entry` in the mani
 The full field table is on the [Writing a plugin](/docs/writing-a-plugin#the-manifest) page. What the directory enforces when it parses `goblog-plugin.json`:
 
 - `name` must match `^[a-z0-9-]+$` and equal the `name` your `identity` export returns. It has to be unique among the directory's plugins: if a *different* repository already publishes an entry with that name, your submission is refused, even after it validates.
-- `display_name`, `description` and `author` must be non-blank.
+- `display_name`, `description` and `author` must be non-blank. `display_name` is the label in the directory listing; it does not have to equal the `display_name` your `identity` export returns, which labels the plugin's settings group in the admin.
 - `license` must be one of exactly these SPDX identifiers: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `MPL-2.0`, `Unlicense`, `0BSD`, `GPL-2.0-only`, `GPL-2.0-or-later`, `GPL-3.0-only`, `GPL-3.0-or-later`, `LGPL-2.1-only`, `LGPL-2.1-or-later`, `LGPL-3.0-only`, `LGPL-3.0-or-later`, `AGPL-3.0-only`, `AGPL-3.0-or-later`. The list is short on purpose; open an issue on goblog to add another.
 - `runtime` must be `"wasm"`.
 - `entry` defaults to `plugin.wasm`; otherwise letters, digits, `_`, `.` and `-` only, ending in `.wasm`, with no path.
@@ -108,7 +108,7 @@ Plugins run inside the goblog process of whoever installs them, [sandboxed](/doc
 
 ## Common validation errors
 
-Messages are prefixed with the repository and tag they were found at (`owner/name@v1.2.0: …`). Manifest problems are joined with `;` after `goblog-plugin.json:`.
+Messages are prefixed with the repository (`owner/name: …`) and, once a release has been picked, its tag too (`owner/name@v1.2.0: …`); the release-level errors (`no published release`, `release tag … must be vX.Y.Z`, `release vX.Y.Z has no asset named …`) carry the repository only. Manifest problems are joined with `;` after `goblog-plugin.json:`.
 
 | Error | What to do |
 |---|---|
@@ -130,7 +130,7 @@ Messages are prefixed with the repository and tag they were found at (`owner/nam
 | `release v1.2.0 has no asset named plugin.wasm (the release workflow must upload it)` | Attach the module to the release — add the workflow above, or upload the asset by hand — then submit again. If you changed `entry`, the asset name must match it. |
 | `asset plugin.wasm is … bytes; the limit is 16777216 (16 MiB)` | Build with `-ldflags="-s -w"`; drop large embedded data. |
 | `plugin.wasm does not load: …` | The module failed to instantiate or one of `identity`, `settings`, `pages`, `jobs` returned an error. Run `validate-plugin` locally and fix what it reports. Those four exports must not depend on the store or the network. |
-| `plugin.wasm does not load: identity returned an empty name or version` | `identity` must return both `name` and `version`. |
+| `plugin.wasm does not load: wasm plugin: identity must include name and version` | `identity` must return both `name` and `version`. |
 | `Name() is "…" but the manifest says "…"` | The `name` in `identity` and the `name` in `goblog-plugin.json` must be the same string. |
 | `Version() is "…" but the release tag says "…"` | Bump the version in `identity` to match the tag (without `v`) — or tag a release that matches the code. |
 | `rendered README.md is … bytes; the limit is 1048576 (1 MiB)` (or `CHANGELOG.md`) | Shrink the file — usually an embedded base64 image. Link images instead. |
