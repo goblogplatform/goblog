@@ -9,7 +9,7 @@ At the root, at the release tag:
 | File | Required | Notes |
 |---|---|---|
 | `goblog-theme.json` | yes | the manifest, below |
-| `templates/*.html` | yes (≥ 1) | only the templates you change; goblog loads them on top of its `default` theme, so everything you don't ship renders from default |
+| `templates/*.html` | yes (≥ 1) | only the templates you change; goblog loads them on top of its `default` theme, so everything you don't ship renders from default. Each template file must be at most 256 KiB. |
 | `static/` | no | CSS/images, served at `/theme/…`; files you don't ship fall back to default's |
 | `README.md` | yes | shown on the theme's directory page |
 | `screenshot.png` or `screenshot.jpg` | yes | ≤ 1 MiB, shown in the listing (hot-linked from the tag) |
@@ -38,6 +38,8 @@ No build step and no release workflow: the directory downloads GitHub's archive 
 ### Templates
 
 Start from `themes/default/templates` in the goblog repository at the version you target and copy only the files you want to change. Templates are Go `html/template`; the `rawHTML` function and everything in `templates/shared` are available. Each file must parse on its own — the directory checks that.
+
+Validation parses each file; a reference to a template that does not exist (`{{ template "nope" . }}`) is only caught when the page renders, so test your theme locally. An empty override file does not blank the default template — Go keeps the earlier definition when a later one is empty; to remove a section, ship a file with content.
 
 ### Releases
 
