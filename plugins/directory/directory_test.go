@@ -32,8 +32,11 @@ func TestPlugin_Identity(t *testing.T) {
 		t.Error("index_url is gone: the directory is built here, not mirrored")
 	}
 	pages := p.Pages()
-	if len(pages) != 1 || pages[0].PageType != PageType || pages[0].Slug != "plugins" {
+	if len(pages) != 2 || pages[0].PageType != PageType || pages[0].Slug != "plugins" {
 		t.Errorf("pages: %+v", pages)
+	}
+	if pages[1].PageType != ThemePageType || pages[1].Slug != "themes" || pages[1].NavOrder != 31 {
+		t.Errorf("theme page: %+v", pages[1])
 	}
 	var _ gplugin.Plugin = p
 }
@@ -63,6 +66,7 @@ func newPluginFixture(t *testing.T) *pluginFixture {
 	p := New()
 	p.newSource = func(string) registry.Source { return f.src }
 	p.validator = f.val
+	p.SetThemeValidator(f.tv)
 	if err := p.OnInit(f.db); err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +83,11 @@ func TestOnInit_MigratesCreatesPageAndService(t *testing.T) {
 	f.db.Where("page_type = ?", PageType).Find(&pages)
 	if len(pages) != 1 || pages[0].Slug != "plugins" || pages[0].Title != "Plugins" || !pages[0].ShowInNav || pages[0].NavOrder != 30 || !pages[0].Enabled {
 		t.Errorf("pages: %+v", pages)
+	}
+	var themePages []blog.Page
+	f.db.Where("page_type = ?", ThemePageType).Find(&themePages)
+	if len(themePages) != 1 || themePages[0].Slug != "themes" || themePages[0].Title != "Themes" {
+		t.Errorf("theme pages: %+v", themePages)
 	}
 	if f.p.Service() == nil || !f.db.Migrator().HasTable(&Repo{}) || !f.db.Migrator().HasTable(&Build{}) {
 		t.Error("OnInit must migrate the tables and create the service")
@@ -316,5 +325,58 @@ func TestBasePathFollowsSlug(t *testing.T) {
 	_, data := f.p.RenderPage(ctx, PageType)
 	if html := content(t, data); !strings.Contains(html, `href="/extensions/hello"`) || !strings.Contains(html, `href="/extensions/submit"`) {
 		t.Errorf("links must follow the page slug:\n%s", html)
+	}
+}
+
+func TestRenderPage_ThemesListingDetailAndIndex(t *testing.T) {
+	f := newPluginFixture(t)
+	f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
+	f.svc.Add(context.Background(), KindTheme, "o/ocean", "")
+
+	ctx, _ := newRenderCtx(t, http.MethodGet, "/themes", "", nil)
+	tmpl, data := f.p.RenderPage(ctx, ThemePageType)
+	html := content(t, data)
+	if tmpl != "page_content.html" {
+		t.Fatalf("tmpl = %q", tmpl)
+	}
+	for _, want := range []string{`href="/themes/ocean"`, `src="https://raw.test/o/ocean/v1.0.0/screenshot.png"`, "OCEAN", "v1.0.0", "★ 3", `href="/themes/submit"`, `href="/themes/index.json"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("themes listing missing %q in:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, "/themes/hello") || strings.Contains(html, "HELLO") {
+		t.Error("plugins must not appear in the theme listing")
+	}
+
+	ctx, w := newRenderCtx(t, http.MethodGet, "/themes/index.json", "index.json", nil)
+	f.p.RenderPage(ctx, ThemePageType)
+	if !strings.Contains(w.Body.String(), `"kind": "theme"`) || strings.Contains(w.Body.String(), `"name": "hello"`) {
+		t.Errorf("themes index = %s", w.Body.String())
+	}
+
+	ctx, _ = newRenderCtx(t, http.MethodGet, "/themes/ocean", "ocean", nil)
+	_, data = f.p.RenderPage(ctx, ThemePageType)
+	html = content(t, data)
+	for _, want := range []string{`src="https://raw.test/o/ocean/v1.0.0/screenshot.png"`, "<p># Ocean</p>", "0.5.0", `href="https://github.com/o/ocean/archive/refs/tags/v1.0.0.zip"`, "content hash"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("theme detail missing %q in:\n%s", want, html)
+		}
+	}
+	if data["title"] != "OCEAN" {
+		t.Errorf("title = %v", data["title"])
+	}
+
+	// Kinds never cross pages.
+	ctx, _ = newRenderCtx(t, http.MethodGet, "/plugins/ocean", "ocean", nil)
+	if tmpl, _ := f.p.RenderPage(ctx, PageType); tmpl != "" {
+		t.Error("/plugins/<theme name> must 404")
+	}
+	ctx, _ = newRenderCtx(t, http.MethodGet, "/themes/hello", "hello", nil)
+	if tmpl, _ := f.p.RenderPage(ctx, ThemePageType); tmpl != "" {
+		t.Error("/themes/<plugin name> must 404")
+	}
+	ctx, _ = newRenderCtx(t, http.MethodGet, "/themes", "", nil)
+	if tmpl, _ := f.p.RenderPage(ctx, "other"); tmpl != "" {
+		t.Error("unknown page types are declined")
 	}
 }

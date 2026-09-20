@@ -1,10 +1,14 @@
-<p><a href="{{ .Base }}">&larr; All plugins</a></p>
+<p><a href="{{ .Base }}">&larr; All {{ if eq .Kind "theme" }}themes{{ else }}plugins{{ end }}</a></p>
 {{ if .Done }}
 <div class="alert alert-success" role="alert">
   <strong>Queued for review.</strong> Your repository passed validation. It appears on this page once a maintainer approves it — usually within a few days.
 </div>
 {{ else }}
+{{ if eq .Kind "theme" }}
+<p>A theme is a GitHub repository with a <code>goblog-theme.json</code> manifest, a <code>templates/</code> folder (only the templates you change — everything else comes from goblog's default theme), an optional <code>static/</code> folder, a <code>README.md</code> and a <code>screenshot.png</code>, released as <code>vX.Y.Z</code> tags — see the <a href="https://github.com/goblogplatform/goblog/blob/main/docs/THEME_CONTRACT.md">theme contract</a>. Paste the repository URL; it is checked right away and queued for a maintainer to approve.</p>
+{{ else }}
 <p>A plugin is a GitHub repository with a <code>goblog-plugin.json</code> manifest, a <code>README.md</code>, and releases tagged <code>vX.Y.Z</code> with the compiled <code>plugin.wasm</code> attached — see the <a href="https://github.com/goblogplatform/goblog/blob/main/docs/PLUGIN_CONTRACT.md">plugin contract</a>. Paste the repository URL; it is checked right away and queued for a maintainer to approve.</p>
+{{ end }}
 {{ if .Error }}
 <div class="alert alert-danger" role="alert">{{ .Error }}{{ if .Listed }} — <a href="{{ .Listed }}">see its page</a>.{{ end }}</div>
 {{ end }}
@@ -13,5 +17,5 @@
   <div class="col-sm-3 d-grid"><button type="submit" class="btn btn-primary">Submit for review</button></div>
   <div class="d-none" aria-hidden="true"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
 </form>
-<p class="mt-3 small text-muted">Validation downloads the latest release's module, loads it in goblog's sandbox and checks that its name and version match the manifest and the release tag. Nothing is stored unless it passes.</p>
+<p class="mt-3 small text-muted">Validation downloads the latest release's {{ if eq .Kind "theme" }}archive and parses its templates against goblog's{{ else }}module, loads it in goblog's sandbox and checks that its name and version match the manifest and the release tag{{ end }}. Nothing is stored unless it passes.</p>
 {{ end }}

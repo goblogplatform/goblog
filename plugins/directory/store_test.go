@@ -139,7 +139,7 @@ func TestApprovedDocsAndEncodeIndex(t *testing.T) {
 	seed(t, db, KindPlugin, "o/hello", StatusApproved, doc("hello", "1.0.0", 1))
 	seed(t, db, KindPlugin, "o/pending", StatusPending, doc("pending", "1.0.0", 99))
 	seed(t, db, KindPlugin, "o/rejected", StatusRejected, doc("rejected", "1.0.0", 99))
-	seed(t, db, KindTheme, "o/ocean", StatusApproved, doc("ocean", "1.0.0", 3))
+	seed(t, db, KindTheme, "o/ocean", StatusApproved, func() registry.DetailDoc { d := doc("ocean", "1.0.0", 3); d.Kind = KindTheme; return d }())
 
 	docs, err := approvedDocs(db, KindPlugin)
 	if err != nil {

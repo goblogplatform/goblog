@@ -19,7 +19,7 @@ import (
 var (
 	ErrAlreadyListed = errors.New("this repository is already listed in the directory")
 	ErrUnderReview   = errors.New("this repository is already under review")
-	ErrNameTaken     = errors.New("a different repository already publishes a plugin with this name")
+	ErrNameTaken     = errors.New("a different repository already publishes an entry with this name")
 	ErrRateLimited   = errors.New("too many submissions from your address; try again in an hour")
 	ErrBusy          = errors.New("another submission is being checked; try again in a minute")
 	ErrNotFound      = errors.New("no such repository")
@@ -462,6 +462,9 @@ func view(r Repo, b *Build) RepoView {
 // Index returns the current index.json bytes and entries for kind,
 // generating them on first use.
 func (s *Service) Index(kind string) ([]byte, []registry.IndexEntry) {
+	if !validKind(kind) {
+		return []byte("[]\n"), nil
+	}
 	s.mu.RLock()
 	raw, entries := s.indexRaw[kind], s.indexEntries[kind]
 	s.mu.RUnlock()
@@ -497,12 +500,14 @@ func (s *Service) Detail(kind, name string) (registry.DetailDoc, bool) {
 	return d, true
 }
 
-// nameOf returns the plugin name a repository publishes, if it has a build.
-func (s *Service) nameOf(repo string) (string, bool) {
+// nameOf returns the kind and name a repository publishes, if it has a
+// build. The repository may be listed under either kind, so callers must
+// not assume the kind they were asked about.
+func (s *Service) nameOf(repo string) (kind, name string, ok bool) {
 	var b Build
 	err := s.db.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
 		Where("directory_repos.repo = ?", repo).First(&b).Error
-	return b.Name, err == nil
+	return b.Kind, b.Name, err == nil
 }
 
 // regenerate rebuilds the cached index for every kind from the approved
