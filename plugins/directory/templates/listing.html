@@ -6,26 +6,25 @@ Install them from your own goblog under <strong>Admin → Plugins</strong>.</p>
 <p>The plugin directory is empty. Machine-readable index: <a href="{{ .Base }}/index.json">index.json</a>.</p>
 {{ end }}
 {{ if .Entries }}
-<table class="table">
+<div class="table-responsive">
+<table class="table align-middle">
   <thead>
-    <tr><th>Plugin</th><th>Description</th><th>Version</th><th>Author</th><th>License</th><th>Type</th><th>Runtime</th><th>Talks to</th><th>Stars</th></tr>
+    <tr><th>Plugin</th><th>Description</th><th>Author</th><th>License</th><th>Talks to</th><th>Stars</th></tr>
   </thead>
   <tbody>
   {{ range .Entries }}
     <tr>
-      <td><a href="{{ $.Base }}/{{ .Name }}">{{ .DisplayName }}</a><br><small><a href="{{ .SourceURL }}">source</a></small></td>
+      <td class="text-nowrap"><a href="{{ $.Base }}/{{ .Name }}">{{ .DisplayName }}</a> <small class="text-muted">v{{ .Version }}</small><br><small><a href="{{ .SourceURL }}">source</a></small></td>
       <td>{{ .Description }}</td>
-      <td>{{ .Version }}</td>
-      <td>{{ .Author }}</td>
-      <td>{{ .License }}</td>
-      <td>{{ .InstallType }}</td>
-      <td>{{ .Runtime }}</td>
+      <td class="text-nowrap">{{ .Author }}</td>
+      <td class="text-nowrap">{{ .License }}</td>
       <td>{{ if .AllowedHosts }}{{ range $i, $h := .AllowedHosts }}{{ if $i }}, {{ end }}{{ $h }}{{ with hostNote $h }} <span class="badge text-bg-warning">{{ . }}</span>{{ end }}{{ end }}{{ else }}No network access{{ end }}</td>
-      <td>★ {{ .Stars }}</td>
+      <td class="text-nowrap">★ {{ .Stars }}</td>
     </tr>
   {{ end }}
   </tbody>
 </table>
+</div>
 {{ end }}
 
 <p class="mt-4">Built a plugin? <a href="{{ .Base }}/submit">Submit it to the directory</a>.</p>
