@@ -161,6 +161,23 @@ func (s *Service) build(ctx context.Context, repo, token string) (registry.Detai
 	return registry.BuildRepo(ctx, s.newSource(token), s.validator, repo, s.siteURL())
 }
 
+// nameTaken reports whether name is already published by a build belonging
+// to a repository other than repo. The directory routes on plugin names, so
+// this is the curation-level refusal that keeps a collision from ever
+// reaching Build.Name's uniqueIndex as a raw DB error.
+func nameTaken(tx *gorm.DB, name, repo string) error {
+	var taken Build
+	err := tx.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
+		Where("directory_builds.name = ? AND directory_repos.repo <> ?", name, repo).First(&taken).Error
+	if err == nil {
+		return ErrNameTaken
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return err
+}
+
 // save records a successful build in one transaction: the Repo row is
 // created or reset to status, and its Build row is created or replaced. A
 // plugin name already published by another repository is refused because
@@ -168,13 +185,7 @@ func (s *Service) build(ctx context.Context, repo, token string) (registry.Detai
 func (s *Service) save(repo string, doc registry.DetailDoc, status, ip string) (*Repo, error) {
 	var out Repo
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		var taken Build
-		err := tx.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
-			Where("directory_builds.name = ? AND directory_repos.repo <> ?", doc.Name, repo).First(&taken).Error
-		if err == nil {
-			return ErrNameTaken
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+		if err := nameTaken(tx, doc.Name, repo); err != nil {
 			return err
 		}
 
@@ -308,6 +319,9 @@ func (s *Service) rebuildRepo(ctx context.Context, r Repo, token string, skipUnc
 		if err != nil {
 			return err
 		}
+		if err := nameTaken(s.db, doc.Name, r.Repo); err != nil {
+			return err
+		}
 		return b.SetDoc(doc)
 	}()
 	s.validate.Unlock()
@@ -315,8 +329,19 @@ func (s *Service) rebuildRepo(ctx context.Context, r Repo, token string, skipUnc
 	if err != nil {
 		b.LastError = err.Error()
 	}
-	if saveErr := s.db.Save(&b).Error; saveErr != nil {
-		return saveErr
+	// Update the row by id rather than Save: Delist takes no lock this
+	// function holds, so it may delete this repo and its build while the
+	// network build above is in flight. Save would then see no matching row
+	// and fall back to re-creating one (Build.Name is uniqueIndex, so that
+	// orphan would permanently block a later Add/Submit of the same name);
+	// scoping to the id and checking RowsAffected instead just refuses the
+	// write.
+	res := s.db.Model(&Build{}).Where("id = ?", b.ID).Select("*").Updates(&b)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("%s: delisted during rebuild", r.Repo)
 	}
 	return err
 }

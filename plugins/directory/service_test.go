@@ -29,6 +29,11 @@ type fakeSource struct {
 	repos    map[string]*fakeRepo
 	assets   atomic.Int32 // ReleaseAsset calls
 	rendered atomic.Int32 // RenderMarkdown calls
+
+	// hook, if set, runs once during ReleaseAsset (mid-build) and is then
+	// cleared. It lets a test simulate another admin action racing a build
+	// that is in flight, e.g. Delist.
+	hook func()
 }
 
 func (f *fakeSource) repo(owner, repo string) (*fakeRepo, error) {
@@ -68,6 +73,11 @@ func (f *fakeSource) File(_ context.Context, owner, repo, ref, path string) ([]b
 
 func (f *fakeSource) ReleaseAsset(_ context.Context, owner, repo string, _ int64) ([]byte, error) {
 	f.assets.Add(1)
+	if f.hook != nil {
+		h := f.hook
+		f.hook = nil
+		h()
+	}
 	r, err := f.repo(owner, repo)
 	if err != nil {
 		return nil, err
@@ -356,5 +366,76 @@ func TestService_ListAndGet(t *testing.T) {
 	}
 	if _, _, err := f.svc.Get(999); !errors.Is(err, ErrNotFound) {
 		t.Errorf("get unknown: %v", err)
+	}
+}
+
+// TestService_RebuildDelistRaceLeavesNoOrphanBuild: Delist takes no lock
+// rebuildRepo holds, so it can delete a repository and its build while a
+// rebuild's network round trip is in flight. rebuildRepo must not resurrect
+// the deleted build (Build.Name is uniqueIndex, so an orphan would
+// permanently block re-adding the same repository).
+func TestService_RebuildDelistRaceLeavesNoOrphanBuild(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	r, err := f.svc.Add(ctx, "o/hello", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.src.hook = func() {
+		if err := f.svc.Delist(r.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.svc.Rebuild(ctx, r.ID, ""); err == nil || !strings.Contains(err.Error(), "delisted during rebuild") {
+		t.Errorf("rebuild racing a delist should fail naming the race, got %v", err)
+	}
+
+	var n int64
+	f.db.Model(&Build{}).Count(&n)
+	if n != 0 {
+		t.Errorf("delist must win the race: no orphan build, got %d rows", n)
+	}
+	f.db.Model(&Repo{}).Count(&n)
+	if n != 0 {
+		t.Errorf("delist must win the race: no orphan repo, got %d rows", n)
+	}
+
+	if _, err := f.svc.Add(ctx, "o/hello", ""); err != nil {
+		t.Errorf("re-adding after the race should succeed, got %v", err)
+	}
+}
+
+// TestService_RebuildNameCollisionKeepsOldBuildAndRecordsError: a plugin
+// that renames itself onto a name another listed repository already
+// publishes must not corrupt the losing build's row or surface a raw DB
+// error — it is a curation refusal like any other ErrNameTaken.
+func TestService_RebuildNameCollisionKeepsOldBuildAndRecordsError(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.svc.Add(ctx, "o/hello", "")
+	z, err := f.svc.Add(ctx, "o/zeta", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.src.repos["o/zeta"].name = "hello"
+	f.src.repos["o/zeta"].version = "0.2.0"
+	f.val.Infos[registry.Sum(f.src.repos["o/zeta"].wasm)] = plugin.Info{Name: "hello", Version: "0.2.0", Runtime: "wasm"}
+
+	if err := f.svc.Rebuild(ctx, z.ID, ""); !errors.Is(err, ErrNameTaken) {
+		t.Errorf("rebuild onto a taken name: %v", err)
+	}
+
+	var b Build
+	if err := f.db.Where("repo_id = ?", z.ID).First(&b).Error; err != nil {
+		t.Fatal(err)
+	}
+	if b.Name != "zeta" || b.Version != "0.1.0" || b.LastError != ErrNameTaken.Error() || b.LastAttemptAt == nil {
+		t.Errorf("build after collision = %+v", b)
+	}
+
+	if names := f.indexNames(t); len(names) != 2 {
+		t.Errorf("both repositories should still be listed: %v", names)
 	}
 }
