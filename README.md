@@ -182,7 +182,7 @@ Host functions (Extism's `extism:host/user` namespace):
 | Function | Behaviour |
 |---|---|
 | `store_get(key) → value \| null` | per-plugin persistent KV (`plugin_store` table) |
-| `store_set(key, value)` | key ≤ 256 bytes, value ≤ 1 MB; errors otherwise |
+| `store_set(key, value)` | key ≤ 256 bytes, value ≤ 1 MiB, at most 10 000 keys and 16 MiB per plugin; errors otherwise |
 | `store_delete(key)` | |
 | `store_list(prefix) → [keys]` | |
 | logging | the Extism PDK's own logger (`pdk.Log`), prefixed with the plugin name — there is no separate `log` host function |
