@@ -84,12 +84,18 @@ func renderListing(base string, entries []Entry) (string, error) {
 	return buf.String(), err
 }
 
-// renderDetail renders a plugin page. d may be nil when the detail JSON could
-// not be fetched; notice is shown to the reader in that case.
+// renderDetail renders a plugin page. notice, when set, is shown to the
+// reader above the page content.
 func renderDetail(base string, e Entry, d *Detail, notice string) (string, error) {
 	var buf bytes.Buffer
 	err := templates.ExecuteTemplate(&buf, "detail.html", map[string]any{
 		"Base": base, "Entry": e, "Detail": d, "Notice": notice,
 	})
+	return buf.String(), err
+}
+
+func renderSubmitPage(v submitView) (string, error) {
+	var buf bytes.Buffer
+	err := templates.ExecuteTemplate(&buf, "submit.html", v)
 	return buf.String(), err
 }

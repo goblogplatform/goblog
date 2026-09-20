@@ -1,4 +1,4 @@
-package directory
+package installer
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"goblog/plugins/directory"
 )
 
 // maxIndexBytes caps what is read from the registry so a misbehaving index
@@ -21,19 +23,19 @@ const maxIndexBytes = 8 << 20
 // synchronous, blocking HTTP fetch.
 const ensureRetryInterval = 30 * time.Second
 
-// Fetcher keeps an in-memory copy of the directory index and of the detail
-// JSON for plugins that have been viewed. Every fetch that fails keeps the
-// previous copy, so the directory degrades to "slightly stale" rather than
-// "empty" when the registry is unreachable.
+// Fetcher keeps an in-memory copy of a remote directory's index (goblog.live's
+// by default) and of the detail JSON for plugins that have been viewed.
+// Every fetch that fails keeps the previous copy, so the directory degrades
+// to "slightly stale" rather than "empty" when the registry is unreachable.
 type Fetcher struct {
 	client    *http.Client
 	userAgent string
 
 	mu          sync.RWMutex
-	raw         []byte           // index.json bytes, served verbatim
-	entries     []Entry          // parsed raw
-	byName      map[string]Entry // entries keyed by Name
-	details     map[string]*Detail
+	raw         []byte                     // index.json bytes, served verbatim
+	entries     []directory.Entry          // parsed raw
+	byName      map[string]directory.Entry // entries keyed by Name
+	details     map[string]*directory.Detail
 	fetchedAt   time.Time
 	lastAttempt time.Time // set at the start of every Refresh, success or failure
 }
@@ -43,7 +45,7 @@ func NewFetcher(client *http.Client) *Fetcher {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &Fetcher{client: client, userAgent: "goblog-directory", details: map[string]*Detail{}}
+	return &Fetcher{client: client, userAgent: "goblog-directory", details: map[string]*directory.Detail{}}
 }
 
 // SetUserAgent sets the User-Agent sent to the registry.
@@ -61,11 +63,11 @@ func (f *Fetcher) Refresh(indexURL string) error {
 	if err != nil {
 		return fmt.Errorf("fetch index: %w", err)
 	}
-	var entries []Entry
+	var entries []directory.Entry
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return fmt.Errorf("parse index: %w", err)
 	}
-	byName := make(map[string]Entry, len(entries))
+	byName := make(map[string]directory.Entry, len(entries))
 	for _, e := range entries {
 		byName[e.Name] = e
 	}
@@ -112,20 +114,20 @@ func (f *Fetcher) Ensure(indexURL string) {
 	f.lastAttempt = time.Now()
 	f.mu.Unlock()
 	if err := f.Refresh(indexURL); err != nil {
-		log.Printf("Directory plugin: initial index fetch failed: %v", err)
+		log.Printf("Plugin installer: initial index fetch failed: %v", err)
 	}
 }
 
 // Index returns the cached index bytes and entries; ok is false when nothing
 // has been fetched successfully yet.
-func (f *Fetcher) Index() (raw []byte, entries []Entry, ok bool) {
+func (f *Fetcher) Index() (raw []byte, entries []directory.Entry, ok bool) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	return f.raw, f.entries, f.raw != nil
 }
 
 // Entry looks a plugin up by name in the cached index.
-func (f *Fetcher) Entry(name string) (Entry, bool) {
+func (f *Fetcher) Entry(name string) (directory.Entry, bool) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	e, ok := f.byName[name]
@@ -142,7 +144,7 @@ func (f *Fetcher) FetchedAt() time.Time {
 // Detail returns the detail JSON for a plugin, fetching and caching it on
 // first use. It fails when the plugin is not in the index or the fetch fails
 // and no cached copy exists.
-func (f *Fetcher) Detail(name string) (*Detail, error) {
+func (f *Fetcher) Detail(name string) (*directory.Detail, error) {
 	f.mu.RLock()
 	d, cached := f.details[name]
 	e, listed := f.byName[name]
@@ -163,12 +165,12 @@ func (f *Fetcher) Detail(name string) (*Detail, error) {
 	return d, nil
 }
 
-func (f *Fetcher) fetchDetail(e Entry) (*Detail, error) {
+func (f *Fetcher) fetchDetail(e directory.Entry) (*directory.Detail, error) {
 	raw, err := f.get(e.DetailURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch detail for %s: %w", e.Name, err)
 	}
-	var d Detail
+	var d directory.Detail
 	if err := json.Unmarshal(raw, &d); err != nil {
 		return nil, fmt.Errorf("parse detail for %s: %w", e.Name, err)
 	}

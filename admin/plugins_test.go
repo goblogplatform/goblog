@@ -17,7 +17,6 @@ import (
 	"goblog/blog"
 	"goblog/plugin"
 	"goblog/plugin/installer"
-	"goblog/plugins/directory"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/mock"
@@ -31,7 +30,8 @@ type pluginsHarness struct {
 	auth   *Auth
 	inst   *installer.Installer
 	srv    *httptest.Server
-	ad     admin.Admin
+	ad     *admin.Admin
+	db     *gorm.DB
 }
 
 func newPluginsHarness(t *testing.T) *pluginsHarness {
@@ -60,24 +60,25 @@ func newPluginsHarness(t *testing.T) *pluginsHarness {
 	a := &Auth{}
 	b := blog.New(db, a, "test")
 	ad := admin.New(db, a, &b, "test")
+	adp := &ad
 	reg := plugin.NewRegistry(db)
 	reg.Init()
 	inst := &installer.Installer{
-		Dir: t.TempDir(), WasmDir: t.TempDir(), Registry: reg, Directory: directory.NewFetcher(srv.Client()),
+		Dir: t.TempDir(), WasmDir: t.TempDir(), Registry: reg, Directory: installer.NewFetcher(srv.Client()),
 		Version: "v0.2.7", Client: rewritingClient(srv), Enabled: true, WasmEnabled: true,
 		IndexURL: func() string { return srv.URL + "/index.json" },
 	}
-	ad.Installer = inst
+	adp.Installer = inst
 
 	router := gin.New()
 	router.Use(plugin.Middleware(reg))
-	router.GET("/api/v1/plugins/status", ad.PluginStatus)
-	router.GET("/api/v1/plugins/directory", ad.PluginDirectory)
-	router.POST("/api/v1/plugins/install", ad.InstallPlugin)
-	router.POST("/api/v1/plugins/update", ad.UpdatePlugin)
-	router.DELETE("/api/v1/plugins/:name", ad.UninstallPlugin)
-	router.POST("/api/v1/plugins/refresh", ad.RefreshPluginDirectory)
-	return &pluginsHarness{router: router, auth: a, inst: inst, srv: srv, ad: ad}
+	router.GET("/api/v1/plugins/status", adp.PluginStatus)
+	router.GET("/api/v1/plugins/directory", adp.PluginDirectory)
+	router.POST("/api/v1/plugins/install", adp.InstallPlugin)
+	router.POST("/api/v1/plugins/update", adp.UpdatePlugin)
+	router.DELETE("/api/v1/plugins/:name", adp.UninstallPlugin)
+	router.POST("/api/v1/plugins/refresh", adp.RefreshPluginDirectory)
+	return &pluginsHarness{router: router, auth: a, inst: inst, srv: srv, ad: adp, db: db}
 }
 
 func (h *pluginsHarness) do(method, path, body string) *httptest.ResponseRecorder {
@@ -221,7 +222,7 @@ func sha256hex(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-func adminFromHarness(h *pluginsHarness) *admin.Admin { return &h.ad }
+func adminFromHarness(h *pluginsHarness) *admin.Admin { return h.ad }
 
 func TestAdminPluginsPage(t *testing.T) {
 	h := newPluginsHarness(t)

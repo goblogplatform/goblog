@@ -1,4 +1,4 @@
-package directory
+package installer
 
 import (
 	"net/http"

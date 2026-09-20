@@ -64,6 +64,8 @@
                         {{ if .Description }}<small class="text-muted d-block mb-1">{{ .Description }}</small>{{ end }}
                         {{ if eq .Type "textarea" }}
                         <textarea id="{{ $pluginName }}.{{ .Key }}" name="{{ $pluginName }}.{{ .Key }}" class="form-control" rows="3">{{ index $values .Key }}</textarea>
+                        {{ else if eq .Type "password" }}
+                        <input type="password" id="{{ $pluginName }}.{{ .Key }}" name="{{ $pluginName }}.{{ .Key }}" value="" class="form-control" autocomplete="new-password" placeholder="{{ if index $values .Key }}(set — leave blank to keep){{ else }}(not set){{ end }}">
                         {{ else }}
                         <input type="text" id="{{ $pluginName }}.{{ .Key }}" name="{{ $pluginName }}.{{ .Key }}" value="{{ index $values .Key }}" class="form-control">
                         {{ end }}

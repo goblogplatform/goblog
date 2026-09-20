@@ -276,6 +276,9 @@ function updatePluginSettings(btn) {
         var type = this.tagName === "TEXTAREA" ? "textarea" : "text";
         var value = this.value;
         if (this.type === "submit" || this.type === "button" || !key) return;
+        // Password inputs render empty so the stored secret never reaches the
+        // page; an empty one means "keep the current value", not "clear it".
+        if (this.type === "password" && value === "") return;
         settings.push({"key": key, "value": value, "type": type});
     });
 

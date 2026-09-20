@@ -31,6 +31,7 @@ func TestRequireJSON(t *testing.T) {
 	r.DELETE("/api/v1/comments", ok)
 	r.DELETE("/api/v1/plugins/:name", ok)
 	r.POST("/api/v1/upload", ok)
+	r.POST("/api/v1/directory/repos/:id/approve", ok)
 	r.GET("/api/v1/posts", ok)
 	r.POST("/api/login", ok)
 	r.POST("/wizard_db", ok)
@@ -45,6 +46,10 @@ func TestRequireJSON(t *testing.T) {
 		{"form rejected", "POST", "/api/v1/posts", "application/x-www-form-urlencoded", "a=b", 415},
 		{"missing type with body rejected", "POST", "/api/v1/posts", "", `{}`, 415},
 		{"no body allowed", "DELETE", "/api/v1/plugins/hello", "", "", 200},
+		// A repo submitted publicly must not be approvable by a cross-site
+		// form post against a logged-in admin: forms cannot send JSON.
+		{"cross-site approve rejected", "POST", "/api/v1/directory/repos/1/approve", "application/x-www-form-urlencoded", "", 415},
+		{"admin approve allowed", "POST", "/api/v1/directory/repos/1/approve", "application/json", "", 200},
 		{"multipart upload allowed", "POST", "/api/v1/upload", "multipart/form-data; boundary=x", "--x--", 200},
 		{"multipart elsewhere rejected", "POST", "/api/v1/posts", "multipart/form-data; boundary=x", "--x--", 415},
 		{"GET untouched", "GET", "/api/v1/posts", "", "", 200},

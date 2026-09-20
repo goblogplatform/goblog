@@ -29,6 +29,9 @@ type Options struct {
 	Store        plugin.Store                     // nil → writes fail, reads are empty
 	AllowedHosts []string                         // hosts the plugin may reach over HTTP; nil → none
 	Logf         func(format string, args ...any) // nil → log.Printf
+	// NoCache skips the shared compilation cache — for one-off loads such
+	// as validation, so the compiled code is freed on Close.
+	NoCache bool
 }
 
 var (
@@ -167,10 +170,18 @@ func (p *Plugin) instantiate() (*extism.Plugin, error) {
 		// effective timeout is set per call (see call).
 		Timeout: uint64(callTimeout / time.Millisecond),
 	}
+	// The SDK layers close-on-context-done and the memory limit on top. The
+	// shared cache keeps a module's compiled code resident for the life of
+	// the process; NoCache callers (validation of a public submission) skip
+	// it so the compiled code is freed when Close runs instead of pinning
+	// memory for a module that may never be installed.
+	runtimeConfig := wazero.NewRuntimeConfig()
+	if !p.opts.NoCache {
+		runtimeConfig = runtimeConfig.WithCompilationCache(compilationCache)
+	}
 	config := extism.PluginConfig{
-		EnableWasi: true,
-		// The SDK layers close-on-context-done and the memory limit on top.
-		RuntimeConfig: wazero.NewRuntimeConfig().WithCompilationCache(compilationCache),
+		EnableWasi:    true,
+		RuntimeConfig: runtimeConfig,
 		// Real clock, sleep and randomness: wazero's defaults are a fake
 		// clock starting in 2022, a no-op sleep and a fixed-seed RNG.
 		ModuleConfig: wazero.NewModuleConfig().WithSysWalltime().WithSysNanotime().WithSysNanosleep().WithRandSource(rand.Reader),

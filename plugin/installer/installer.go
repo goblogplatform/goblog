@@ -65,12 +65,12 @@ type Installer struct {
 	Dir         string // plugins/dynamic: previously installed Yaegi plugins (update/uninstall only)
 	WasmDir     string // plugins/wasm: where directory installs go
 	Registry    *plugin.Registry
-	Directory   *directory.Fetcher // own instance; not the directory plugin's
-	Version     string             // running goblog version, e.g. "v0.2.7" or "development"
-	Client      *http.Client       // downloads; nil → 30s timeout default
-	Enabled     bool               // ENABLE_DYNAMIC_PLUGINS (Yaegi); reported in Status only
-	WasmEnabled bool               // ENABLE_WASM_PLUGINS != "false"; gates Install/Update/Uninstall
-	IndexURL    func() string      // current plugin_directory_url setting
+	Directory   *Fetcher      // own instance; not the directory plugin's
+	Version     string        // running goblog version, e.g. "v0.2.7" or "development"
+	Client      *http.Client  // downloads; nil → 30s timeout default
+	Enabled     bool          // ENABLE_DYNAMIC_PLUGINS (Yaegi); reported in Status only
+	WasmEnabled bool          // ENABLE_WASM_PLUGINS != "false"; gates Install/Update/Uninstall
+	IndexURL    func() string // current plugin_directory_url setting
 
 	// mu serializes Install/Update/Uninstall so two callers acting on the
 	// same (or different) plugin names cannot interleave writes to the
@@ -116,15 +116,16 @@ type Available struct {
 
 // Status is everything the admin page needs in one call.
 type Status struct {
-	Installed      []Installed `json:"installed"`
-	Available      []Available `json:"available"`
-	DirectoryURL   string      `json:"directory_url"`
-	DynamicEnabled bool        `json:"dynamic_enabled"`
-	WasmEnabled    bool        `json:"wasm_enabled"`
-	IndexFetchedAt string      `json:"index_fetched_at,omitempty"`
-	IndexError     string      `json:"index_error,omitempty"`
-	DirWritable    bool        `json:"dir_writable"` // WasmDir (Dir when WasmDir is unset)
-	DirError       string      `json:"dir_error,omitempty"`
+	Installed       []Installed `json:"installed"`
+	Available       []Available `json:"available"`
+	DirectoryURL    string      `json:"directory_url"`
+	DynamicEnabled  bool        `json:"dynamic_enabled"`
+	WasmEnabled     bool        `json:"wasm_enabled"`
+	IndexFetchedAt  string      `json:"index_fetched_at,omitempty"`
+	IndexError      string      `json:"index_error,omitempty"`
+	DirWritable     bool        `json:"dir_writable"` // WasmDir (Dir when WasmDir is unset)
+	DirError        string      `json:"dir_error,omitempty"`
+	DirectoryHosted bool        `json:"directory_hosted"` // this site hosts a directory (set by admin, not the installer)
 }
 
 // Result reports a successful install or update.
