@@ -35,4 +35,8 @@ www/uploads/*
 plugins/wasm/*
 !plugins/wasm/.gitkeep
 
+# installed themes (installed at runtime; keep the directory itself)
+themes/installed/*
+!themes/installed/.gitkeep
+
 .idea
