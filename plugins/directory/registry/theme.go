@@ -81,6 +81,12 @@ func ParseThemeManifest(b []byte) (ThemeManifest, error) {
 // when every entry shares it. Symlinks and paths that escape the archive
 // are refused; the entry count and total size are bounded.
 func ParseArchive(zipBytes []byte) (map[string][]byte, error) {
+	if len(zipBytes) > MaxAssetBytes {
+		// Defence in depth: the caller (source.go) already bounds a
+		// downloaded release asset to MaxAssetBytes, but ParseArchive
+		// should not trust that on its own.
+		return nil, fmt.Errorf("archive: %d bytes exceeds the %d byte limit", len(zipBytes), MaxAssetBytes)
+	}
 	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("archive: %w", err)
@@ -92,6 +98,13 @@ func ParseArchive(zipBytes []byte) (map[string][]byte, error) {
 	files := map[string][]byte{}
 	total := 0
 	for _, f := range zr.File {
+		// The zip spec mandates forward slashes; a name carrying a NUL or a
+		// backslash is either malformed or an attempt to smuggle a path
+		// past fs.ValidPath (NUL also breaks ContentHash's \0-separated
+		// encoding, letting two different file sets collide).
+		if strings.ContainsAny(f.Name, "\x00\\") {
+			return nil, fmt.Errorf("archive: unsafe path %q", f.Name)
+		}
 		if f.Mode()&fs.ModeSymlink != 0 {
 			return nil, fmt.Errorf("archive: %s is a symlink", f.Name)
 		}
@@ -104,6 +117,9 @@ func ParseArchive(zipBytes []byte) (map[string][]byte, error) {
 		}
 		if !strings.HasPrefix(name, "templates/") && !strings.HasPrefix(name, "static/") {
 			continue
+		}
+		if _, dup := files[name]; dup {
+			return nil, fmt.Errorf("archive: duplicate entry %q", name)
 		}
 		if f.UncompressedSize64 > uint64(MaxAssetBytes) {
 			return nil, fmt.Errorf("archive: %s is larger than %d bytes", f.Name, MaxAssetBytes)
@@ -127,7 +143,11 @@ func ParseArchive(zipBytes []byte) (map[string][]byte, error) {
 }
 
 // commonFolder returns "<folder>/" when every entry lives under the same
-// top-level folder, else "".
+// top-level folder, else "". A theme archive's own content roots are
+// templates/ and static/, so a first path segment equal to either of those
+// is never treated as a wrapper to strip - the archive is already flat.
+// "." and ".." are likewise never stripped as a wrapper: fs.ValidPath then
+// refuses them, rather than commonFolder silently consuming them.
 func commonFolder(entries []*zip.File) string {
 	if len(entries) == 0 {
 		return ""
@@ -136,11 +156,7 @@ func commonFolder(entries []*zip.File) string {
 	if !ok || first == "" {
 		return ""
 	}
-	// A theme archive's own content roots are templates/ and static/. If
-	// the first entry's top-level segment is one of those, the archive is
-	// already flat (no GitHub wrapper folder) - treating it as a wrapper
-	// to strip would delete the templates/static prefix itself.
-	if first == "templates" || first == "static" {
+	if first == "templates" || first == "static" || first == "." || first == ".." {
 		return ""
 	}
 	prefix := first + "/"

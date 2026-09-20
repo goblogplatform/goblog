@@ -82,9 +82,12 @@ func TestParseArchive_StripsPrefixAndFilters(t *testing.T) {
 
 func TestParseArchive_Rejects(t *testing.T) {
 	cases := map[string][]byte{
-		"not a zip": []byte("nope"),
-		"traversal": zipOf(t, "x/", map[string]string{"templates/../../etc/passwd": "p"}),
-		"absolute":  zipOf(t, "", map[string]string{"/templates/home.html": "h"}),
+		"not a zip":      []byte("nope"),
+		"traversal":      zipOf(t, "x/", map[string]string{"templates/../../etc/passwd": "p"}),
+		"absolute":       zipOf(t, "", map[string]string{"/templates/home.html": "h"}),
+		"nul byte":       zipOf(t, "", map[string]string{"templates/a\x00b": "h"}),
+		"backslash":      zipOf(t, "", map[string]string{"templates/..\\..\\x": "h"}),
+		"dotdot wrapper": zipOf(t, "../", map[string]string{"templates/home.html": "h"}),
 	}
 	for name, z := range cases {
 		if _, err := ParseArchive(z); err == nil {
@@ -109,6 +112,46 @@ func TestParseArchive_Rejects(t *testing.T) {
 	w.Close()
 	if _, err := ParseArchive(buf.Bytes()); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Errorf("symlink: %v", err)
+	}
+	// Duplicate entry names (same name reachable twice, e.g. after prefix
+	// stripping) must be refused rather than silently taking the last one.
+	var dupBuf bytes.Buffer
+	dw := zip.NewWriter(&dupBuf)
+	d1, _ := dw.Create("templates/home.html")
+	d1.Write([]byte("a"))
+	d2, _ := dw.Create("templates/home.html")
+	d2.Write([]byte("b"))
+	dw.Close()
+	if _, err := ParseArchive(dupBuf.Bytes()); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("duplicate: %v", err)
+	}
+	// A single stored (uncompressed) entry bigger than MaxAssetBytes makes
+	// the archive itself exceed MaxAssetBytes.
+	var hugeBuf bytes.Buffer
+	hw := zip.NewWriter(&hugeBuf)
+	hh, _ := hw.CreateHeader(&zip.FileHeader{Name: "static/huge.bin", Method: zip.Store})
+	hh.Write(make([]byte, MaxAssetBytes+1))
+	hw.Close()
+	if _, err := ParseArchive(hugeBuf.Bytes()); err == nil {
+		t.Error("over-cap archive: expected an error")
+	}
+	// Two entries that individually fit under MaxAssetBytes but together
+	// exceed it once extracted. They compress well (all zero bytes), so the
+	// archive itself stays comfortably under MaxAssetBytes and this only
+	// trips the running extracted-size total, not the archive-size check.
+	var totalBuf bytes.Buffer
+	tw := zip.NewWriter(&totalBuf)
+	big := make([]byte, 9<<20) // 9 MiB
+	for _, name := range []string{"static/big1.bin", "static/big2.bin"} {
+		tf, err := tw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tf.Write(big)
+	}
+	tw.Close()
+	if _, err := ParseArchive(totalBuf.Bytes()); err == nil || !strings.Contains(err.Error(), "extracted size") {
+		t.Errorf("extracted size cap: %v", err)
 	}
 }
 
