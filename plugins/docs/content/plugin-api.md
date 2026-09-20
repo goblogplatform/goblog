@@ -212,12 +212,12 @@ func onInit() int32 {
 
 ## ctx
 
-The input of `template_head`, `template_footer`, `template_data` and `render_page`:
+The input of `template_head`, `template_footer`, `template_data` and `render_page`. As `render_page` of the echo plugin sees `GET /echo/data.json?v=1`:
 
 ```json
 {
   "settings": {"enabled": "true", "greeting": "hi"},
-  "template": "home.html",
+  "template": "echo",
   "request": {"path": "/echo/data.json", "sub_path": "data.json", "query": {"v": "1"}, "method": "GET"}
 }
 ```
