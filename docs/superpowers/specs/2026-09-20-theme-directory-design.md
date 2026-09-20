@@ -49,12 +49,15 @@ Required at the repo root, at the release tag:
     "homepage": "https://..."         // optional
   }
   ```
-  `name` may not be `default`, `minimal`, `forest`, `installed`, `shared`.
+  `name` may not be `default`, `minimal`, `installed`, `shared` (`forest`
+  ships compiled in and is also the first directory theme; the installer
+  never installs over a built-in).
 - `templates/` with at least one `*.html`; each must parse with goblog's
   template functions on top of `templates/shared` and `themes/default`.
 - `static/` (optional).
 - `README.md` (shown on the detail page).
-- `screenshot.png` or `screenshot.jpg`, ≤ 2 MiB.
+- `screenshot.png` or `screenshot.jpg`, ≤ 1 MiB (GitHub's contents API
+  returns files up to 1 MiB inline).
 - Releases tagged `vX.Y.Z`; drafts and pre-releases ignored; the release body
   is the version's notes.
 
