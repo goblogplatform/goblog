@@ -14,17 +14,16 @@ import (
 	"goblog/plugins/analytics"
 	"goblog/plugins/directory"
 	"goblog/plugins/socialicons"
+	"goblog/theme"
 	"goblog/tools"
 	"goblog/wizard"
 	"gorm.io/gorm"
-	"html/template"
 	"log"
 	"mime"
 	"net/http"
 	"os"
-	"sync"
-	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -366,57 +365,27 @@ func main() {
 		}
 	}
 
-	funcMap := template.FuncMap{
-		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
-	}
+	funcMap := theme.FuncMap()
 	router.SetFuncMap(funcMap)
 
-	// isValidTheme checks that a theme name is safe and exists on disk.
-	isValidTheme := func(theme string) bool {
-		// Only allow alphanumeric, hyphens, and underscores
-		for _, c := range theme {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
-				return false
-			}
-		}
-		info, err := os.Stat(filepath.Join("themes", theme, "templates"))
-		return err == nil && info.IsDir()
-	}
-
-	loadTheme := func(theme string) {
-		if !isValidTheme(theme) {
-			log.Printf("Warning: theme %q is invalid or missing, falling back to default", theme)
-			theme = "default"
-		}
-		themePath := filepath.Join("themes", theme) + "/"
-		log.Println("Loading theme: " + theme)
-		// Load shared templates first, then theme templates
-		tmpl, err := template.New("").Funcs(funcMap).ParseGlob("templates/shared/*.html")
+	loadTheme := func(name string) {
+		tmpl, loaded, err := theme.Load(name, funcMap)
 		if err != nil {
-			log.Fatalf("Failed to load shared templates: %v", err)
+			log.Fatalf("Failed to load templates: %v", err)
 		}
-		tmpl, err = tmpl.ParseGlob(themePath + "templates/*.html")
-		if err != nil {
-			log.Printf("Warning: failed to load theme %q: %v — falling back to default", theme, err)
-			theme = "default"
-			themePath = "themes/default/"
-			tmpl = template.Must(template.Must(template.New("").Funcs(funcMap).ParseGlob("templates/shared/*.html")).ParseGlob(themePath + "templates/*.html"))
-		}
+		log.Println("Loading theme: " + loaded)
 		router.SetHTMLTemplate(tmpl)
-		activeTheme = theme
+		activeTheme = loaded
 	}
 	loadTheme(activeTheme)
 
 	// Wire up hot-reload callback so theme changes take effect without restart
-	_admin.OnThemeChange = func(theme string) {
-		loadTheme(theme)
+	_admin.OnThemeChange = func(name string) {
+		loadTheme(name)
 	}
 
-	// Serve theme static files dynamically based on active theme
-	router.GET("/theme/*filepath", func(c *gin.Context) {
-		fp := filepath.Clean(c.Param("filepath"))
-		c.File(filepath.Join("themes", activeTheme, "static", fp))
-	})
+	// Theme static files: the active theme's static/, falling back to default's
+	router.GET("/theme/*filepath", theme.StaticHandler(func() string { return activeTheme }))
 
 	getAndHead(router, "/", goblog.rootHandler)
 	getAndHead(router, "/login", goblog.loginHandler)

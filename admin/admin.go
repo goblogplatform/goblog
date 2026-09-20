@@ -8,10 +8,10 @@ import (
 	gplugin "goblog/plugin"
 	"goblog/plugin/installer"
 	"goblog/plugins/directory"
+	"goblog/theme"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -43,24 +43,8 @@ func New(db *gorm.DB, auth auth.IAuth, b *blog.Blog, version string) Admin {
 	return api
 }
 
-// ListThemes returns the names of all available themes by scanning the themes/ directory.
-func ListThemes() []string {
-	entries, err := os.ReadDir("themes")
-	if err != nil {
-		log.Println("Warning: could not read themes directory:", err)
-		return []string{"default"}
-	}
-	var themes []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			themes = append(themes, entry.Name())
-		}
-	}
-	if len(themes) == 0 {
-		themes = []string{"default"}
-	}
-	return themes
-}
+// ListThemes returns every theme goblog can activate: built-in and installed.
+func ListThemes() []string { return theme.List() }
 
 // getPluginSettings retrieves plugin settings groups from the registry on the Gin context.
 func (a *Admin) getPluginSettings(c *gin.Context) interface{} {
