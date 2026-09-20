@@ -66,8 +66,8 @@ separate tables because they change on different schedules.
 |---|---|
 | `repo_id` | unique FK → `directory_repos` |
 | `name` | plugin name, unique across builds (name collisions are refused at submit time) |
-| `display_name`, `description`, `version`, `author`, `license`, `source_url`, `download_url`, `sha256`, `min_goblog_version`, `install_type`, `runtime`, `allowed_hosts_json`, `released_at`, `stars` | the `IndexEntry` fields |
-| `readme_html`, `changelog_html`, `releases_json` | the detail fields |
+| `doc` | the detail document as JSON (index fields + README/changelog HTML + releases) |
+| `version`, `stars` | copied out of `doc` for the admin list and the unchanged-release check |
 | `built_at` | |
 | `last_attempt_at`, `last_error` | a failed rebuild keeps the old build and records why |
 
@@ -152,11 +152,10 @@ calls); otherwise run `BuildRepo` and replace the build. Any error sets
   3. Existing row: `approved` → "already listed" (link to its page);
      `pending` → "already under review"; `rejected` → proceed (resubmission
      replaces the row's build and sets it back to `pending`).
-  4. Rate limit: 5 submissions per hour per client IP (from
-     `c.ClientIP()`, counted from `directory_repos.submitter_ip` +
-     `submitted_at`, plus an in-memory counter for rejected attempts) and
-     one validation at a time (a `TryLock`; busy → 429 "try again in a
-     minute"). Validation has a 90 s context budget.
+  4. Rate limit: 5 attempts per hour per client IP, counted in memory
+     (every attempt, pass or fail), and one validation at a time (a
+     `TryLock`; busy → 429 "try again in a minute"). Validation has a 90 s
+     context budget.
   5. `BuildRepo`. Failure → the form again with the error message (the same
      text CI produced today). A plugin `name` already owned by a different
      approved/pending repo → "name is taken".
@@ -209,7 +208,7 @@ plugin endpoints.
 
 ## 5. Installer
 
-`directory.Fetcher` and the `Entry`/`Detail` wire types move to
+`directory.Fetcher` moves (the wire types stay in `plugins/directory`) to
 `plugin/installer/fetcher.go` (tests move with them). `DefaultIndexURL`
 stays `https://www.goblog.live/plugins/index.json`. No behaviour change.
 

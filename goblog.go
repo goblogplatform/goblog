@@ -326,6 +326,7 @@ func main() {
 	}
 	pluginInstaller.Directory.SetUserAgent("goblog-installer/" + Version)
 	_admin.Installer = pluginInstaller
+	_admin.Directory = dir
 	if db != nil {
 		if err := registry.Init(); err != nil {
 			log.Printf("Plugin init errors: %v", err)
@@ -428,6 +429,13 @@ func main() {
 	router.POST("/api/v1/plugins/update", goblog._admin.UpdatePlugin)
 	router.DELETE("/api/v1/plugins/:name", goblog._admin.UninstallPlugin)
 	router.POST("/api/v1/plugins/refresh", goblog._admin.RefreshPluginDirectory)
+	router.GET("/api/v1/directory/repos", goblog._admin.ListDirectoryRepos)
+	router.POST("/api/v1/directory/repos", goblog._admin.AddDirectoryRepo)
+	router.GET("/api/v1/directory/repos/:id", goblog._admin.GetDirectoryRepo)
+	router.POST("/api/v1/directory/repos/:id/approve", goblog._admin.ApproveDirectoryRepo)
+	router.POST("/api/v1/directory/repos/:id/reject", goblog._admin.RejectDirectoryRepo)
+	router.POST("/api/v1/directory/repos/:id/rebuild", goblog._admin.RebuildDirectoryRepo)
+	router.DELETE("/api/v1/directory/repos/:id", goblog._admin.DelistDirectoryRepo)
 	//if we use true here - it will override the home route and just show files
 	router.Use(static.Serve("/", static.LocalFile("www", false)))
 	if err != nil {

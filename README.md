@@ -253,12 +253,12 @@ With the Docker image (its entrypoint is a shell command, so override it):
 docker run --rm --network none -v "$PWD:/p" --entrypoint /go/src/github.com/compscidr/goblog/goblog \
   compscidr/goblog:latest validate-plugin /p/plugin.wasm
 ```
-This is what the [plugin directory](https://goblog.live/plugins) registry runs on every submission.
+This is the same check goblog.live runs on every submission to the plugin directory.
 
 ### Plugin directory
-[goblog.live/plugins](https://goblog.live/plugins) lists published plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`, `runtime`, `allowed_hosts`). Plugins are individual GitHub repositories with releases; the curated list and the build that produces the index live in [goblogplatform/plugins](https://github.com/goblogplatform/plugins), which also documents how to submit one.
+[goblog.live/plugins](https://goblog.live/plugins) lists published plugins; `https://goblog.live/plugins/index.json` is the same list as JSON (name, version, author, license, `download_url`, `sha256`, `min_goblog_version`, `runtime`, `allowed_hosts`) and `/plugins/<name>.json` carries one plugin's README, changelog and release history. Plugins are individual GitHub repositories with releases — see [docs/PLUGIN_CONTRACT.md](docs/PLUGIN_CONTRACT.md). To publish one, paste its URL at [goblog.live/plugins/submit](https://goblog.live/plugins/submit): it is validated on the spot (latest release, manifest, `plugin.wasm` loads and its name/version match) and listed once a maintainer approves it.
 
-The pages are rendered by the built-in `directory` plugin, which any goblog can turn on under **Admin → Settings → Plugin Directory** (`enabled` = `true`). It fetches `index_url` every `refresh_minutes`, keeps the last good copy if the registry is unreachable, and serves `/plugins`, `/plugins/<name>` and `/plugins/index.json`. Only point `index_url` at a registry you trust: its README, changelog and release-note HTML is shown as-is. The directory page also has a **Submit your plugin** box: paste your repository URL and it opens a pre-filled submission on GitHub.
+The directory is the built-in `directory` plugin, so any goblog can host one: turn it on under **Admin → Settings → Plugin Directory** (`enabled` = `true`). Submissions are stored in the site's database and reviewed under **Admin → Plugins → Directory**, where you can also add repositories yourself, rebuild an entry or delist it. Listed plugins are re-checked every `refresh_minutes` (default 360) for new releases and star counts. The GitHub API allows 60 anonymous requests per hour; set `github_token` (any token, no scopes needed) to raise that to 5000 if you list more than a handful of plugins.
 
 ## Testing
 ```bash
