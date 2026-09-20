@@ -124,11 +124,10 @@ func TestRenderPage(t *testing.T) {
 }
 
 // TestTOC_OnlyForLongerPages: a page gets a table of contents iff it has
-// more than three H2/H3 headings. The reference page is the long one; the
-// short side is whichever page has three or fewer. It assumes at least one
-// such page exists: if every page grows past three headings, the no-TOC
-// branch is untested and the final assertion fires — add a short page or
-// drop that check, do not weaken the iff.
+// more than three H2/H3 headings. The reference page is the long one; every
+// real page is checked against the iff; and because every shipped page now
+// has more than three headings, the no-TOC side is exercised with a
+// synthetic three-heading page rather than left to chance.
 func TestTOC_OnlyForLongerPages(t *testing.T) {
 	p := New()
 	long, _ := p.rendered("plugin-api")
@@ -139,18 +138,22 @@ func TestTOC_OnlyForLongerPages(t *testing.T) {
 	if !strings.Contains(out, `class="docs-toc `) || !strings.Contains(out, `href="#exports"`) {
 		t.Error("plugin-api should have a table of contents with an #exports entry")
 	}
-	short := 0
 	for _, pg := range pages {
 		r, _ := p.rendered(pg.Slug)
 		has := strings.Contains(sidebarAndArticle("/docs", pg.Slug, r), `class="docs-toc `)
 		if has != (len(r.TOC) > 3) {
 			t.Errorf("%s: %d headings, toc=%v", pg.File, len(r.TOC), has)
 		}
-		if len(r.TOC) <= 3 {
-			short++
-		}
 	}
-	if short == 0 {
-		t.Error("no page with three or fewer headings; the no-TOC side is untested")
+	html, toc, err := Render([]byte("# Short\n\n## One\n\n## Two\n\n### Three\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toc) != 3 {
+		t.Fatalf("synthetic page has %d headings, want 3", len(toc))
+	}
+	short := renderedPage{page: page{Slug: "short", Title: "Short", File: "short.md"}, HTML: html, TOC: toc}
+	if strings.Contains(sidebarAndArticle("/docs", "short", short), `class="docs-toc `) {
+		t.Error("a page with three headings should have no table of contents")
 	}
 }
