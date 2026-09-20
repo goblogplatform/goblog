@@ -85,6 +85,8 @@ Set `TRUSTED_PROXIES` so `X-Forwarded-For` headers are trusted for client IP res
 TRUSTED_PROXIES=172.16.0.0/12 ./goblog
 ```
 
+The session cookie is `HttpOnly`, `SameSite=Lax` and `Secure`, so it is only sent over HTTPS (browsers exempt `localhost`, so local development on `http://localhost:7000` still works). If you serve goblog over plain HTTP on any other host, set `SESSION_SECURE=false` or logins will not stick. Mutating `/api/v1` requests must be sent as `application/json` (`/api/v1/upload` as `multipart/form-data`); anything else gets `415 Unsupported Media Type`.
+
 ### Pinning the Admin Account
 On a fresh install the first GitHub account to complete login becomes the admin. If you pre-populate `.env` (e.g. from configuration management) and skip the wizard, anyone could win that race. Pin it to your own account by adding either or both of these to `.env`:
 ```bash

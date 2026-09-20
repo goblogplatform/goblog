@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm"
 	"html/template"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"sync"
@@ -347,8 +348,10 @@ func main() {
 	_blog.PageFilter = blog.PluginPageFilter(registry)
 
 	router.Use(CORS())
+	router.Use(requireJSON())
 	router.Use(gplugin.Middleware(registry))
 	store := cookie.NewStore([]byte(sessionKey))
+	store.Options(sessionOptions(os.Getenv("SESSION_SECURE")))
 	hostname, err := os.Hostname()
 	router.Use(sessions.Sessions(hostname, store))
 	log.Println("Session key: ", sessionKey)
@@ -534,6 +537,48 @@ func CORS() gin.HandlerFunc {
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS, PATCH")
 		c.Next()
+	}
+}
+
+// sessionOptions returns the session cookie's attributes: HttpOnly and
+// SameSite=Lax, so a cross-site form post or fetch does not carry an admin's
+// session, and Secure unless SESSION_SECURE=false (plain http on a host
+// other than localhost, which browsers exempt).
+func sessionOptions(secureEnv string) sessions.Options {
+	return sessions.Options{
+		Path:     "/",
+		MaxAge:   30 * 24 * 60 * 60,
+		HttpOnly: true,
+		Secure:   secureEnv != "false",
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
+// requireJSON rejects mutating /api/v1 requests whose body is not JSON
+// (multipart is allowed for /api/v1/upload only). Every goblog client sends
+// application/json; an HTML form on another site can only send form
+// encodings or text/plain, so with SameSite this closes the CSRF avenue
+// through gin's binders, which accept any content type. Returning without
+// Abort lets gin continue to the handler; Next is only needed to run code
+// after it.
+func requireJSON() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !strings.HasPrefix(c.Request.URL.Path, "/api/v1/") {
+			return
+		}
+		switch c.Request.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		default:
+			return
+		}
+		ct := c.GetHeader("Content-Type")
+		if ct == "" && c.Request.ContentLength == 0 {
+			return // no body, e.g. DELETE /api/v1/plugins/:name
+		}
+		mt, _, err := mime.ParseMediaType(ct)
+		if err != nil || !(mt == "application/json" || (mt == "multipart/form-data" && c.Request.URL.Path == "/api/v1/upload")) {
+			c.AbortWithStatusJSON(http.StatusUnsupportedMediaType, gin.H{"error": "Content-Type must be application/json"})
+		}
 	}
 }
 
