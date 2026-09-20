@@ -400,8 +400,8 @@ func main() {
 	_admin.Themes = themeInstaller
 
 	// Wire up hot-reload callback so theme changes take effect without restart
-	_admin.OnThemeChange = func(theme string) {
-		loadTheme(theme)
+	_admin.OnThemeChange = func(name string) {
+		loadTheme(name)
 	}
 
 	// Theme static files: the active theme's static/, falling back to default's

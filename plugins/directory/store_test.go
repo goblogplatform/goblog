@@ -86,6 +86,9 @@ func TestMigrate_BackfillsKindAndDropsNameIndex(t *testing.T) {
 	db.Exec("INSERT INTO directory_repos (repo, status, submitted_at) VALUES (?, ?, ?)", "o/hello", StatusApproved, time.Now())
 	db.Exec("INSERT INTO directory_builds (repo_id, name, doc) VALUES (?, ?, ?)", 1, "hello", "{}")
 
+	if !db.Migrator().HasIndex(&Build{}, "idx_directory_builds_name") {
+		t.Fatal("test setup: old index missing")
+	}
 	if err := Migrate(db); err != nil {
 		t.Fatal(err)
 	}

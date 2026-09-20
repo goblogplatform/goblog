@@ -183,6 +183,9 @@ Uninstall(name) error · Activate(name) error · Refresh(ctx) error
   goblog.live's own `site` theme is not listed (site-specific).
 - README: "Theming" section documents the override loader, `themes/installed`,
   Admin → Themes and the contract link; `docs/THEME_CONTRACT.md`.
+- Seed forest promptly after deploying PR 2: `OnInit` creates the public
+  Themes page (in the nav) immediately, so it is empty until the first theme
+  is approved.
 
 ## 7. Testing
 

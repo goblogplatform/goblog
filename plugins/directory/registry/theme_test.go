@@ -64,6 +64,21 @@ func TestParseThemeManifest(t *testing.T) {
 	}
 }
 
+func TestParseThemeManifest_MinGoblogVersionFloor(t *testing.T) {
+	// 0.5.0 is the first goblog that can install a directory theme at all.
+	cases := map[string]bool{"0.4.9": false, "0.5.0": true, "1.0.0": true, "0.5.1": true, "0.4.99": false}
+	for version, ok := range cases {
+		in := strings.Replace(goodThemeManifest, `"0.5.0"`, `"`+version+`"`, 1)
+		_, err := ParseThemeManifest([]byte(in))
+		if ok && err != nil {
+			t.Errorf("min_goblog_version %q should be accepted: %v", version, err)
+		}
+		if !ok && (err == nil || !strings.Contains(err.Error(), "min_goblog_version must be at least 0.5.0")) {
+			t.Errorf("min_goblog_version %q: want floor error, got %v", version, err)
+		}
+	}
+}
+
 func TestParseArchive_StripsPrefixAndFilters(t *testing.T) {
 	z := zipOf(t, "ocean-1.0.0/", map[string]string{
 		"templates/home.html": "home", "static/css/a.css": "css", "README.md": "readme",
@@ -155,6 +170,27 @@ func TestParseArchive_Rejects(t *testing.T) {
 	tw.Close()
 	if _, err := ParseArchive(totalBuf.Bytes()); err == nil || !strings.Contains(err.Error(), "extracted size") {
 		t.Errorf("extracted size cap: %v", err)
+	}
+}
+
+func TestParseArchive_RejectsOversizedTemplate(t *testing.T) {
+	// A single templates/* entry over MaxTemplateBytes is refused even
+	// though it is nowhere near MaxAssetBytes (theme.MaxTemplateBytes
+	// applies the same cap when goblog later parses it).
+	z := zipOf(t, "", map[string]string{"templates/home.html": strings.Repeat("a", MaxTemplateBytes+1)})
+	if _, err := ParseArchive(z); err == nil || !strings.Contains(err.Error(), "templates/home.html") {
+		t.Errorf("oversized template: %v", err)
+	}
+	// A static/* entry of the same size is fine: the cap only applies to
+	// templates/*.
+	okStatic := zipOf(t, "", map[string]string{"static/big.css": strings.Repeat("a", MaxTemplateBytes+1)})
+	if _, err := ParseArchive(okStatic); err != nil {
+		t.Errorf("oversized static asset should not trip the template cap: %v", err)
+	}
+	// Exactly at the cap must pass.
+	atCap := zipOf(t, "", map[string]string{"templates/home.html": strings.Repeat("a", MaxTemplateBytes)})
+	if _, err := ParseArchive(atCap); err != nil {
+		t.Errorf("template exactly at the cap should pass: %v", err)
 	}
 }
 

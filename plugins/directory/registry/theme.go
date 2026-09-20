@@ -31,6 +31,16 @@ const MaxArchiveEntries = 2000
 // checked anyway.
 const MaxScreenshotBytes = 1 << 20
 
+// MaxTemplateBytes caps one templates/* entry in a theme archive. registry
+// must not import theme (layering), so this is kept equal to
+// theme.MaxTemplateBytes by hand; the installer applies that one when it
+// re-validates the files it downloads.
+const MaxTemplateBytes = 256 << 10
+
+// minGoblogVersion is the floor for a theme's min_goblog_version: the first
+// goblog release that can install a directory theme at all.
+var minGoblogVersion = [3]int{0, 5, 0}
+
 // ThemeManifest is goblog-theme.json at the root of a theme repository.
 type ThemeManifest struct {
 	Name             string `json:"name"`
@@ -71,11 +81,26 @@ func ParseThemeManifest(b []byte) (ThemeManifest, error) {
 	}
 	if !versionPattern.MatchString(m.MinGoblogVersion) {
 		problems = append(problems, "min_goblog_version must be a plain semver like 0.5.0")
+	} else if !atLeast(m.MinGoblogVersion, minGoblogVersion) {
+		problems = append(problems, "min_goblog_version must be at least 0.5.0")
 	}
 	if len(problems) > 0 {
 		return ThemeManifest{}, fmt.Errorf("goblog-theme.json: %s", strings.Join(problems, "; "))
 	}
 	return m, nil
+}
+
+// atLeast reports whether v (already known to match versionPattern, so this
+// never fails to parse) is >= floor, comparing major, then minor, then patch.
+func atLeast(v string, floor [3]int) bool {
+	parts := strings.SplitN(v, ".", 3)
+	for i, floorPart := range floor {
+		n, _ := strconv.Atoi(parts[i])
+		if n != floorPart {
+			return n > floorPart
+		}
+	}
+	return true
 }
 
 // ParseArchive reads a theme archive (GitHub's tag zipball, or any zip with
@@ -126,6 +151,9 @@ func ParseArchive(zipBytes []byte) (map[string][]byte, error) {
 		}
 		if f.UncompressedSize64 > uint64(MaxAssetBytes) {
 			return nil, fmt.Errorf("archive: %s is larger than %d bytes", f.Name, MaxAssetBytes)
+		}
+		if strings.HasPrefix(name, "templates/") && f.UncompressedSize64 > uint64(MaxTemplateBytes) {
+			return nil, fmt.Errorf("archive: %s is %d bytes; the limit is %d (256 KiB)", f.Name, f.UncompressedSize64, MaxTemplateBytes)
 		}
 		rc, err := f.Open()
 		if err != nil {
