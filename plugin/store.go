@@ -22,6 +22,10 @@ type Store interface {
 const (
 	MaxStoreKeyBytes   = 256
 	MaxStoreValueBytes = 1 << 20
+	// MaxStorePluginBytes and MaxStorePluginRows cap what one plugin may keep
+	// in total, so a runaway plugin cannot fill the database.
+	MaxStorePluginBytes = 16 << 20
+	MaxStorePluginRows  = 10000
 )
 
 // ErrStoreUnavailable is returned before the database is configured (wizard).
@@ -79,11 +83,36 @@ func (s *dbStore) Set(pluginName, key string, value []byte) error {
 	if err != nil {
 		return err
 	}
+	if err := checkQuota(db, pluginName, key, len(value)); err != nil {
+		return err
+	}
 	e := PluginStoreEntry{PluginName: pluginName, Key: key, Value: value, UpdatedAt: time.Now()}
 	return db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "plugin_name"}, {Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
 	}).Create(&e).Error
+}
+
+// checkQuota rejects a Set that would push the plugin past its row or byte
+// quota. An overwrite frees its old value first and never adds a row.
+func checkQuota(db *gorm.DB, pluginName, key string, newBytes int) error {
+	var usage struct {
+		Rows  int64
+		Bytes int64
+	}
+	if err := db.Model(&PluginStoreEntry{}).
+		Select("COUNT(*) AS rows, COALESCE(SUM(LENGTH(value)), 0) AS bytes").
+		Where("plugin_name = ? AND key <> ?", pluginName, key).
+		Scan(&usage).Error; err != nil {
+		return fmt.Errorf("plugin store: usage: %w", err)
+	}
+	if usage.Rows >= MaxStorePluginRows {
+		return fmt.Errorf("plugin store: plugin has reached its %d-key quota", MaxStorePluginRows)
+	}
+	if usage.Bytes+int64(newBytes) > MaxStorePluginBytes {
+		return fmt.Errorf("plugin store: plugin has reached its %d-byte quota", MaxStorePluginBytes)
+	}
+	return nil
 }
 
 func (s *dbStore) Delete(pluginName, key string) error {

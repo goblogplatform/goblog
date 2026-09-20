@@ -3,6 +3,7 @@ package plugin_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -96,5 +97,62 @@ func TestStore_NoDB(t *testing.T) {
 	}
 	if err := s.Set("a", "k", []byte("v")); !errors.Is(err, plugin.ErrStoreUnavailable) {
 		t.Errorf("expected ErrStoreUnavailable, got %v", err)
+	}
+}
+
+func newTestStore(t *testing.T) plugin.Store {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	return reg.Store()
+}
+
+// TestStore_PluginQuota: a plugin's total stored bytes and row count are
+// capped; other plugins' data does not count against it.
+func TestStore_PluginQuota(t *testing.T) {
+	s := newTestStore(t)
+	big := make([]byte, plugin.MaxStoreValueBytes)
+	n := plugin.MaxStorePluginBytes / plugin.MaxStoreValueBytes
+	for i := 0; i < n; i++ {
+		if err := s.Set("a", fmt.Sprintf("k%d", i), big); err != nil {
+			t.Fatalf("set %d: %v", i, err)
+		}
+	}
+	if err := s.Set("a", "one-more", []byte("x")); err == nil {
+		t.Error("expected the byte quota to reject one more value")
+	}
+	// Overwriting an existing key does not count its old value twice.
+	if err := s.Set("a", "k0", big); err != nil {
+		t.Errorf("overwrite within quota: %v", err)
+	}
+	if err := s.Set("b", "k", big); err != nil {
+		t.Errorf("another plugin is unaffected: %v", err)
+	}
+	if err := s.Delete("a", "k0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set("a", "one-more", []byte("x")); err != nil {
+		t.Errorf("after freeing space: %v", err)
+	}
+}
+
+func TestStore_PluginRowQuota(t *testing.T) {
+	s := newTestStore(t)
+	for i := 0; i < plugin.MaxStorePluginRows; i++ {
+		if err := s.Set("a", fmt.Sprintf("k%d", i), []byte("v")); err != nil {
+			t.Fatalf("set %d: %v", i, err)
+		}
+	}
+	if err := s.Set("a", "extra", []byte("v")); err == nil {
+		t.Error("expected the row quota to reject a new key")
+	}
+	if err := s.Set("a", "k0", []byte("w")); err != nil {
+		t.Errorf("overwriting an existing key is allowed at the row cap: %v", err)
 	}
 }

@@ -322,7 +322,7 @@ func (p *slugPlugin) Pages() []plugin.PageDefinition {
 // top-level path goblog serves itself, nor one that is not a plain path
 // segment.
 func TestInit_RefusesReservedAndMalformedSlugs(t *testing.T) {
-	for _, slug := range []string{"admin", "api", "login", "logout", "search", "theme", "wizard", "Bad Slug", "a/b", "../x"} {
+	for _, slug := range []string{"admin", "api", "login", "logout", "search", "theme", "wizard", "comments", "wizard_db", "test_db", "wp-content", "posts", "tags", "sitemap.xml", "Bad Slug", "a/b", "../x"} {
 		db, err := gorm.Open(sqlite.Open(":memory:"))
 		if err != nil {
 			t.Fatal(err)
@@ -363,6 +363,9 @@ func TestDeletePages(t *testing.T) {
 	}
 	if err := reg.DeletePages(nil); err != nil {
 		t.Errorf("DeletePages(nil): %v", err)
+	}
+	if err := reg.Unregister("pager"); err != nil { // as Uninstall does before DeletePages
+		t.Fatal(err)
 	}
 	if err := reg.DeletePages([]string{"pager"}); err != nil {
 		t.Fatal(err)
@@ -528,4 +531,59 @@ func TestInitPluginAndDeleteSettings(t *testing.T) {
 		}
 	}
 	reg.Stop()
+}
+
+// otherPagerPlugin claims pagePlugin's "pager" page type under another name.
+type otherPagerPlugin struct{ pagePlugin }
+
+func (p *otherPagerPlugin) Name() string { return "pager2" }
+
+// TestRegisterDynamic_RejectsClaimedPageType: a plugin cannot take over a
+// page type another registered plugin already declares — it would shadow
+// that plugin's page and, on uninstall, delete its page row.
+func TestRegisterDynamic_RejectsClaimedPageType(t *testing.T) {
+	reg := plugin.NewRegistry(nil)
+	reg.Register(&pagePlugin{})
+	err := reg.RegisterDynamic(&otherPagerPlugin{}, "/x/pager2.wasm")
+	if err == nil || !strings.Contains(err.Error(), "pager") {
+		t.Fatalf("expected a page-type conflict error, got %v", err)
+	}
+	if len(reg.Plugins()) != 1 {
+		t.Error("the conflicting plugin must not be registered")
+	}
+}
+
+// TestDeletePages_KeepsClaimedTypes: pages whose type another registered
+// plugin still declares are left alone.
+func TestDeletePages_KeepsClaimedTypes(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}, &blog.Page{}); err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(db)
+	reg.Register(&pagePlugin{})
+	if err := reg.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.DeletePages([]string{"pager"}); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	db.Model(&blog.Page{}).Where("page_type = ?", "pager").Count(&count)
+	if count != 1 {
+		t.Errorf("expected the still-registered plugin's page to survive, got %d", count)
+	}
+	if err := reg.Unregister("pager"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.DeletePages([]string{"pager"}); err != nil {
+		t.Fatal(err)
+	}
+	db.Model(&blog.Page{}).Where("page_type = ?", "pager").Count(&count)
+	if count != 0 {
+		t.Errorf("expected the page to be deleted once unclaimed, got %d", count)
+	}
 }

@@ -294,6 +294,9 @@ func (p *Plugin) reinstantiateLocked() bool {
 	if !p.reinstantiatedAt.IsZero() && time.Since(p.reinstantiatedAt) < reinstantiateBackoff {
 		return false
 	}
+	// Stamped on the attempt, not the outcome, so a failing instantiate()
+	// is not retried on every call either.
+	p.reinstantiatedAt = time.Now()
 	ext, err := p.instantiate()
 	if err != nil {
 		p.opts.Logf("plugin %s: re-creating the instance failed: %v", p.displayForLog(), err)
@@ -301,7 +304,6 @@ func (p *Plugin) reinstantiateLocked() bool {
 	}
 	p.ext.Close(context.Background()) // releases the compiled module and runtime
 	p.ext = ext
-	p.reinstantiatedAt = time.Now()
 	p.closedLogged = false
 	p.opts.Logf("plugin %s: instance re-created after it was closed", p.displayForLog())
 	return true
