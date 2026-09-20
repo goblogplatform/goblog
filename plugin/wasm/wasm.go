@@ -13,7 +13,7 @@ import (
 	"log"
 	"os"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"goblog/plugin"
@@ -32,9 +32,13 @@ type Options struct {
 }
 
 var (
-	callTimeout = 10 * time.Second  // template_* and render_page
-	jobTimeout  = 120 * time.Second // run_job and on_init
+	callTimeout  = 10 * time.Second  // template_* and render_page
+	jobTimeout   = 120 * time.Second // run_job and on_init
+	hookLockWait = 2 * time.Second   // how long template_* hooks wait for a busy instance
 )
+
+// waitForever makes call wait for the instance without bound.
+const waitForever time.Duration = -1
 
 const (
 	memoryPages          = 1024    // 64 MB
@@ -60,7 +64,8 @@ const reinstantiateBackoff = 30 * time.Second
 
 // Plugin is a loaded WebAssembly plugin. It implements plugin.Plugin.
 type Plugin struct {
-	mu                sync.Mutex
+	sem               chan struct{} // one-slot semaphore serialising calls; a timed acquire is what a mutex cannot give
+	busyLogged        atomic.Bool   // "instance busy" already logged for the current busy stretch
 	ext               *extism.Plugin
 	data              []byte // module bytes, kept so a closed instance can be re-created
 	opts              Options
@@ -100,7 +105,7 @@ func LoadBytes(data []byte, opts Options) (*Plugin, error) {
 	if opts.Logf == nil {
 		opts.Logf = log.Printf
 	}
-	p := &Plugin{opts: opts, data: data}
+	p := &Plugin{opts: opts, data: data, sem: make(chan struct{}, 1)}
 	ext, err := p.instantiate()
 	if err != nil {
 		return nil, err
@@ -114,7 +119,7 @@ func LoadBytes(data []byte, opts Options) (*Plugin, error) {
 		ext.Close(context.Background())
 		return nil, ErrNoIdentity
 	}
-	if err := p.callJSON("identity", nil, &p.identity, callTimeout); err != nil {
+	if err := p.callJSON("identity", nil, &p.identity, callTimeout, waitForever); err != nil {
 		ext.Close(context.Background())
 		return nil, fmt.Errorf("wasm plugin: identity: %w", err)
 	}
@@ -190,10 +195,51 @@ func (p *Plugin) displayForLog() string {
 // errClosed is returned by call after Close.
 var errClosed = errors.New("wasm plugin: instance closed")
 
+// errBusy is returned by call when the instance stayed busy with another
+// call for the whole bounded wait.
+var errBusy = errors.New("wasm plugin: instance busy")
+
+// lock acquires the instance, waiting at most wait (waitForever: no bound).
+func (p *Plugin) lock(wait time.Duration) bool {
+	if wait < 0 {
+		p.sem <- struct{}{}
+		return true
+	}
+	select {
+	case p.sem <- struct{}{}:
+		return true
+	default:
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case p.sem <- struct{}{}:
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+func (p *Plugin) unlock() { <-p.sem }
+
+// Health reports the instance state for the admin page: "busy" while
+// another call holds it, "closed" when it was closed (timeout or exit) and
+// not re-created yet, otherwise "ok".
+func (p *Plugin) Health() string {
+	if !p.lock(0) {
+		return "busy"
+	}
+	defer p.unlock()
+	if p.closed || p.instanceClosed {
+		return "closed"
+	}
+	return "ok"
+}
+
 // Close releases the instance. Calling it again is a no-op.
 func (p *Plugin) Close() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.lock(waitForever)
+	defer p.unlock()
 	if p.closed {
 		return nil
 	}
@@ -207,7 +253,8 @@ func (p *Plugin) Identity() Identity { return p.identity }
 // AllowedHosts returns the hosts this instance may reach.
 func (p *Plugin) AllowedHosts() []string { return p.opts.AllowedHosts }
 
-// call runs an export under the mutex with the given timeout. A non-zero
+// call runs an export under the instance lock with the given timeout,
+// waiting at most wait for the lock (waitForever: unbounded). A non-zero
 // exit or a runtime error is returned as error; output is the raw bytes.
 //
 // The timeout has one mechanism: ext.Timeout, which CallWithContext turns
@@ -218,9 +265,15 @@ func (p *Plugin) AllowedHosts() []string { return p.opts.AllowedHosts }
 // plugin down for good; a plugin that keeps timing out is re-created at
 // most once per reinstantiateBackoff and declines in between, reported
 // once per closed instance.
-func (p *Plugin) call(name string, input []byte, timeout time.Duration) ([]byte, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func (p *Plugin) call(name string, input []byte, timeout, wait time.Duration) ([]byte, error) {
+	if !p.lock(wait) {
+		if p.busyLogged.CompareAndSwap(false, true) {
+			p.opts.Logf("plugin %s: instance busy for over %s; %s declined until it is free", p.displayForLog(), wait, name)
+		}
+		return nil, errBusy
+	}
+	defer p.unlock()
+	p.busyLogged.Store(false)
 	if p.closed {
 		return nil, errClosed
 	}
@@ -307,7 +360,7 @@ func (p *Plugin) reinstantiateLocked() bool {
 	return true
 }
 
-func (p *Plugin) callJSON(name string, input any, out any, timeout time.Duration) error {
+func (p *Plugin) callJSON(name string, input any, out any, timeout, wait time.Duration) error {
 	var in []byte
 	if input != nil {
 		var err error
@@ -315,7 +368,7 @@ func (p *Plugin) callJSON(name string, input any, out any, timeout time.Duration
 			return err
 		}
 	}
-	b, err := p.call(name, in, timeout)
+	b, err := p.call(name, in, timeout, wait)
 	if err != nil {
 		return err
 	}
@@ -333,7 +386,7 @@ func (p *Plugin) optionalJSON(name string, out any) error {
 	if !p.exports[name] {
 		return nil
 	}
-	return p.callJSON(name, nil, out, callTimeout)
+	return p.callJSON(name, nil, out, callTimeout, waitForever)
 }
 
 func (p *Plugin) enabled(settings map[string]string) bool {
@@ -379,7 +432,7 @@ func (p *Plugin) ScheduledJobs() []plugin.ScheduledJob {
 			if !p.enabled(settings) {
 				return nil
 			}
-			if err := p.callJSON("run_job", jobInput{Name: name, Settings: settings}, nil, jobTimeout); err != nil {
+			if err := p.callJSON("run_job", jobInput{Name: name, Settings: settings}, nil, jobTimeout, waitForever); err != nil {
 				return fmt.Errorf("wasm plugin %s job %s: %w", p.name, name, err)
 			}
 			return nil
@@ -393,9 +446,11 @@ func (p *Plugin) stringHook(name string, ctx *plugin.HookContext) string {
 		return ""
 	}
 	in, _ := json.Marshal(makeCtx(ctx))
-	out, err := p.call(name, in, callTimeout)
+	out, err := p.call(name, in, callTimeout, hookLockWait)
 	if err != nil {
-		p.opts.Logf("plugin %s: %s: %v", p.name, name, err)
+		if !errors.Is(err, errBusy) { // busy is reported once by call
+			p.opts.Logf("plugin %s: %s: %v", p.name, name, err)
+		}
 		return ""
 	}
 	return string(out)
@@ -413,8 +468,10 @@ func (p *Plugin) TemplateData(ctx *plugin.HookContext) gin.H {
 		return nil
 	}
 	var data map[string]any
-	if err := p.callJSON("template_data", makeCtx(ctx), &data, callTimeout); err != nil {
-		p.opts.Logf("plugin %s: template_data: %v", p.name, err)
+	if err := p.callJSON("template_data", makeCtx(ctx), &data, callTimeout, hookLockWait); err != nil {
+		if !errors.Is(err, errBusy) {
+			p.opts.Logf("plugin %s: template_data: %v", p.name, err)
+		}
 		return nil
 	}
 	if data == nil {
@@ -442,7 +499,7 @@ func (p *Plugin) OnInit(db *gorm.DB) error {
 			settings[s.Key] = s.Value
 		}
 	}
-	if err := p.callJSON("on_init", initInput{Settings: settings}, nil, jobTimeout); err != nil {
+	if err := p.callJSON("on_init", initInput{Settings: settings}, nil, jobTimeout, waitForever); err != nil {
 		return fmt.Errorf("wasm plugin %s: on_init: %w", p.name, err)
 	}
 	return nil
@@ -462,7 +519,7 @@ func (p *Plugin) RenderPage(ctx *plugin.HookContext, pageType string) (string, g
 		return "", nil
 	}
 	var res renderResult
-	if err := p.callJSON("render_page", makeCtx(ctx), &res, callTimeout); err != nil {
+	if err := p.callJSON("render_page", makeCtx(ctx), &res, callTimeout, waitForever); err != nil {
 		p.opts.Logf("plugin %s: render_page %q: %v", p.name, ctx.SubPath, err)
 		return "", nil
 	}

@@ -101,9 +101,17 @@
   // runtimeBadge labels an installed row by how the plugin actually runs:
   // sandboxed wasm, a locally-dropped Yaegi .go file, or compiled into goblog.
   function runtimeBadge(p) {
-    if (p.runtime === "wasm") { return '<span class="badge text-bg-secondary">wasm</span>'; }
-    if (p.runtime === "go") { return '<span class="badge text-bg-secondary">go (local)</span>'; }
-    return '<span class="badge text-bg-light">built-in</span>';
+    var badge;
+    if (p.runtime === "wasm") { badge = '<span class="badge text-bg-secondary">wasm</span>'; }
+    else if (p.runtime === "go") { badge = '<span class="badge text-bg-secondary">go (local)</span>'; }
+    else { badge = '<span class="badge text-bg-light">built-in</span>'; }
+    // health comes from the plugin's runtime: "busy" while a call holds the
+    // instance, "closed" after a timeout or exit until it is re-created.
+    if (p.health && p.health !== "ok") {
+      var title = p.health === "busy" ? "A call is holding the plugin; page hooks are skipped until it finishes" : "The instance was closed (timeout or exit) and will be re-created on its next call";
+      badge += ' <span class="badge text-bg-warning" title="' + title + '">' + esc(p.health) + '</span>';
+    }
+    return badge;
   }
 
   function renderInstalled(st) {

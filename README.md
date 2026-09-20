@@ -188,7 +188,7 @@ Host functions (Extism's `extism:host/user` namespace):
 | logging | the Extism PDK's own logger (`pdk.Log`), prefixed with the plugin name — there is no separate `log` host function |
 | HTTP | Extism's built-in `http_request`, limited to the hosts in the plugin's `allowed_hosts`; none declared → no network |
 
-Limits: 10 s per `template_*`/`render_page` call, 120 s for `run_job`/`on_init`; 64 MB memory per plugin; one loaded instance per plugin, calls serialised behind a mutex. A call that hits its timeout closes the instance; the next call re-creates it from the module bytes and carries on, at most once per 30 s — a plugin that keeps timing out declines (empty hooks, 404 pages) in between. HTTP redirects are checked against `allowed_hosts` on every hop.
+Limits: 10 s per `template_*`/`render_page` call, 120 s for `run_job`/`on_init`; 64 MB memory per plugin; one loaded instance per plugin with calls serialised — `template_*` hooks wait at most 2 s for a busy instance and then skip that render (logged once), so a slow `render_page` or a long job cannot stall every page; Admin → Plugins shows a plugin as `busy` or `closed` while that is the case. A call that hits its timeout closes the instance; the next call re-creates it from the module bytes and carries on, at most once per 30 s — a plugin that keeps timing out declines (empty hooks, 404 pages) in between. HTTP redirects are checked against `allowed_hosts` on every hop.
 
 Build one with the standard Go toolchain and [`github.com/extism/go-pdk`](https://github.com/extism/go-pdk):
 ```bash

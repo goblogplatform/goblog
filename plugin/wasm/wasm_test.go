@@ -405,9 +405,9 @@ func TestTimeoutAndMemoryCap(t *testing.T) {
 		t.Errorf("expected exactly one re-creation, got %d in:\n%s", n, joined)
 	}
 	// Once the window has passed it is re-created again.
-	p.mu.Lock()
+	p.lock(waitForever)
 	p.reinstantiatedAt = time.Now().Add(-reinstantiateBackoff)
-	p.mu.Unlock()
+	p.unlock()
 	if tmpl, _ := p.RenderPage(hookCtx(settings, "/echo", ""), "echo"); tmpl != "page_content.html" {
 		t.Errorf("after the back-off window the instance should be re-created, got %q", tmpl)
 	}
@@ -435,5 +435,68 @@ func TestLogging(t *testing.T) {
 	joined := strings.Join(logged, "\n")
 	if !strings.Contains(joined, "plugin echo") || !strings.Contains(joined, "hello from echo") {
 		t.Errorf("expected the plugin's log line prefixed with its name, got %q", joined)
+	}
+}
+
+// TestTemplateHooksDeclineWhileBusy: a template hook waits at most
+// hookLockWait for a plugin whose instance is busy with another call, then
+// declines (empty output, logged once) so one slow plugin does not stall
+// every page render. Health reports the state for Admin → Plugins.
+func TestTemplateHooksDeclineWhileBusy(t *testing.T) {
+	var mu sync.Mutex
+	var logged []string
+	p := loadEcho(t, Options{Logf: func(f string, a ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		logged = append(logged, fmt.Sprintf(f, a...))
+	}})
+	settings := map[string]string{"enabled": "true"}
+	oldTimeout, oldWait := callTimeout, hookLockWait
+	callTimeout, hookLockWait = 3*time.Second, 200*time.Millisecond
+	t.Cleanup(func() { callTimeout, hookLockWait = oldTimeout, oldWait })
+	if h := p.Health(); h != "ok" {
+		t.Fatalf("idle plugin health = %q", h)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.RenderPage(hookCtx(settings, "/echo/spin", "spin"), "echo") // holds the instance until callTimeout
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if h := p.Health(); h != "busy" {
+		t.Errorf("health while spinning = %q, want busy", h)
+	}
+	start := time.Now()
+	head := p.TemplateHead(hookCtx(settings, "/", ""))
+	data := p.TemplateData(hookCtx(settings, "/", ""))
+	if head != "" || data != nil {
+		t.Errorf("busy plugin should decline template hooks, got %q %v", head, data)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("template hooks waited %s; want about 2×hookLockWait", took)
+	}
+	<-done
+	mu.Lock()
+	busyLogs := 0
+	for _, l := range logged {
+		if strings.Contains(l, "busy") {
+			busyLogs++
+		}
+	}
+	mu.Unlock()
+	if busyLogs != 1 {
+		t.Errorf("expected exactly one busy log line, got %d:\n%s", busyLogs, strings.Join(logged, "\n"))
+	}
+	// The spin ran into its deadline: the instance is closed until a call
+	// re-creates it, which template hooks still do once the lock is free.
+	if h := p.Health(); h != "closed" {
+		t.Errorf("health after the timeout = %q, want closed", h)
+	}
+	if head := p.TemplateHead(hookCtx(settings, "/", "")); head != "<!-- echo head -->" {
+		t.Errorf("template_head after the instance was re-created = %q", head)
+	}
+	if h := p.Health(); h != "ok" {
+		t.Errorf("health after re-creation = %q", h)
 	}
 }
