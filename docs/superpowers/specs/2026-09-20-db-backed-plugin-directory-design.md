@@ -57,7 +57,7 @@ separate tables because they change on different schedules.
 | `status` | `pending` / `approved` / `rejected` |
 | `submitted_at`, `decided_at` | |
 | `reject_reason` | shown only in admin |
-| `submitter_ip` | rate limiting; blanked by the scheduled job after 7 days |
+| `submitter_ip` | kept for the admin; blanked by the scheduled job after 7 days (rate limiting is in memory) |
 
 `directory_builds` — the last successful build of a repo (what
 `plugins/<name>.json` held):
@@ -171,7 +171,10 @@ fields are `template.HTML`.
 
 `Admin` gains `Directory *directory.Plugin` (nil when not wired; `main`
 sets it). A `requireDirectory` helper mirrors `requireInstaller` (401 for
-non-admins, 503 when nil or the plugin is disabled on this site).
+non-admins, 503 when the plugin is not wired or its service is not yet
+initialised — not merely when `enabled` is `false`: admin curation works
+while the directory is disabled, which is useful for seeding entries before
+publishing it).
 
 API:
 
@@ -208,9 +211,11 @@ plugin endpoints.
 
 ## 5. Installer
 
-`directory.Fetcher` moves (the wire types stay in `plugins/directory`) to
-`plugin/installer/fetcher.go` (tests move with them). `DefaultIndexURL`
-stays `https://www.goblog.live/plugins/index.json`. No behaviour change.
+The wire types (`Entry`, `Detail`, `Release`) live in `plugins/directory/registry`
+and are aliased in `plugins/directory` so both packages share one definition;
+only `directory.Fetcher` moves, to `plugin/installer/fetcher.go` (tests move
+with it). `DefaultIndexURL` stays `https://www.goblog.live/plugins/index.json`.
+No behaviour change.
 
 ## 6. Retirement and deployment
 
@@ -224,10 +229,20 @@ stays `https://www.goblog.live/plugins/index.json`. No behaviour change.
   submit page. The README's directory section describes the DB-backed flow
   and the `github_token` setting.
 - Release `v0.4.0` (the `directory` plugin's public settings change).
-  Renovate bumps iac; redeploy goblog.live. Then Admin → Plugins → Directory
-  → Add `goblogplatform/goblog-plugin-hello` and
-  `goblogplatform/goblog-plugin-scholar`. Between deploy and seeding
+  Renovate bumps iac; redeploy goblog.live. Between deploy and seeding
   `index.json` is `[]`; installers see an empty directory, nothing breaks.
+  Before seeding for real:
+  1. Verify `site_url` is `https://www.goblog.live` (`detail_url` is baked
+     from it at build time; changing `site_url` later needs a Rebuild of
+     every existing entry to pick it up).
+  2. Set `github_token`, or accept the unauthenticated 60 requests/hour
+     limit.
+  3. Set `refresh_minutes` to 360 if the old default of 15 is still stored
+     from an earlier deploy.
+  4. Do one browser pass of the Directory tab — Add, Show README, Reject,
+     Approve, Rebuild, Delist — before trusting it with real submissions.
+  Then Admin → Plugins → Directory → Add `goblogplatform/goblog-plugin-hello`
+  and `goblogplatform/goblog-plugin-scholar`.
 - No iac change beyond the version bump; no new env vars.
 
 ## 7. Testing
@@ -259,9 +274,17 @@ stays `https://www.goblog.live/plugins/index.json`. No behaviour change.
 4. plugins — retirement.
 5. iac — Renovate bump after `v0.4.0`.
 
-## Out of scope
+## Out of scope / accepted risks
 
 - Notifying submitters (email / status URL).
 - Proof of repo ownership by the submitter.
 - Install counts, telemetry, theme directory (#560).
 - Docker second fence for validation.
+- No cap on the number of pending submissions outstanding at once — 5/h/IP
+  is the only bound.
+- A hostile module can hold the validation lock for up to the full 90 s
+  submit budget (the Docker fence that would have contained this was
+  deliberately dropped, see above).
+- The admin API's CSRF exposure (#571) now also covers this flow: submit
+  publicly, then CSRF an admin into hitting `/approve` on it. Hardening is
+  tracked there, not here.

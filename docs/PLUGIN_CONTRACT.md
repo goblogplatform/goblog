@@ -10,7 +10,7 @@ The index entry for your plugin is built from the manifest, the latest release a
 
 ## What the repository must contain
 
-At the root of the repository, at the release tag being published (the tool checks the latest release):
+At the root of the repository, at the release tag being published (submission checks the latest release):
 
 | File | Required | Notes |
 |---|---|---|
