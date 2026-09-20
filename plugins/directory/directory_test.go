@@ -190,10 +190,17 @@ func TestRenderPage_Listing(t *testing.T) {
 	ctx, _ = newRenderCtx(t, http.MethodGet, "/plugins", "", nil)
 	_, data = f.p.RenderPage(ctx, PageType)
 	html := content(t, data)
-	for _, want := range []string{`href="/plugins/hello"`, `href="/plugins/zeta"`, "HELLO", "Says hi.", "1.0.0", "Jason", "MIT",
-		`href="/plugins/index.json"`, `href="https://github.com/o/hello"`, `href="/plugins/submit"`, "★ 7"} {
+	for _, want := range []string{`href="/plugins/hello"`, `href="/plugins/zeta"`, "HELLO", "Says hi.", "v1.0.0", "Jason", "MIT",
+		`href="/plugins/index.json"`, `href="https://github.com/o/hello"`, `href="/plugins/submit"`, "★ 7", `class="table-responsive"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("listing missing %q in:\n%s", want, html)
+		}
+	}
+	// Type and runtime are always "wasm" now; they belong on the detail page,
+	// not in a table that already overflows the content column.
+	for _, gone := range []string{"<th>Type</th>", "<th>Runtime</th>", "<th>Version</th>"} {
+		if strings.Contains(html, gone) {
+			t.Errorf("listing should not have the %s column", gone)
 		}
 	}
 	if strings.Index(html, "/plugins/hello") > strings.Index(html, "/plugins/zeta") {
