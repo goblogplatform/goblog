@@ -109,7 +109,7 @@ func templateFooter() int32 {
 }
 ```
 
-`hookInput` and `setting` are plain structs with JSON tags matching the field names above (`settings`, `key`, `type`, `default`, `label`, `description`); the file also has an empty `func main() {}`, because it is `package main` and Go requires one, though nothing runs it. The full list of exports, the exact shape of every input and output, the store and HTTP host functions, and the limits are in the [Plugin API reference](/docs/plugin-api).
+`hookInput` and `setting` are plain structs with JSON tags matching the field names above (`settings`, `key`, `type`, `default`, `label`, `description`); the file also has an empty `func main() {}`, because it is `package main` and Go requires one, though nothing runs it. The full list of exports, the exact shape of every input and output, the store and HTTP host functions, and the limits are in the [Plugin API reference](/docs/plugin-api#exports).
 
 ## Build
 
@@ -172,6 +172,6 @@ Restart goblog. The plugin appears under **Admin → Plugins** and its settings 
 
 ## Next
 
-Hello only uses the template hook. The [Plugin API reference](/docs/plugin-api) covers the rest: `pages` and `render_page` to own a URL, `jobs` and `run_job` to run work on a schedule, and the `store_get`/`store_set`/`store_delete`/`store_list` host functions for data that outlives a request. The scholar plugin uses all three.
+Hello only uses the template hook. The [Plugin API reference](/docs/plugin-api) covers the rest: [`pages` and `render_page`](/docs/plugin-api#pages) to own a URL, [`jobs` and `run_job`](/docs/plugin-api#jobs) to run work on a schedule, and the [`store_get`/`store_set`/`store_delete`/`store_list` host functions](/docs/plugin-api#store) for data that outlives a request. The scholar plugin uses all three.
 
 When it works, tag a release and submit the repository: [Publishing a plugin](/docs/publishing-a-plugin).
