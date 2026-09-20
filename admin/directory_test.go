@@ -1,0 +1,225 @@
+package admin_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"goblog/admin"
+	"goblog/auth"
+	"goblog/blog"
+	"goblog/plugin"
+	"goblog/plugins/directory"
+	"goblog/plugins/directory/registry"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/mock"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+// stubSource is an in-memory registry.Source with one repository, o/hello
+// v1.0.0, whose plugin.wasm the FakeValidator below recognises.
+type stubSource struct{ missing bool }
+
+var helloWasm = []byte("\x00asm hello")
+
+func (s stubSource) Releases(_ context.Context, owner, repo string) ([]registry.Release, error) {
+	if s.missing || owner+"/"+repo != "o/hello" {
+		return nil, fmt.Errorf("%s/%s: no such repository", owner, repo)
+	}
+	return []registry.Release{{Tag: "v1.0.0", Body: "notes", URL: "https://github.com/o/hello/releases/tag/v1.0.0",
+		PublishedAt: time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC),
+		Assets:      []registry.Asset{{ID: 1, Name: "plugin.wasm", Size: len(helloWasm), DownloadURL: "https://github.com/o/hello/releases/download/v1.0.0/plugin.wasm"}}}}, nil
+}
+func (s stubSource) File(_ context.Context, _, _, _, path string) ([]byte, error) {
+	switch path {
+	case "goblog-plugin.json":
+		return []byte(`{"name":"hello","display_name":"Hello","description":"Says hi.","author":"Jason","license":"MIT","runtime":"wasm","min_goblog_version":"0.3.0"}`), nil
+	case "README.md":
+		return []byte("# Hello"), nil
+	}
+	return nil, registry.ErrNotFound
+}
+func (s stubSource) ReleaseAsset(context.Context, string, string, int64) ([]byte, error) {
+	return helloWasm, nil
+}
+func (s stubSource) RenderMarkdown(_ context.Context, _, md string) (string, error) {
+	return "<p>" + md + "</p>", nil
+}
+func (s stubSource) RepoStars(context.Context, string, string) (int, error) { return 7, nil }
+
+type directoryHarness struct {
+	router *gin.Engine
+	auth   *Auth
+	db     *gorm.DB
+	dir    *directory.Plugin
+	src    *stubSource
+}
+
+func newDirectoryHarness(t *testing.T, wire bool) *directoryHarness {
+	t.Helper()
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	a := &Auth{}
+	b := blog.New(db, a, "test")
+	ad := admin.New(db, a, &b, "test")
+
+	src := &stubSource{}
+	dir := directory.New()
+	dir.SetSource(func(string) registry.Source { return src })
+	dir.SetValidator(&registry.FakeValidator{Infos: map[string]plugin.Info{
+		registry.Sum(helloWasm): {Name: "hello", DisplayName: "Hello", Version: "1.0.0", Runtime: "wasm"},
+	}})
+	if wire {
+		if err := dir.OnInit(db); err != nil {
+			t.Fatal(err)
+		}
+		ad.Directory = dir
+	}
+
+	router := gin.New()
+	router.GET("/api/v1/directory/repos", ad.ListDirectoryRepos)
+	router.POST("/api/v1/directory/repos", ad.AddDirectoryRepo)
+	router.GET("/api/v1/directory/repos/:id", ad.GetDirectoryRepo)
+	router.POST("/api/v1/directory/repos/:id/approve", ad.ApproveDirectoryRepo)
+	router.POST("/api/v1/directory/repos/:id/reject", ad.RejectDirectoryRepo)
+	router.POST("/api/v1/directory/repos/:id/rebuild", ad.RebuildDirectoryRepo)
+	router.DELETE("/api/v1/directory/repos/:id", ad.DelistDirectoryRepo)
+	return &directoryHarness{router: router, auth: a, db: db, dir: dir, src: src}
+}
+
+func (h *directoryHarness) do(method, path, body string) *httptest.ResponseRecorder {
+	req, _ := http.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.router.ServeHTTP(w, req)
+	return w
+}
+
+var directoryRoutes = []struct{ m, p string }{
+	{"GET", "/api/v1/directory/repos"}, {"POST", "/api/v1/directory/repos"}, {"GET", "/api/v1/directory/repos/1"},
+	{"POST", "/api/v1/directory/repos/1/approve"}, {"POST", "/api/v1/directory/repos/1/reject"},
+	{"POST", "/api/v1/directory/repos/1/rebuild"}, {"DELETE", "/api/v1/directory/repos/1"},
+}
+
+func TestDirectoryAPI_NonAdmin(t *testing.T) {
+	h := newDirectoryHarness(t, true)
+	h.auth.On("IsAdmin", mock.Anything).Return(false)
+	for _, r := range directoryRoutes {
+		if w := h.do(r.m, r.p, `{"repo":"o/hello"}`); w.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s: expected 401, got %d", r.m, r.p, w.Code)
+		}
+	}
+}
+
+func TestDirectoryAPI_NotHosted(t *testing.T) {
+	h := newDirectoryHarness(t, false)
+	h.auth.On("IsAdmin", mock.Anything).Return(true)
+	for _, r := range directoryRoutes {
+		if w := h.do(r.m, r.p, `{"repo":"o/hello"}`); w.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s %s: expected 503, got %d", r.m, r.p, w.Code)
+		}
+	}
+}
+
+func TestDirectoryAPI_Lifecycle(t *testing.T) {
+	h := newDirectoryHarness(t, true)
+	h.auth.On("IsAdmin", mock.Anything).Return(true)
+
+	w := h.do("POST", "/api/v1/directory/repos", `{"repo":"https://github.com/o/hello"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
+	var added directory.Repo
+	json.Unmarshal(w.Body.Bytes(), &added)
+	if added.Status != directory.StatusApproved || added.ID == 0 {
+		t.Fatalf("added = %+v", added)
+	}
+	id := fmt.Sprint(added.ID)
+
+	if w := h.do("POST", "/api/v1/directory/repos", `{"repo":"o/hello"}`); w.Code != http.StatusConflict {
+		t.Errorf("add twice: %d %s", w.Code, w.Body.String())
+	}
+	if w := h.do("POST", "/api/v1/directory/repos", `{"repo":"nope"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("bad repo: %d", w.Code)
+	}
+	if w := h.do("POST", "/api/v1/directory/repos", `{"repo":"o/other"}`); w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "no such repository") {
+		t.Errorf("validation failure: %d %s", w.Code, w.Body.String())
+	}
+
+	w = h.do("GET", "/api/v1/directory/repos?status=approved", "")
+	var list []directory.RepoView
+	json.Unmarshal(w.Body.Bytes(), &list)
+	if w.Code != http.StatusOK || len(list) != 1 || list[0].Name != "hello" || list[0].Stars != 7 {
+		t.Errorf("list: %d %s", w.Code, w.Body.String())
+	}
+
+	w = h.do("GET", "/api/v1/directory/repos/"+id, "")
+	var got struct {
+		Repo   directory.RepoView `json:"repo"`
+		Detail registry.DetailDoc `json:"detail"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if w.Code != http.StatusOK || got.Repo.ID != added.ID || got.Detail.ReadmeHTML != "<p># Hello</p>" {
+		t.Errorf("get: %d %s", w.Code, w.Body.String())
+	}
+
+	if w := h.do("POST", "/api/v1/directory/repos/"+id+"/reject", `{"reason":"not yet"}`); w.Code != http.StatusOK {
+		t.Errorf("reject: %d %s", w.Code, w.Body.String())
+	}
+	w = h.do("GET", "/api/v1/directory/repos?status=rejected", "")
+	json.Unmarshal(w.Body.Bytes(), &list)
+	if len(list) != 1 || list[0].RejectReason != "not yet" {
+		t.Errorf("rejected list: %s", w.Body.String())
+	}
+	if w := h.do("POST", "/api/v1/directory/repos/"+id+"/approve", ""); w.Code != http.StatusOK {
+		t.Errorf("approve: %d", w.Code)
+	}
+	if raw, _ := h.dir.Service().Index(); !strings.Contains(string(raw), `"name": "hello"`) {
+		t.Errorf("approve must regenerate the index: %s", raw)
+	}
+
+	h.src.missing = true
+	if w := h.do("POST", "/api/v1/directory/repos/"+id+"/rebuild", ""); w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("rebuild failure: %d %s", w.Code, w.Body.String())
+	}
+	h.src.missing = false
+	if w := h.do("POST", "/api/v1/directory/repos/"+id+"/rebuild", ""); w.Code != http.StatusOK {
+		t.Errorf("rebuild: %d %s", w.Code, w.Body.String())
+	}
+
+	if w := h.do("DELETE", "/api/v1/directory/repos/"+id, ""); w.Code != http.StatusOK {
+		t.Errorf("delist: %d", w.Code)
+	}
+	for _, r := range directoryRoutes[2:] {
+		if w := h.do(r.m, strings.Replace(r.p, "/1", "/"+id, 1), `{}`); w.Code != http.StatusNotFound {
+			t.Errorf("%s %s after delist: expected 404, got %d", r.m, r.p, w.Code)
+		}
+	}
+	if w := h.do("GET", "/api/v1/directory/repos/abc", ""); w.Code != http.StatusBadRequest {
+		t.Errorf("non-numeric id: %d", w.Code)
+	}
+}
+
+func TestPluginStatus_ReportsDirectoryHosted(t *testing.T) {
+	h := newPluginsHarness(t)
+	h.auth.On("IsAdmin", mock.Anything).Return(true)
+	dir := directory.New()
+	dir.OnInit(h.db)
+	h.ad.Directory = dir
+	w := h.do("GET", "/api/v1/plugins/status", "")
+	if !strings.Contains(w.Body.String(), `"directory_hosted":false`) {
+		t.Errorf("not enabled: %s", w.Body.String())
+	}
+	h.db.Create(&plugin.PluginSetting{PluginName: "directory", Key: "enabled", Value: "true"})
+	w = h.do("GET", "/api/v1/plugins/status", "")
+	if !strings.Contains(w.Body.String(), `"directory_hosted":true`) {
+		t.Errorf("enabled: %s", w.Body.String())
+	}
+}

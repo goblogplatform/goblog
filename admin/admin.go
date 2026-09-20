@@ -7,6 +7,7 @@ import (
 	"goblog/blog"
 	gplugin "goblog/plugin"
 	"goblog/plugin/installer"
+	"goblog/plugins/directory"
 	"log"
 	"net/http"
 	"net/url"
@@ -33,6 +34,7 @@ type Admin struct {
 	version       string
 	OnThemeChange func(theme string)   // callback to reload templates when theme changes
 	Installer     *installer.Installer // plugin directory install/update; nil when not wired
+	Directory     *directory.Plugin    // the directory this site hosts; nil when not wired
 }
 
 // New constructs an Admin API
@@ -685,12 +687,12 @@ func (a *Admin) AdminSettings(c *gin.Context) {
 		return
 	}
 	c.HTML(http.StatusOK, "admin_settings.html", gin.H{
-		"posts":      a.b.GetPosts(true),
-		"logged_in":  a.auth.IsLoggedIn(c),
-		"is_admin":   a.auth.IsAdmin(c),
-		"version":    a.version,
-		"recent":     a.b.GetLatest(),
-		"admin_page": true,
+		"posts":           a.b.GetPosts(true),
+		"logged_in":       a.auth.IsLoggedIn(c),
+		"is_admin":        a.auth.IsAdmin(c),
+		"version":         a.version,
+		"recent":          a.b.GetLatest(),
+		"admin_page":      true,
 		"settings":        a.b.GetSettings(),
 		"nav_pages":       a.b.GetNavPages(),
 		"themes":          ListThemes(),
@@ -911,15 +913,15 @@ func (a *Admin) AdminPages(c *gin.Context) {
 	var pages []blog.Page
 	(*a.db).Order("nav_order asc").Find(&pages)
 	c.HTML(http.StatusOK, "admin_pages.html", gin.H{
-		"pages":                    pages,
-		"logged_in":                a.auth.IsLoggedIn(c),
-		"is_admin":                 a.auth.IsAdmin(c),
-		"version":                  a.version,
-		"recent":                   a.b.GetLatest(),
-		"admin_page":               true,
-		"settings":                 a.b.GetSettings(),
-		"nav_pages":                a.b.GetNavPages(),
-		"disabled_plugin_pages":    a.getDisabledPluginPageTypes(c),
+		"pages":                 pages,
+		"logged_in":             a.auth.IsLoggedIn(c),
+		"is_admin":              a.auth.IsAdmin(c),
+		"version":               a.version,
+		"recent":                a.b.GetLatest(),
+		"admin_page":            true,
+		"settings":              a.b.GetSettings(),
+		"nav_pages":             a.b.GetNavPages(),
+		"disabled_plugin_pages": a.getDisabledPluginPageTypes(c),
 	})
 }
 

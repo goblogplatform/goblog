@@ -65,7 +65,9 @@ func (a *Admin) PluginStatus(c *gin.Context) {
 	if inst == nil {
 		return
 	}
-	c.JSON(http.StatusOK, inst.Status())
+	st := inst.Status()
+	st.DirectoryHosted = a.Directory != nil && a.Directory.Hosted()
+	c.JSON(http.StatusOK, st)
 }
 
 // PluginDirectory returns available plugins filtered by ?q= and ordered by ?sort= (stars|name|newest).

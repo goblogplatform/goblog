@@ -55,6 +55,12 @@ func (p *Plugin) Version() string     { return "2.0.0" }
 // SetUserAgent sets the User-Agent sent to GitHub.
 func (p *Plugin) SetUserAgent(ua string) { p.userAgent = ua }
 
+// SetSource replaces the GitHub client factory (tests, or a mirror).
+func (p *Plugin) SetSource(f func(token string) registry.Source) { p.newSource = f }
+
+// SetValidator replaces the module validator (tests).
+func (p *Plugin) SetValidator(v registry.Validator) { p.validator = v }
+
 // Service is the registry behind the pages; nil until OnInit has run.
 func (p *Plugin) Service() *Service { return p.svc }
 

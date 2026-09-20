@@ -111,15 +111,16 @@ type Available struct {
 
 // Status is everything the admin page needs in one call.
 type Status struct {
-	Installed      []Installed `json:"installed"`
-	Available      []Available `json:"available"`
-	DirectoryURL   string      `json:"directory_url"`
-	DynamicEnabled bool        `json:"dynamic_enabled"`
-	WasmEnabled    bool        `json:"wasm_enabled"`
-	IndexFetchedAt string      `json:"index_fetched_at,omitempty"`
-	IndexError     string      `json:"index_error,omitempty"`
-	DirWritable    bool        `json:"dir_writable"` // WasmDir (Dir when WasmDir is unset)
-	DirError       string      `json:"dir_error,omitempty"`
+	Installed       []Installed `json:"installed"`
+	Available       []Available `json:"available"`
+	DirectoryURL    string      `json:"directory_url"`
+	DynamicEnabled  bool        `json:"dynamic_enabled"`
+	WasmEnabled     bool        `json:"wasm_enabled"`
+	IndexFetchedAt  string      `json:"index_fetched_at,omitempty"`
+	IndexError      string      `json:"index_error,omitempty"`
+	DirWritable     bool        `json:"dir_writable"` // WasmDir (Dir when WasmDir is unset)
+	DirError        string      `json:"dir_error,omitempty"`
+	DirectoryHosted bool        `json:"directory_hosted"` // this site hosts a directory (set by admin, not the installer)
 }
 
 // Result reports a successful install or update.
