@@ -318,12 +318,17 @@
     if (action === "readme") {
       var box = container.querySelector("[data-readme]");
       if (!box.hidden) { box.hidden = true; btn.textContent = "Show README"; return; }
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading…';
       api("GET", "/api/v1/directory/repos/" + encodeURIComponent(id)).then(function (data) {
         // readme_html is GitHub-rendered and sanitized, the same HTML the
         // public directory page shows; it is the one field inserted as-is.
         box.innerHTML = (data.detail && data.detail.readme_html) || "<em>No README.</em>";
-        box.hidden = false; btn.textContent = "Hide README";
-      }).catch(function (e) { if (errEl) { errEl.textContent = e.message; } });
+        box.hidden = false; btn.disabled = false; btn.textContent = "Hide README";
+      }).catch(function (e) {
+        btn.disabled = false; btn.textContent = "Show README";
+        if (errEl) { errEl.textContent = e.message; }
+      });
       return;
     }
     var body;
