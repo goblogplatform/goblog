@@ -126,7 +126,7 @@ func TestRenderPage(t *testing.T) {
 func TestTOC_OnlyForLongerPages(t *testing.T) {
 	p := New()
 	short, _ := p.rendered("")
-	if len(short.TOC) > 3 && !strings.Contains(sidebarAndArticle("/docs", "", short), `class="docs-toc"`) {
+	if len(short.TOC) > 3 && !strings.Contains(sidebarAndArticle("/docs", "", short), `class="docs-toc `) {
 		t.Error("pages with more than three headings get a table of contents")
 	}
 }
