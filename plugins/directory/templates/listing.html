@@ -1,6 +1,10 @@
+{{ if .Entries }}
 <p>{{ len .Entries }} plugin{{ if ne (len .Entries) 1 }}s{{ end }} in the directory, most-starred first.
 Machine-readable index: <a href="{{ .Base }}/index.json">index.json</a>.
 Install them from your own goblog under <strong>Admin → Plugins</strong>.</p>
+{{ else }}
+<p>The plugin directory is empty. Machine-readable index: <a href="{{ .Base }}/index.json">index.json</a>.</p>
+{{ end }}
 {{ if .Entries }}
 <table class="table">
   <thead>
@@ -24,25 +28,4 @@ Install them from your own goblog under <strong>Admin → Plugins</strong>.</p>
 </table>
 {{ end }}
 
-<div class="card mt-4">
-  <div class="card-body">
-    <h2 class="h5 card-title">Submit your plugin</h2>
-    <p class="card-text">A plugin is a GitHub repository with a <code>goblog-plugin.json</code> manifest, a <code>README.md</code>, a dynamic plugin file, and releases tagged <code>vX.Y.Z</code> — see the <a href="https://github.com/goblogplatform/plugins/blob/main/docs/CONTRACT.md">contract</a>. Paste your repository URL; it opens a pre-filled submission on GitHub, the registry checks the repository and opens the pull request for you.</p>
-    <form id="submit-plugin-form" class="row g-2" onsubmit="return submitPlugin(this)">
-      <div class="col-sm-9"><input type="url" class="form-control" name="repo" placeholder="https://github.com/you/goblog-plugin-yours" required></div>
-      <div class="col-sm-3 d-grid"><button type="submit" class="btn btn-primary">Submit on GitHub</button></div>
-      <div class="col-12 small text-danger" id="submit-plugin-error"></div>
-    </form>
-  </div>
-</div>
-<script>
-function submitPlugin(form) {
-  var err = document.getElementById("submit-plugin-error");
-  var m = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(form.repo.value.trim());
-  if (!m) { err.textContent = "Enter a GitHub repository URL like https://github.com/owner/repo"; return false; }
-  err.textContent = "";
-  var repo = m[1] + "/" + m[2];
-  window.open("https://github.com/goblogplatform/plugins/issues/new?template=submit-plugin.yml&title=" + encodeURIComponent("Submit: " + repo) + "&repo=" + encodeURIComponent(repo), "_blank", "noopener");
-  return false;
-}
-</script>
+<p class="mt-4">Built a plugin? <a href="{{ .Base }}/submit">Submit it to the directory</a>.</p>

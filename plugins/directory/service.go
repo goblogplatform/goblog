@@ -475,6 +475,14 @@ func (s *Service) Detail(name string) (registry.DetailDoc, bool) {
 	return d, true
 }
 
+// nameOf returns the plugin name a repository publishes, if it has a build.
+func (s *Service) nameOf(repo string) (string, bool) {
+	var b Build
+	err := s.db.Joins("JOIN directory_repos ON directory_repos.id = directory_builds.repo_id").
+		Where("directory_repos.repo = ?", repo).First(&b).Error
+	return b.Name, err == nil
+}
+
 // regenerate rebuilds the cached index from the approved builds.
 func (s *Service) regenerate() error {
 	docs, err := approvedDocs(s.db)

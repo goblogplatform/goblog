@@ -1,12 +1,13 @@
-// Package directory provides the plugin directory: a browsable list of goblog
-// plugins at /plugins, per-plugin pages at /plugins/<name>, and the
-// machine-readable index at /plugins/index.json. The content comes from an
-// index built by the registry repository (github.com/goblogplatform/plugins)
-// and is fetched into memory; this plugin only renders it. It is what runs
-// goblog.live/plugins and is disabled by default everywhere else.
+// Package directory is the plugin directory: the registry behind
+// goblog.live/plugins. Repositories are submitted at /plugins/submit,
+// validated and built here, approved in Admin → Plugins, and served as the
+// listing, per-plugin pages and the machine-readable /plugins/index.json
+// that every goblog's installer reads. It is compiled in and disabled by
+// default; any goblog can host a directory by enabling it.
 package directory
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -18,6 +19,7 @@ import (
 
 	"goblog/blog"
 	gplugin "goblog/plugin"
+	"goblog/plugins/directory/registry"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -27,36 +29,43 @@ import (
 const PageType = "plugin-directory"
 
 const (
-	defaultIndexURL = "https://goblogplatform.github.io/plugins/index.json"
-	defaultRefresh  = 15 * time.Minute
+	defaultRefresh = 360 * time.Minute
+	minRefresh     = 15 * time.Minute
 )
 
-// Plugin renders the plugin directory from a remote index.
+// Plugin is the directory plugin. Its Service exists once OnInit has run.
 type Plugin struct {
 	gplugin.BasePlugin
-	fetcher *Fetcher
+	userAgent string
+	db        *gorm.DB
+	svc       *Service
+	validator registry.Validator
+	newSource func(token string) registry.Source // nil → GitHub; tests inject a fake
 }
 
 // New creates the directory plugin.
 func New() *Plugin {
-	return &Plugin{fetcher: NewFetcher(nil)}
+	return &Plugin{userAgent: "goblog-directory", validator: registry.WasmValidator{}}
 }
 
 func (p *Plugin) Name() string        { return "directory" }
 func (p *Plugin) DisplayName() string { return "Plugin Directory" }
-func (p *Plugin) Version() string     { return "1.0.0" }
+func (p *Plugin) Version() string     { return "2.0.0" }
 
-// SetUserAgent sets the User-Agent sent to the registry.
-func (p *Plugin) SetUserAgent(ua string) { p.fetcher.SetUserAgent(ua) }
+// SetUserAgent sets the User-Agent sent to GitHub.
+func (p *Plugin) SetUserAgent(ua string) { p.userAgent = ua }
+
+// Service is the registry behind the pages; nil until OnInit has run.
+func (p *Plugin) Service() *Service { return p.svc }
 
 func (p *Plugin) Settings() []gplugin.SettingDefinition {
 	return []gplugin.SettingDefinition{
 		{Key: "enabled", Type: "text", DefaultValue: "false", Label: "Enabled",
-			Description: "Set to 'true' to publish the plugin directory at /plugins"},
-		{Key: "index_url", Type: "text", DefaultValue: defaultIndexURL, Label: "Index URL",
-			Description: "index.json published by the plugin registry. Only point this at a registry you trust: its README, changelog and release-note HTML is shown as-is."},
-		{Key: "refresh_minutes", Type: "text", DefaultValue: "15", Label: "Refresh interval (minutes)",
-			Description: "How often the index is re-fetched"},
+			Description: "Set to 'true' to host a plugin directory at /plugins"},
+		{Key: "refresh_minutes", Type: "text", DefaultValue: "360", Label: "Refresh interval (minutes)",
+			Description: "How often listed plugins are checked for new releases and stars (minimum 15)"},
+		{Key: "github_token", Type: "password", DefaultValue: "", Label: "GitHub token",
+			Description: "Optional. A token with no scopes raises the GitHub API limit from 60 to 5000 requests per hour; without one the directory still works but refreshes slowly."},
 	}
 }
 
@@ -71,18 +80,35 @@ func (p *Plugin) Pages() []gplugin.PageDefinition {
 	}}
 }
 
-// OnInit ensures the directory page exists in the pages table. The registry's
-// ensurePages already creates it for every plugin before OnInit runs, so this
-// normally finds the row in place and is kept as a fallback. The admin can
-// rename or reorder the page afterwards.
+// source returns the GitHub client for one operation, with the token the
+// admin configured (if any).
+func (p *Plugin) source(token string) registry.Source {
+	if p.newSource != nil {
+		return p.newSource(token)
+	}
+	g := registry.NewGitHubSource(token, "")
+	g.SetUserAgent(p.userAgent)
+	return g
+}
+
+// OnInit migrates the registry tables, creates the Service and ensures the
+// directory page exists. The registry's ensurePages already creates the
+// page for every plugin before OnInit runs, so this normally finds the row
+// in place and is kept as a fallback. The admin can rename or reorder it.
 //
 // blog.Page.Slug has a unique index, so if some other page already uses the
-// "plugins" slug (a different page type), creating our page would fail. That
-// must not abort plugin.Registry.Init, which stops at the first error and
-// would skip settings seeding and OnInit for every plugin registered after
-// this one. So we log a warning and leave initialization to the operator
-// instead of returning an error.
+// "plugins" slug (a different page type), creating our page would fail.
+// That must not abort plugin.Registry.Init, so we log a warning and leave
+// it to the operator instead of returning an error.
 func (p *Plugin) OnInit(db *gorm.DB) error {
+	if err := Migrate(db); err != nil {
+		return fmt.Errorf("directory plugin: migrate: %w", err)
+	}
+	p.db = db
+	if p.svc == nil {
+		p.svc = NewService(db, p.source, p.validator, func() string { return siteURL(db) })
+	}
+
 	var page blog.Page
 	err := db.Where("page_type = ?", PageType).First(&page).Error
 	if err == nil {
@@ -114,32 +140,64 @@ func (p *Plugin) OnInit(db *gorm.DB) error {
 	return nil
 }
 
-// ScheduledJobs ticks every minute and refreshes the index once it is older
-// than refresh_minutes, so the setting takes effect without a restart.
+// siteURL is the configured site_url setting ("" when unset); detail_url
+// in the index is built from it.
+func siteURL(db *gorm.DB) string {
+	var s blog.Setting
+	if err := db.Where("key = ?", "site_url").First(&s).Error; err != nil {
+		return ""
+	}
+	return strings.TrimSpace(s.Value)
+}
+
+// settings reads this plugin's settings outside a hook (the admin API
+// needs the token and the enabled flag).
+func (p *Plugin) settings() map[string]string {
+	out := map[string]string{}
+	if p.db == nil {
+		return out
+	}
+	var rows []gplugin.PluginSetting
+	p.db.Where("plugin_name = ?", p.Name()).Find(&rows)
+	for _, r := range rows {
+		out[r.Key] = r.Value
+	}
+	return out
+}
+
+// Token is the configured github_token ("" for anonymous access).
+func (p *Plugin) Token() string { return p.settings()["github_token"] }
+
+// Hosted reports whether this site runs a directory: initialised and enabled.
+func (p *Plugin) Hosted() bool { return p.svc != nil && p.settings()["enabled"] == "true" }
+
+// ScheduledJobs ticks every minute and refreshes every listed plugin once
+// the last refresh is older than refresh_minutes, so the setting takes
+// effect without a restart.
 func (p *Plugin) ScheduledJobs() []gplugin.ScheduledJob {
 	return []gplugin.ScheduledJob{{
-		Name:     "refresh-index",
+		Name:     "refresh-directory",
 		Interval: time.Minute,
 		Run: func(_ *gorm.DB, settings map[string]string) error {
-			if settings["enabled"] != "true" {
+			if settings["enabled"] != "true" || p.svc == nil {
 				return nil
 			}
-			if time.Since(p.fetcher.FetchedAt()) < refreshInterval(settings) {
+			if time.Since(p.svc.LastRefresh()) < refreshInterval(settings) {
 				return nil
 			}
-			return p.fetcher.Refresh(indexURL(settings))
+			return p.svc.RefreshAll(context.Background(), settings["github_token"])
 		},
 	}}
 }
 
 const unavailableHTML = `<div class="alert alert-warning" role="alert">The plugin directory is unavailable right now. Please check back later.</div>`
 
-// RenderPage serves the listing (""), the raw index ("index.json") and one
-// plugin's page ("<name>"). Anything else is declined, which blog turns into
-// a 404. Errors from the registry are logged for the operator and shown to
-// readers only as "unavailable".
+// RenderPage serves the listing (""), the raw index ("index.json"), the
+// submission page ("submit"), one plugin's page ("<name>") and its JSON
+// ("<name>.json"). Anything else — including plugins that are not approved
+// — is declined, which blog turns into a 404.
 func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, gin.H) {
-	if pageType != PageType {
+	if pageType != PageType || p.svc == nil {
 		return "", nil
 	}
 	c := ctx.GinContext
@@ -147,11 +205,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 
 	switch {
 	case ctx.SubPath == "":
-		p.fetcher.Ensure(indexURL(ctx.Settings))
-		_, entries, ok := p.fetcher.Index()
-		if !ok {
-			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML}
-		}
+		_, entries := p.svc.Index()
 		sorted := append([]Entry(nil), entries...)
 		sort.SliceStable(sorted, func(i, j int) bool {
 			if sorted[i].Stars != sorted[j].Stars {
@@ -167,10 +221,22 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html}
 
 	case ctx.SubPath == "index.json":
-		p.fetcher.Ensure(indexURL(ctx.Settings))
-		raw, _, ok := p.fetcher.Index()
+		raw, _ := p.svc.Index()
+		c.Header("Cache-Control", "public, max-age=300")
+		c.Data(http.StatusOK, "application/json", raw)
+		return "", nil
+
+	case ctx.SubPath == "submit":
+		return p.renderSubmit(ctx, base)
+
+	case strings.HasSuffix(ctx.SubPath, ".json") && validName(strings.TrimSuffix(ctx.SubPath, ".json")):
+		d, ok := p.svc.Detail(strings.TrimSuffix(ctx.SubPath, ".json"))
 		if !ok {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "plugin directory index unavailable"})
+			return "", nil
+		}
+		raw, err := marshalJSON(d)
+		if err != nil {
+			log.Printf("Directory plugin: encode %s: %v", d.Name, err)
 			return "", nil
 		}
 		c.Header("Cache-Control", "public, max-age=300")
@@ -178,38 +244,30 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "", nil
 
 	case validName(ctx.SubPath):
-		p.fetcher.Ensure(indexURL(ctx.Settings))
-		e, ok := p.fetcher.Entry(ctx.SubPath)
+		d, ok := p.svc.Detail(ctx.SubPath)
 		if !ok {
 			return "", nil
 		}
-		notice := ""
-		d, err := p.fetcher.Detail(e.Name)
+		html, err := renderDetail(base, d.IndexEntry, &d, "")
 		if err != nil {
-			log.Printf("Directory plugin: %v", err)
-			notice = "Details for this plugin are unavailable right now. Please check back later."
+			log.Printf("Directory plugin: render %s: %v", d.Name, err)
+			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML, "title": d.DisplayName}
 		}
-		html, err := renderDetail(base, e, d, notice)
-		if err != nil {
-			log.Printf("Directory plugin: render %s: %v", e.Name, err)
-			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML, "title": e.DisplayName}
-		}
-		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html, "title": e.DisplayName}
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html, "title": d.DisplayName}
 	}
 	return "", nil
 }
 
-func indexURL(settings map[string]string) string {
-	if u := strings.TrimSpace(settings["index_url"]); u != "" {
-		return u
-	}
-	return defaultIndexURL
-}
-
+// refreshInterval reads refresh_minutes: unparseable or non-positive falls
+// back to the default; anything below the minimum is raised to it, because
+// every refresh spends GitHub API quota on every listed plugin.
 func refreshInterval(settings map[string]string) time.Duration {
 	n, err := strconv.Atoi(strings.TrimSpace(settings["refresh_minutes"]))
 	if err != nil || n <= 0 {
 		return defaultRefresh
 	}
-	return time.Duration(n) * time.Minute
+	if d := time.Duration(n) * time.Minute; d >= minRefresh {
+		return d
+	}
+	return minRefresh
 }

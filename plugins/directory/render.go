@@ -88,3 +88,9 @@ func renderDetail(base string, e Entry, d *Detail, notice string) (string, error
 	})
 	return buf.String(), err
 }
+
+func renderSubmitPage(v submitView) (string, error) {
+	var buf bytes.Buffer
+	err := templates.ExecuteTemplate(&buf, "submit.html", v)
+	return buf.String(), err
+}
