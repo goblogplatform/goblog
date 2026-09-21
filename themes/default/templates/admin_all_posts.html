@@ -39,7 +39,9 @@
 
 <div class="container">
     {{ template "admin_nav.html" . }}
+    <div class="admin-panel">
     <h1>All Posts</h1>
+    {{ if .posts }}
     <table>
         {{ range .posts }}
         <tr class="striped--light-gray">
@@ -53,7 +55,11 @@
         </tr>
         {{ end }}
     </table>
+    {{ else }}
+    <p class="text-muted">No posts yet. <a href="/admin/newpost">Write your first post</a>.</p>
+    {{ end }}
     <!--</ul>-->
+    </div> <!-- / admin-panel -->
 
 </div> <!-- / container -->
 

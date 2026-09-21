@@ -1,0 +1,72 @@
+/* Admin chrome shared by every theme (#596).
+ *
+ * Admin pages are default's admin_*.html rendered inside the active theme's
+ * header/footer, so a theme with a photo or dark backdrop (forest) would put
+ * tables and forms straight on the picture. The nav and the page content sit
+ * on an opaque surface instead, in the theme's Bootstrap body colours so it
+ * still follows a light/dark theme. Linked after the theme's goblog.css so it
+ * wins. */
+
+.admin-panel {
+  background: var(--bs-body-bg, #fff);
+  color: var(--bs-body-color, #212529);
+  padding: 1rem 1.5rem 1.5rem;
+  border-radius: .5rem;
+  box-shadow: 0 .25rem 1rem rgba(0, 0, 0, .12);
+  margin-top: 1rem;
+  margin-bottom: 2rem;
+  text-align: left;
+}
+
+.admin-panel h1:first-child {
+  margin-top: .25rem;
+}
+
+/* The secondary nav (admin_nav.html) gets the same surface so it reads on
+ * any backdrop; bg-body already sets the colour, this adds the frame. */
+.nav-scroller {
+  background: var(--bs-body-bg, #fff);
+  color: var(--bs-body-color, #212529);
+  padding: .25rem 1rem;
+  border-radius: .5rem;
+  box-shadow: 0 .25rem 1rem rgba(0, 0, 0, .12);
+  margin-top: 1rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nav-scroller .nav {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+/* Dashboard count tiles: the number is what you scan for, so it gets the
+ * size; Tachyons is loaded on every page and its .h1-.h6 set height, so
+ * sizing uses Bootstrap's fs-* / display-* only. */
+.admin-tile {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+.admin-tile .card {
+  transition: box-shadow .15s ease-in-out;
+}
+
+.admin-tile:hover .card {
+  box-shadow: 0 .25rem .75rem rgba(0, 0, 0, .15);
+}
+
+/* Installed-theme cards without a directory screenshot: a neutral tile with
+ * the theme's display name in place of the image. */
+.theme-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  background: var(--bs-secondary-bg, #e9ecef);
+  color: var(--bs-secondary-color, #6c757d);
+  font-size: 1.5rem;
+  border-top-left-radius: var(--bs-card-inner-border-radius, .375rem);
+  border-top-right-radius: var(--bs-card-inner-border-radius, .375rem);
+}
