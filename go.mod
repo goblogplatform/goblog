@@ -20,7 +20,7 @@ require (
 require (
 	github.com/extism/go-sdk v1.7.1
 	github.com/gobwas/glob v1.0.0
-	github.com/tetratelabs/wazero v1.9.0
+	github.com/tetratelabs/wazero v1.12.0
 	github.com/traefik/yaegi v0.16.1
 	github.com/yuin/goldmark v1.8.6
 	gorm.io/driver/postgres v1.6.3
