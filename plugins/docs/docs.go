@@ -19,6 +19,9 @@ import (
 // PageType is the page type this plugin owns.
 const PageType = "docs"
 
+// docsBase is the URL prefix the pages' own links are written against.
+const docsBase = "/docs"
+
 //go:embed content/*.md
 var contentFS embed.FS
 
@@ -159,12 +162,24 @@ func sidebarAndArticle(base, current string, r renderedPage) string {
 		}
 		items = append(items, item{Href: href, Title: pg.Title, Current: pg.Slug == current})
 	}
+	// The pages are written against /docs; when the admin renames the page
+	// slug the cross-page links have to move with the sidebar. Only whole
+	// prefixes are rewritten (/docs, /docs/…, /docs#…), so a link to
+	// /docs-something or an external URL is left alone.
+	article := r.HTML
+	if base != docsBase {
+		out := string(article)
+		for _, end := range []string{`"`, "/", "#"} {
+			out = strings.ReplaceAll(out, `href="`+docsBase+end, `href="`+base+end)
+		}
+		article = template.HTML(out)
+	}
 	var buf bytes.Buffer
 	err := pageTemplate.Execute(&buf, map[string]any{
 		"Items":  items,
 		"TOC":    r.TOC,
 		"HasTOC": len(r.TOC) > 3,
-		"HTML":   r.HTML,
+		"HTML":   article,
 	})
 	if err != nil {
 		log.Printf("Docs plugin: render layout: %v", err)

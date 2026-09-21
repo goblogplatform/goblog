@@ -132,12 +132,24 @@ func TestRenderPage(t *testing.T) {
 	if data["title"] != "Plugin API reference" || !strings.Contains(html, `<h1 id="plugin-api-reference">`) {
 		t.Errorf("plugin-api page: title=%v", data["title"])
 	}
-	// Sidebar follows the page slug, and marks the current page.
-	ctx, _ = renderCtx(t, "/manual/plugin-api", "plugin-api")
+	// Sidebar and in-article links follow the page slug, and the sidebar
+	// marks the current page. publishing-a-plugin.md links /docs#the-directory;
+	// the sidebar never links the index with an anchor, so that link proves
+	// the article was rewritten too.
+	ctx, _ = renderCtx(t, "/manual/publishing-a-plugin", "publishing-a-plugin")
 	_, data = p.RenderPage(ctx, PageType)
 	html, _ = data["plugin_content"].(string)
-	if !strings.Contains(html, `href="/manual/writing-a-theme"`) || !strings.Contains(html, `<a class="nav-link active" aria-current="page" href="/manual/plugin-api">`) {
+	if !strings.Contains(html, `href="/manual/writing-a-theme"`) || !strings.Contains(html, `<a class="nav-link active" aria-current="page" href="/manual/publishing-a-plugin">`) {
 		t.Errorf("sidebar:\n%s", html)
+	}
+	if !strings.Contains(html, `href="/manual#the-directory"`) || strings.Contains(html, `href="/docs`) {
+		t.Errorf("in-article links should follow the /manual slug; got %d href=\"/docs occurrences", strings.Count(html, `href="/docs`))
+	}
+	// A page whose slug still is "docs" is served untouched.
+	ctx, _ = renderCtx(t, "/docs/publishing-a-plugin", "publishing-a-plugin")
+	_, data = p.RenderPage(ctx, PageType)
+	if html, _ := data["plugin_content"].(string); !strings.Contains(html, `href="/docs#the-directory"`) {
+		t.Error("links keep the /docs prefix when the slug is docs")
 	}
 	for _, sp := range []string{"nope", "plugin-api/", "../x", "overview.md"} {
 		ctx, _ := renderCtx(t, "/docs/"+sp, sp)
@@ -179,5 +191,15 @@ func TestTOC_OnlyForLongerPages(t *testing.T) {
 	short := renderedPage{page: page{Slug: "short", Title: "Short", File: "short.md"}, HTML: html, TOC: toc}
 	if strings.Contains(sidebarAndArticle("/docs", "short", short), `class="docs-toc `) {
 		t.Error("a page with three headings should have no table of contents")
+	}
+}
+
+func TestSidebarAndArticle_RewritesOnlyWholeDocsPrefixes(t *testing.T) {
+	r := renderedPage{page: pages[0], HTML: `<a href="/docs">i</a> <a href="/docs/x">x</a> <a href="/docs#a">a</a> <a href="/docs-faq">n</a> <a href="https://example.com/docs/y">e</a>`}
+	got := sidebarAndArticle("/manual", "", r)
+	for _, want := range []string{`href="/manual">i`, `href="/manual/x"`, `href="/manual#a"`, `href="/docs-faq"`, `href="https://example.com/docs/y"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in article:\n%s", want, got)
+		}
 	}
 }
