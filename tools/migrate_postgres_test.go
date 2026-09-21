@@ -154,7 +154,9 @@ func TestMigrationPostgres_PrunesBlankUsers(t *testing.T) {
 			t.Fatalf("migration run %d failed: %v", run, err)
 		}
 		var got []int
-		db.Raw("SELECT id FROM blog_users ORDER BY id").Scan(&got)
+		if err := db.Raw("SELECT id FROM blog_users ORDER BY id").Scan(&got).Error; err != nil {
+			t.Fatalf("run %d: listing users: %v", run, err)
+		}
 		if len(got) != len(want) {
 			t.Fatalf("run %d: want ids %v, got %v", run, want, got)
 		}
