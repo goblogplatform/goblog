@@ -103,6 +103,33 @@ func backfillUserProvider(db *gorm.DB) error {
 	return nil
 }
 
+// pruneBlankUsers removes the junk rows behind issue #596. Before #523 a
+// failed GitHub profile fetch still created a blog_users row, with no id,
+// login, name or email; fixBlogUsersTable then assigned those rows integer
+// ids and backfillUserProvider tagged them github. parseGitHubUser now
+// rejects a profile with no id, so nothing creates such rows any more.
+//
+// A row is junk when it is a github row with neither a login nor an email.
+// Rows that an admin_users or comments row points at are kept regardless,
+// so nothing an operator can see loses its user. Idempotent: the second
+// run finds nothing to delete.
+func pruneBlankUsers(db *gorm.DB) error {
+	result := db.Exec(`DELETE FROM blog_users
+		WHERE provider = ?
+		AND (login IS NULL OR login = '')
+		AND (email IS NULL OR email = '')
+		AND NOT EXISTS (SELECT 1 FROM admin_users WHERE admin_users.blog_user_id = blog_users.id)
+		AND NOT EXISTS (SELECT 1 FROM comments WHERE comments.user_id = blog_users.id)`,
+		auth.ProviderGitHub)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		log.Printf("Pruned %d blank github users (#596)", result.RowsAffected)
+	}
+	return nil
+}
+
 // fixTagsTable checks if the tags table is missing a PRIMARY KEY on the name
 // column (created by an older GORM version) and rebuilds it with deduplication.
 func fixTagsTable(db *gorm.DB) error {
@@ -404,6 +431,9 @@ func Migrate(db *gorm.DB) error {
 	if err := backfillUserProvider(db); err != nil {
 		log.Println("Error backfilling blog_users provider: " + err.Error())
 		return err
+	}
+	if err := pruneBlankUsers(db); err != nil {
+		log.Printf("Warning: could not prune blank blog_users rows: %v", err)
 	}
 
 	seedDefaultPostType(db)

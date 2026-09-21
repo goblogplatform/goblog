@@ -294,3 +294,55 @@ func TestMigrationSeedsCommentsRequireLogin(t *testing.T) {
 		t.Fatal("expected comments.user_id column")
 	}
 }
+
+// TestMigrationPrunesBlankUsers covers issue #596: before #523, failed GitHub
+// profile fetches created blog_users rows with no login, name or email, and
+// the later fix-ups gave them integer ids and tagged them github. Migrate must
+// delete those rows, keep any that are an admin or referenced by a comment,
+// leave real users alone, and be a no-op the second time.
+func TestMigrationPrunesBlankUsers(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := tools.Migrate(db); err != nil {
+		t.Fatalf("first migration failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO blog_users (id, login, name, email, provider, provider_id) VALUES
+		(1, 'real', 'Real User', '', 'github', '1'),
+		(2, '', '', '', 'github', '2'),
+		(3, NULL, NULL, NULL, 'github', '3'),
+		(4, '', '', '', 'github', '4'),
+		(5, '', '', '', 'github', '5'),
+		(6, '', '', 'mail-only@example.com', 'github', '6'),
+		(7, '', '', '', 'email', 'blank@example.com')`).Error; err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO admin_users (blog_user_id) VALUES (4)`).Error; err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO comments (post_id, name, content, user_id) VALUES (1, 'c', 'hi', 5)`).Error; err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+
+	// 2 and 3 are blank github rows with nothing pointing at them; 4 is an
+	// admin, 5 has a comment, 6 has an email, 7 is an email-provider row.
+	want := []int{1, 4, 5, 6, 7}
+	for run := 1; run <= 2; run++ {
+		if err := tools.Migrate(db); err != nil {
+			t.Fatalf("migration run %d failed: %v", run, err)
+		}
+		var got []int
+		db.Raw("SELECT id FROM blog_users ORDER BY id").Scan(&got)
+		if len(got) != len(want) {
+			t.Fatalf("run %d: want ids %v, got %v", run, want, got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("run %d: want ids %v, got %v", run, want, got)
+			}
+		}
+	}
+}

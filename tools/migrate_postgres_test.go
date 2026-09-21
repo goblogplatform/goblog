@@ -122,3 +122,46 @@ func TestMigrationPostgres_UserIDSequence(t *testing.T) {
 		t.Fatalf("expected legacy row backfilled as github, got %q", provider)
 	}
 }
+
+// TestMigrationPostgres_PrunesBlankUsers covers issue #596 on Postgres: blank
+// github rows are removed unless an admin or a comment points at them, and a
+// second Migrate is a no-op.
+func TestMigrationPostgres_PrunesBlankUsers(t *testing.T) {
+	db := openTestPostgres(t)
+	if err := tools.Migrate(db); err != nil {
+		t.Fatalf("first migration failed: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO blog_users (id, login, name, email, provider, provider_id) VALUES
+		(1, 'real', 'Real User', '', 'github', '1'),
+		(2, '', '', '', 'github', '2'),
+		(3, NULL, NULL, NULL, 'github', '3'),
+		(4, '', '', '', 'github', '4'),
+		(5, '', '', '', 'github', '5'),
+		(6, '', '', 'mail-only@example.com', 'github', '6'),
+		(7, '', '', '', 'email', 'blank@example.com')`).Error; err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO admin_users (blog_user_id) VALUES (4)`).Error; err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO comments (post_id, name, content, user_id) VALUES (1, 'c', 'hi', 5)`).Error; err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+
+	want := []int{1, 4, 5, 6, 7}
+	for run := 1; run <= 2; run++ {
+		if err := tools.Migrate(db); err != nil {
+			t.Fatalf("migration run %d failed: %v", run, err)
+		}
+		var got []int
+		db.Raw("SELECT id FROM blog_users ORDER BY id").Scan(&got)
+		if len(got) != len(want) {
+			t.Fatalf("run %d: want ids %v, got %v", run, want, got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("run %d: want ids %v, got %v", run, want, got)
+			}
+		}
+	}
+}
