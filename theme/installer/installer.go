@@ -451,9 +451,12 @@ func (i *Installer) place(e directory.Entry, files map[string][]byte) error {
 	return nil
 }
 
-// tmpDirPattern matches the directories place unpacks into (MkdirTemp
-// appends digits to the "." + name + ".tmp-" prefix).
-var tmpDirPattern = regexp.MustCompile(`^\.([A-Za-z0-9_-]+)\.tmp-[0-9]+$`)
+// tmpDirPattern matches the directories place unpacks into: "." + name +
+// ".tmp-" plus whatever MkdirTemp appends. Go currently appends digits,
+// but that is documented only as "a random string", so any non-empty
+// suffix counts; a theme name cannot contain "." so the match is
+// unambiguous.
+var tmpDirPattern = regexp.MustCompile(`^\.([A-Za-z0-9_-]+)\.tmp-.+$`)
 
 // Sweep cleans up what a crash inside place can leave under Dir, and is
 // meant to run once at startup, before any install. Two kinds of leftover

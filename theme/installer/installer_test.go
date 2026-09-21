@@ -498,7 +498,7 @@ func TestSweep(t *testing.T) {
 	mk("sky/templates/home.html", "new sky")
 	mk("sky.prev/templates/home.html", "old sky")
 	// An unpack that never got as far as a swap.
-	mk(".dune.tmp-7/templates/home.html", "partial")
+	mk(".dune.tmp-a1B2c3/templates/home.html", "partial") // any MkdirTemp suffix, not only digits
 	// Not the installer's: an installed theme, a hidden directory with a
 	// different shape, and a plain file that happens to end in .prev.
 	mk("prairie/templates/home.html", "prairie")
@@ -514,7 +514,7 @@ func TestSweep(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(h.root, "sky", "templates", "home.html")); string(b) != "new sky" {
 		t.Errorf("sky must be left alone, got %q", b)
 	}
-	for _, gone := range []string{"ocean.prev", "sky.prev", ".ocean.tmp-123456", ".dune.tmp-7"} {
+	for _, gone := range []string{"ocean.prev", "sky.prev", ".ocean.tmp-123456", ".dune.tmp-a1B2c3"} {
 		if _, err := os.Stat(filepath.Join(h.root, gone)); err == nil {
 			t.Errorf("%s must be removed by the sweep", gone)
 		}
