@@ -78,6 +78,19 @@ func TestParseManifest_MissingRuntimeMentionsWebAssembly(t *testing.T) {
 	}
 }
 
+// TestParseManifest_ReservedNames: submit and index are the directory's own
+// routes (/plugins/submit, /plugins/index.json), so an entry with either
+// name could never be reached and is refused with a message that says so.
+func TestParseManifest_ReservedNames(t *testing.T) {
+	for _, name := range []string{"submit", "index"} {
+		in := strings.Replace(goodManifest, `"name": "hello"`, `"name": "`+name+`"`, 1)
+		_, err := ParseManifest([]byte(in))
+		if err == nil || !strings.Contains(err.Error(), `name "`+name+`" is reserved`) {
+			t.Errorf("name %q: want a reserved-name error, got %v", name, err)
+		}
+	}
+}
+
 func TestParseManifest_Errors(t *testing.T) {
 	cases := map[string]string{
 		"not json":              `{`,

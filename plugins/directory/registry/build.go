@@ -41,12 +41,12 @@ type ReleaseDoc struct {
 	URL        string        `json:"url"`
 }
 
-// MaxRenderedBytes caps the README and changelog HTML BuildRepo will
-// accept from GitHub's markdown API — a detail doc is stored whole in
-// directory_builds.doc and served on every page view, so an oversized
-// render (an author's README with an embedded base64 image, say) must be
-// refused at build time rather than silently ballooning the database and
-// every response.
+// MaxRenderedBytes caps the README, changelog and per-release notes HTML
+// BuildRepo will accept from GitHub's markdown API — a detail doc is
+// stored whole in directory_builds.doc and served on every page view, so
+// an oversized render (an author's README with an embedded base64 image,
+// say) must be refused at build time rather than silently ballooning the
+// database and every response.
 const MaxRenderedBytes = 1 << 20
 
 // DetailDoc is /plugins/<name>.json: the index entry plus rendered README,
@@ -100,22 +100,21 @@ func buildDetail(ctx context.Context, src Source, v *Validated, baseURL string) 
 		entry.Stars = stars
 	}
 
-	readme, changelog, releases, err := renderDocs(ctx, src, v.Owner, v.Name, v.Release.Tag, v.Releases)
+	readme, changelog, releases, err := renderDocs(ctx, src, v.Owner, v.Name, v.Release.Tag, v.Readme, v.Releases)
 	if err != nil {
 		return DetailDoc{}, err
 	}
 	return DetailDoc{IndexEntry: entry, ReadmeHTML: readme, ChangelogHTML: changelog, Releases: releases}, nil
 }
 
-// renderDocs fetches README.md and CHANGELOG.md at tag and renders them
-// and the release notes through GitHub's markdown API.
-func renderDocs(ctx context.Context, src Source, owner, name, tag string, all []Release) (readme, changelog template.HTML, releases []ReleaseDoc, err error) {
+// renderDocs renders the README the validator already fetched, CHANGELOG.md
+// at tag (fetched here, if present) and the release notes through GitHub's
+// markdown API. The validator keeps the README bytes rather than this
+// function fetching them again: one API call per build, which matters at
+// 60/h unauthenticated.
+func renderDocs(ctx context.Context, src Source, owner, name, tag string, readmeMD []byte, all []Release) (readme, changelog template.HTML, releases []ReleaseDoc, err error) {
 	ownerRepo := owner + "/" + name
-	rb, err := src.File(ctx, owner, name, tag, "README.md")
-	if err != nil {
-		return "", "", nil, fmt.Errorf("README.md: %w", err)
-	}
-	readmeHTML, err := src.RenderMarkdown(ctx, ownerRepo, string(rb))
+	readmeHTML, err := src.RenderMarkdown(ctx, ownerRepo, string(readmeMD))
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -138,6 +137,9 @@ func renderDocs(ctx context.Context, src Source, owner, name, tag string, all []
 		notes, err := src.RenderMarkdown(ctx, ownerRepo, r.Body)
 		if err != nil {
 			return "", "", nil, err
+		}
+		if len(notes) > MaxRenderedBytes {
+			return "", "", nil, fmt.Errorf("%s: rendered release notes for %s are %d bytes; the limit is %d (1 MiB)", ownerRepo, r.Tag, len(notes), MaxRenderedBytes)
 		}
 		releases = append(releases, ReleaseDoc{Version: strings.TrimPrefix(r.Tag, "v"), ReleasedAt: r.PublishedAt.UTC().Format(time.RFC3339), NotesHTML: template.HTML(notes), URL: r.URL})
 	}

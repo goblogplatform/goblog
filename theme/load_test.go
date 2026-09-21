@@ -127,6 +127,35 @@ func TestValidateFiles(t *testing.T) {
 	}
 }
 
+// TestValidateFiles_UndefinedTemplateReference: {{ template "x" }} names
+// are only resolved at render time, so the check walks the parsed trees. A
+// name the theme does not ship is fine when shared or default provide it
+// (the theme's files are layered on top of them), and a {{ define }} in
+// any of the theme's own files counts; a name that exists nowhere fails,
+// naming the file, even nested in a branch or inside a define block.
+func TestValidateFiles_UndefinedTemplateReference(t *testing.T) {
+	roots(t)
+	withShared(t)
+	ok := map[string][]byte{
+		"templates/post.html":  []byte(`{{ template "shared" }}{{ template "home.html" . }}{{ template "card" . }}`),
+		"templates/parts.html": []byte(`{{ define "card" }}card{{ end }}`),
+	}
+	if err := ValidateFiles(ok); err != nil {
+		t.Errorf("references to shared, default and the theme's own define must pass: %v", err)
+	}
+	cases := map[string]map[string][]byte{
+		"nested in a branch": {"templates/home.html": []byte(`{{ if .X }}{{ range .L }}{{ template "nope" . }}{{ end }}{{ end }}`)},
+		"in an else branch":  {"templates/home.html": []byte(`{{ with .X }}x{{ else }}{{ template "nope" . }}{{ end }}`)},
+		"inside a define":    {"templates/home.html": []byte(`{{ define "card" }}{{ template "nope" . }}{{ end }}`)},
+	}
+	for name, files := range cases {
+		err := ValidateFiles(files)
+		if err == nil || !strings.Contains(err.Error(), "templates/home.html") || !strings.Contains(err.Error(), `"nope"`) {
+			t.Errorf("%s: want the file and the missing name, got %v", name, err)
+		}
+	}
+}
+
 func TestValidateFiles_SizeCap(t *testing.T) {
 	roots(t)
 	withShared(t)

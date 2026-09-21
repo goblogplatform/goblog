@@ -22,6 +22,7 @@ var (
 	ErrNameTaken     = errors.New("a different repository already publishes an entry with this name")
 	ErrRateLimited   = errors.New("too many submissions from your address; try again in an hour")
 	ErrBusy          = errors.New("another submission is being checked; try again in a minute")
+	ErrQueueFull     = errors.New("the review queue is full; try again in a few days")
 	ErrNotFound      = errors.New("no such repository")
 	ErrBadKind       = errors.New("kind must be plugin or theme")
 )
@@ -44,6 +45,12 @@ const (
 	submitWindow = time.Hour
 	submitBudget = 90 * time.Second   // one public validation, end to end
 	ipRetention  = 7 * 24 * time.Hour // how long submitter_ip is kept
+
+	// maxPending bounds the review queue as a whole. The per-address limit
+	// alone lets anyone with a spread of addresses (trivial over IPv6, even
+	// counted by /64) pile up built documents faster than a maintainer
+	// reviews them; each is a full detail document in the database.
+	maxPending = 100
 )
 
 // Service is the registry: it validates and builds repositories, keeps the
@@ -118,6 +125,14 @@ func (s *Service) Submit(ctx context.Context, kind, input, ip, token string) (*R
 		return nil, ErrBusy
 	}
 	defer s.validate.Unlock()
+	// Counted under validate so two submissions cannot both squeeze past
+	// the cap, and after the rate limiter so a client hammering a full
+	// queue spends its allowance on it.
+	if full, err := s.queueFull(); err != nil {
+		return nil, err
+	} else if full {
+		return nil, ErrQueueFull
+	}
 	ctx, cancel := context.WithTimeout(ctx, submitBudget)
 	defer cancel()
 	doc, err := s.build(ctx, kind, repo, token)
@@ -173,6 +188,16 @@ func (s *Service) refuseDuplicate(repo string, pendingToo bool) error {
 		}
 	}
 	return nil
+}
+
+// queueFull reports whether maxPending submissions are already waiting
+// for review.
+func (s *Service) queueFull() (bool, error) {
+	var n int64
+	if err := s.db.Model(&Repo{}).Where("status = ?", StatusPending).Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n >= maxPending, nil
 }
 
 // build validates and builds repo as kind; KindAuto looks at which manifest
@@ -525,8 +550,13 @@ func (s *Service) nameOf(repo string) (kind, name string, ok bool) {
 }
 
 // regenerate rebuilds the cached index for every kind from the approved
-// builds.
+// builds. The database is read with mu held, not just the swap: two
+// curation actions regenerating at once could otherwise install the older
+// snapshot last, leaving the index stale until the next refresh. Readers
+// wait out two small queries, which is nothing next to a rebuild.
 func (s *Service) regenerate() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	raw := make(map[string][]byte, 2)
 	entries := make(map[string][]registry.IndexEntry, 2)
 	for _, kind := range []string{KindPlugin, KindTheme} {
@@ -536,8 +566,6 @@ func (s *Service) regenerate() error {
 		}
 		raw[kind], entries[kind] = encodeIndex(docs)
 	}
-	s.mu.Lock()
 	s.indexRaw, s.indexEntries = raw, entries
-	s.mu.Unlock()
 	return nil
 }
