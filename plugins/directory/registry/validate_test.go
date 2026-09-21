@@ -15,6 +15,7 @@ import (
 type memSource struct {
 	releases map[string][]Release // "owner/repo" → releases
 	files    map[string]string    // "owner/repo@ref:path" → content
+	fetched  map[string]int       // File calls per "owner/repo@ref:path" key
 	assets   map[int64][]byte     // asset id → bytes
 	rendered int                  // RenderMarkdown call count
 	stars    map[string]int       // "owner/repo" → stargazers_count
@@ -31,6 +32,10 @@ func (m *memSource) Releases(_ context.Context, owner, repo string) ([]Release, 
 }
 
 func (m *memSource) File(_ context.Context, owner, repo, ref, path string) ([]byte, error) {
+	if m.fetched == nil {
+		m.fetched = map[string]int{}
+	}
+	m.fetched[owner+"/"+repo+"@"+ref+":"+path]++
 	if c, ok := m.files[owner+"/"+repo+"@"+ref+":"+path]; ok {
 		return []byte(c), nil
 	}

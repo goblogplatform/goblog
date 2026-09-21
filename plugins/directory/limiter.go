@@ -1,6 +1,7 @@
 package directory
 
 import (
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -29,10 +30,28 @@ func newIPLimiter(limit int, window time.Duration) *ipLimiter {
 	return &ipLimiter{limit: limit, window: window, now: time.Now, hits: map[string][]time.Time{}}
 }
 
+// bucket is the key ip counts against. An IPv6 address is reduced to its
+// /64 — the prefix a single subscriber typically holds — so varying the
+// low 64 bits does not hand one attacker 2^64 fresh allowances. IPv4
+// (including IPv4-mapped IPv6) counts per address; anything unparseable
+// is used as given.
+func bucket(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	return netip.PrefixFrom(addr, 64).Masked().String()
+}
+
 // Allow records an attempt from ip and reports whether it is within the
 // limit. Refused attempts are not recorded, so a blocked client is not
 // pushed further out by retrying.
 func (l *ipLimiter) Allow(ip string) bool {
+	ip = bucket(ip)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()

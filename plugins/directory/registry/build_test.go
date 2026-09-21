@@ -88,6 +88,31 @@ func TestBuildRepo_RenderedChangelogOverLimitIsRefused(t *testing.T) {
 	}
 }
 
+// TestBuildRepo_ReleaseNotesOverLimitAreRefused: a release body renders to
+// notes_html in the detail document, so it is capped like the README.
+func TestBuildRepo_ReleaseNotesOverLimitAreRefused(t *testing.T) {
+	src := helloSource()
+	src.releases["o/hello"][3].Body = strings.Repeat("a", MaxRenderedBytes+1)
+	_, err := BuildRepo(context.Background(), src, helloValidator(), "o/hello", "")
+	if err == nil || !strings.Contains(err.Error(), "v1.0.0") || !strings.Contains(err.Error(), "limit") {
+		t.Errorf("want a release-notes size-limit error naming the release, got %v", err)
+	}
+}
+
+// TestBuildRepo_FetchesReadmeOnce: README.md is read once — the validator
+// keeps the bytes for the docs render rather than probing for the file and
+// fetching it again (one GitHub API call per build, which matters at 60/h
+// unauthenticated).
+func TestBuildRepo_FetchesReadmeOnce(t *testing.T) {
+	src := helloSource()
+	if _, err := BuildRepo(context.Background(), src, helloValidator(), "o/hello", ""); err != nil {
+		t.Fatal(err)
+	}
+	if n := src.fetched["o/hello@v1.1.0:README.md"]; n != 1 {
+		t.Errorf("README.md fetched %d times, want 1", n)
+	}
+}
+
 func TestBuildRepo_ValidationErrorsPropagate(t *testing.T) {
 	src := helloSource()
 	delete(src.files, "o/hello@v1.1.0:README.md")

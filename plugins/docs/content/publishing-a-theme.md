@@ -38,7 +38,7 @@ The archive of the tag must be **16 MiB or smaller**, with **at most 2000 entrie
 
 | Field | Rule |
 |---|---|
-| `name` | `^[a-z0-9-]+$` and unique among the directory's themes. It becomes the directory name under `themes/installed/` and the value of the site's `theme` setting once installed, so keep it stable across versions. **Reserved:** `default`, `minimal`, `installed` and `shared` are refused. A goblog also never installs a directory theme over a built-in of the same name (`forest` is published to the directory and compiled in, so it is not reserved, but an operator whose goblog ships it cannot install the directory copy). |
+| `name` | `^[a-z0-9-]+$` and unique among the directory's themes. It becomes the directory name under `themes/installed/` and the value of the site's `theme` setting once installed, so keep it stable across versions. **Reserved:** `default`, `minimal`, `installed` and `shared` are refused, and so are `submit` and `index` — the directory's own pages (`/themes/submit`, `/themes/index.json`). A goblog also never installs a directory theme over a built-in of the same name (`forest` is published to the directory and compiled in, so it is not reserved, but an operator whose goblog ships it cannot install the directory copy). |
 | `display_name` | The label in the directory listing. Required. |
 | `description` | One sentence for the listing. Required. |
 | `author` | Required. |
@@ -72,7 +72,8 @@ Before validation starts, the directory refuses:
 - text that is not a GitHub repository (`enter a GitHub repository URL like https://github.com/owner/repo, or just owner/repo`);
 - a repository that is already listed (`this repository is already listed in the directory`, with a link to its page) or already waiting (`this repository is already under review`). A rejected repository may be submitted again;
 - more than **5 submissions per hour from one address** (`too many submissions from your address; try again in an hour`, HTTP 429). Refused attempts are not counted, so retrying does not push you further out;
-- a submission while another one is being checked (`another submission is being checked; try again in a minute`, HTTP 429). Public validations run one at a time.
+- a submission while another one is being checked (`another submission is being checked; try again in a minute`, HTTP 429). Public validations run one at a time;
+- a submission while 100 are already waiting for review (`the review queue is full; try again in a few days`). The queue is bounded as a whole, not only per address.
 
 Validation then runs synchronously, with a 90 second budget end to end, in this order:
 
@@ -81,8 +82,8 @@ Validation then runs synchronously, with a 90 second budget end to end, in this 
 3. **README.** `README.md` must exist at the tag.
 4. **Screenshot.** `screenshot.png`, then `screenshot.jpg`, must exist at the tag and be 1 MiB or smaller.
 5. **Archive.** GitHub's zip of the tag is downloaded (16 MiB or smaller) and unpacked in memory under the limits above, keeping `templates/` and `static/`.
-6. **Templates.** There must be at least one `templates/*.html`; each is checked against the 256 KiB cap and parsed on top of goblog's shared and default templates.
-7. **Docs.** `README.md`, `CHANGELOG.md` (if present) and every release body are rendered through GitHub's markdown API; the README and changelog HTML must each be 1 MiB or smaller. The repository's star count is fetched too — best effort, `0` if GitHub cannot be reached for it.
+6. **Templates.** There must be at least one `templates/*.html`; each is checked against the 256 KiB cap and parsed on top of goblog's shared and default templates. Every `{{ template "…" }}` they reference must then exist somewhere in that set — in the theme, in its own `{{ define }}` blocks, or in goblog's shared and default templates (a theme may reference `header.html`, `footer.html` or `admin_nav.html` without shipping them; default's copy is used).
+7. **Docs.** `README.md`, `CHANGELOG.md` (if present) and every release body are rendered through GitHub's markdown API; the README, the changelog and each release's notes must each render to 1 MiB or smaller. The repository's star count is fetched too — best effort, `0` if GitHub cannot be reached for it.
 8. **Name.** The theme's `name` must not already be published by a different repository.
 
 A failure is shown above the form with the reason — the texts are in [Common validation errors](#common-validation-errors). A pass shows **Queued for review as a theme** and stores the built entry under **Pending review**. A maintainer sees the card in **Admin → Plugins → Directory**: the screenshot, the kind, display name, `name` and version, author, license and `min_goblog_version`, a link to the repository, and a **Show README** button that expands the rendered README. They approve or reject from there; approval usually takes a few days. An approved entry is in the index within minutes.
@@ -110,7 +111,7 @@ Messages are prefixed with the repository (`owner/name: …`) and, once a releas
 | `goblog-theme.json: not found` | The file is missing at the tag that was checked (the latest release), even if it exists on `main`. Tag a release that includes it. |
 | `goblog-theme.json: invalid character …` (or another JSON error) | The manifest is not valid JSON. |
 | `name must match ^[a-z0-9-]+$` | Lower-case letters, digits and hyphens only. |
-| `name "default" is reserved` (or `minimal`, `installed`, `shared`) | Pick another name. |
+| `name "default" is reserved` (or `minimal`, `installed`, `shared`, `submit`, `index`) | Pick another name. |
 | `display_name is required` / `description is required` / `author is required` | Fill in the field; whitespace alone does not count. |
 | `license "…" is not a known SPDX identifier` | Use one of the identifiers listed above, spelled exactly. |
 | `min_goblog_version must be a plain semver like 0.5.0` | Three numbers, no `v`, no `-beta`. |
@@ -127,7 +128,9 @@ Messages are prefixed with the repository (`owner/name: …`) and, once a releas
 | `archive: extracted size exceeds 16777216 bytes` | `templates/` and `static/` together unpack to more than 16 MiB. Move large assets out of `static/`. |
 | `templates do not load: no templates/*.html files: a theme must ship at least one template` | Add at least one `.html` file directly under `templates/`. |
 | `templates do not load: templates/home.html: template: home.html:12: …` | A Go template parse error at that file and line. Fix it and re-tag; the same check runs when a site installs the theme. |
+| `templates do not load: templates/home.html: template "home.html" references template "…", which neither the theme nor goblog's shared and default templates define` | A `{{ template "…" }}` names something that exists nowhere; the page would 500 at render. Ship the template, define it, or fix the name. |
 | `rendered README.md is … bytes; the limit is 1048576 (1 MiB)` (or `CHANGELOG.md`) | Shrink the file — usually an embedded base64 image. Link images instead. |
+| `rendered release notes for v1.2.0 are … bytes; the limit is 1048576 (1 MiB)` | The same cap on one release's body. Edit the release on GitHub. |
 | `a different repository already publishes an entry with this name` | Another listed repository already owns that `name`. Pick another, or, if it is yours, ask a maintainer to delist the old one. |
 
 If the message is `Something went wrong on our side; please try again later.`, the failure was on the directory (GitHub unreachable, a database error) and is logged there — not something in your repository. Try again later.
