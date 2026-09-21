@@ -85,37 +85,6 @@ goblog.live URL, so a self-hosted copy stays self-contained.
   older versions have their README).
 - Search.
 
-## Revision 2 (2026-09-20): served by a WASM plugin
+## Revision 2 (2026-09-20): tried as a WASM plugin, reverted
 
-The compiled-in `plugins/docs` package put goblog.live-specific serving
-code — a markdown renderer, a sidebar layout, a `docs` page type and a new
-goldmark dependency — into every goblog install, where almost nobody would
-enable it. The documentation is a feature of the project site, not of the
-engine, and the WASM plugin system exists for exactly this kind of
-optional page. So the serving side leaves the binary.
-
-What stays in goblog is the content and its guard rails: the seven pages
-move from `plugins/docs/content/` to `docs/guide/` as a small `guide`
-package (`embed.FS` of the markdown plus the `Pages` manifest), and the
-tests move with them, rewritten to check the markdown source instead of
-rendered HTML — every page opens with an H1 equal to its title, every
-`/docs/<slug>[#anchor]` and `#anchor` link resolves against goldmark's
-auto-heading-ID rules, no page links to goblog.live/docs, every
-`snake_case` code span names a real export, host function, wire field or
-allowlisted key, and the license lists match `registry.KnownLicenses()`.
-goblog itself has no renderer and no goldmark. Rendering lives in
-`goblogplatform/goblog-plugin-docs`: it vendors the pages from a goblog
-tag (`scripts/sync-content.sh <ref>`, recording the ref in
-`content/GOBLOG_REF`), renders them with goldmark inside the WASM
-sandbox, and answers `render_page` with the `html` result form so goblog
-wraps the sidebar and article in the theme's `page_content.html` — the
-layout is the one the compiled-in plugin had.
-
-Rollout: this branch (PR #591) is reworked in place so goblog ships the
-`docs/guide` package and the registry `ensurePages` fix, with the README
-trims and contract pointers; the plugin repo is created, synced from the
-goblog tag, and released as `docs` 1.0.0; it is submitted to the
-directory and installed on goblog.live from **Admin → Plugins**, then
-enabled, at which point the Docs nav entry appears and the directory
-footer links to it resolve. A documentation change is a goblog PR (the lint runs
-there) followed by a plugin release that re-syncs the content.
+Between 076ad07 and the merge of #591 the serving side was moved out of the binary into `goblogplatform/goblog-plugin-docs` (pages and lint in `docs/guide/`, content vendored per goblog release). That merged, and was reverted in the follow-up PR: every documentation change would have needed a sync-commit-tag-release cycle in a second repo, which Jason judged a non-starter. The docs are therefore a **compiled-in plugin, off by default**, on the same footing as `directory`: goblog.live enables it, other installs never see it. The plugin repo was deleted; `docs/superpowers/plans/2026-09-20-docs-plugin-rev2.md` is kept as the record of the attempt.

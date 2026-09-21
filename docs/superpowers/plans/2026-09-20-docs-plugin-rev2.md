@@ -1,5 +1,7 @@
 # Documentation as a WASM plugin (rev 2) — Implementation Plan
 
+> **Reverted.** Executed and merged in #591, then reverted: the per-release content sync was a non-starter. The compiled-in design of `2026-09-20-docs-plugin.md` stands. Kept for the record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Take the documentation out of the goblog binary: the pages stay in the goblog repo (with their CI lint) and are served on goblog.live by a separate WASM plugin, `goblogplatform/goblog-plugin-docs`.
@@ -127,7 +129,7 @@ func read(t *testing.T, file string) []byte {
 }
 
 // headingID mirrors goldmark's parser.WithAutoHeadingID(): lowercase,
-// alphanumerics and '-' kept, '_' and spaces become '-', everything else
+// alphanumerics, '-' and '_' kept, spaces become '-', everything else
 // dropped; a repeated ID gets -1, -2, … appended. The plugin's own tests
 // check the same anchors with real goldmark, so a divergence here fails
 // on that side, never silently.
@@ -153,9 +155,9 @@ func headingIDs(src []byte) map[string]bool {
 		var b strings.Builder
 		for _, r := range strings.ToLower(text) {
 			switch {
-			case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
 				b.WriteRune(r)
-			case r == ' ', r == '_':
+			case r == ' ':
 				b.WriteByte('-')
 			}
 		}
