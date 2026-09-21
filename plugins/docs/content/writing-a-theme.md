@@ -67,7 +67,7 @@ Every template is executed with a map, so keys are reached as `.settings`, `.pos
 | `title` | The page title default's head uses when there is no `post`. |
 | `version` | The running goblog version, for the footer. |
 | `recent` | The newest published post, for the "most recent" block in default's footer. |
-| `admin_page` | True on admin renders; default's head loads the editor scripts when it is set. |
+| `admin_page` | True on admin renders; default's head loads the editor scripts and, after your `goblog.css`, goblog's own `/css/admin.css`, which puts the admin nav and content on an opaque `.admin-panel` surface — so admin pages read on a photo or dark backdrop without the theme doing anything. |
 | `plugin_head_html`, `plugin_footer_html`, `plugins` | The HTML installed plugins inject and their per-template data, keyed by plugin name. Added to every **public** render; admin pages are rendered without them. |
 
 Beyond those, each template gets its own data. This is the contract of the running version, read off the render calls in `blog/blog.go` and `admin/`; a release can add keys, and removals are noted in the changelog.

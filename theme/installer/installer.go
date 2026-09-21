@@ -79,6 +79,9 @@ type Installed struct {
 	Active          bool   `json:"active"`
 	UpdateAvailable bool   `json:"update_available"`
 	LatestVersion   string `json:"latest_version,omitempty"`
+	// ScreenshotURL is the directory's screenshot for the theme, when the
+	// index lists it; built-in and hand-installed themes have none.
+	ScreenshotURL string `json:"screenshot_url,omitempty"`
 }
 
 // Available is a directory theme that is not installed.
@@ -222,6 +225,7 @@ func (i *Installer) Status() Status {
 		if e, ok := byName[name]; ok && !row.Builtin {
 			row.LatestVersion = e.Version
 			row.UpdateAvailable = row.Version != "" && pinstaller.Newer(e.Version, row.Version)
+			row.ScreenshotURL = e.ScreenshotURL
 		}
 		st.Installed = append(st.Installed, row)
 	}
