@@ -55,9 +55,8 @@ type ThemeManifest struct {
 // reservedThemeNames are directory names the loader treats specially or
 // the base themes every goblog ships; a directory theme may not claim
 // them (nor the route names in reservedNames, which apply to both kinds).
-// forest is not here on purpose: it is compiled in today and is also
-// published to the directory, and the installer refuses to install over a
-// built-in anyway.
+// forest is not here on purpose: it is published to the directory and no
+// longer ships with goblog, so it is an ordinary directory theme.
 var reservedThemeNames = map[string]bool{"default": true, "minimal": true, "installed": true, "shared": true}
 
 // ParseThemeManifest decodes and validates a theme manifest.
