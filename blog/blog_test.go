@@ -945,6 +945,46 @@ func TestGetComments(t *testing.T) {
 	}
 }
 
+// TestDashboardCounts covers the cheap counters and the recent-posts query
+// the admin dashboard is built from.
+func TestDashboardCounts(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{})
+	b := blog.New(db, &Auth{}, "test")
+
+	if pub, drafts := b.CountPosts(); pub != 0 || drafts != 0 {
+		t.Errorf("empty blog: posts = %d published, %d drafts", pub, drafts)
+	}
+	if b.CountPages() != 0 || b.CountComments() != 0 || len(b.GetRecentPosts(5)) != 0 {
+		t.Error("empty blog should count nothing")
+	}
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 1; i <= 7; i++ {
+		db.Create(&blog.Post{Title: "p" + strconv.Itoa(i), Slug: "p" + strconv.Itoa(i), Content: "x", Draft: i%3 == 0, CreatedAt: base.Add(time.Duration(i) * time.Hour)})
+	}
+	db.Create(&blog.Page{Title: "About", Slug: "about"})
+	db.Create(&blog.Page{Title: "Hidden", Slug: "hidden", Enabled: false})
+	db.Create(&blog.Comment{PostID: 1, Name: "c", Content: "x"})
+
+	if pub, drafts := b.CountPosts(); pub != 5 || drafts != 2 {
+		t.Errorf("posts = %d published, %d drafts; want 5 and 2", pub, drafts)
+	}
+	if n := b.CountPages(); n != 2 {
+		t.Errorf("pages = %d, want 2 (disabled pages count too)", n)
+	}
+	if n := b.CountComments(); n != 1 {
+		t.Errorf("comments = %d, want 1", n)
+	}
+	recent := b.GetRecentPosts(5)
+	if len(recent) != 5 || recent[0].Title != "p7" || recent[4].Title != "p3" {
+		t.Errorf("recent = %+v; want p7..p3 newest first", recent)
+	}
+	if !recent[1].Draft {
+		t.Error("recent posts must include drafts")
+	}
+}
+
 // newCommentFixture builds a blog with one post and a /comments route, returning
 // a submit helper. The mock auth's user field controls who is logged in and
 // the settings table starts empty, so comments_require_login is at its default.

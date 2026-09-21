@@ -95,7 +95,8 @@ func newThemesHarness(t *testing.T) *themesHarness {
 	entry := func(name, version string, files map[string][]byte, min string) directory.Entry {
 		return directory.Entry{Kind: registry.KindTheme, Name: name, DisplayName: strings.ToUpper(name), Description: "d " + name, Version: version, Author: "a",
 			License: "MIT", SourceURL: "https://github.com/o/" + name, DownloadURL: h.srv.URL + "/o/" + name + "/archive/refs/tags/v" + version + ".zip",
-			SHA256: registry.ContentHash(files), MinGoblogVersion: min, InstallType: "theme", AllowedHosts: []string{}, Stars: 1}
+			SHA256: registry.ContentHash(files), MinGoblogVersion: min, InstallType: "theme", AllowedHosts: []string{}, Stars: 1,
+			ScreenshotURL: "https://raw.test/o/" + name + "/screenshot.png"}
 	}
 	h.index = []directory.Entry{
 		entry("ocean", "1.0.0", oceanFiles, "0.5.0"),
@@ -211,10 +212,17 @@ func TestThemeAPI_Lifecycle(t *testing.T) {
 	for _, i := range st.Installed {
 		if i.Name == "ocean" {
 			oceanInstalled = true
+			// The Installed tab renders cards with the directory screenshot.
+			if i.ScreenshotURL != "https://raw.test/o/ocean/screenshot.png" {
+				t.Errorf("installed ocean screenshot_url = %q", i.ScreenshotURL)
+			}
 		}
 	}
 	if !oceanInstalled {
 		t.Errorf("expected ocean installed, got %+v", st.Installed)
+	}
+	if !strings.Contains(w.Body.String(), `"screenshot_url":"https://raw.test/o/ocean/screenshot.png"`) {
+		t.Errorf("status JSON must expose screenshot_url for installed themes: %s", w.Body.String())
 	}
 
 	// Activate.
@@ -298,5 +306,15 @@ func TestAdminThemesPage(t *testing.T) {
 	}
 	if !strings.Contains(body, "data-action=") {
 		t.Errorf("page missing data-action= driven controls")
+	}
+	// Installed themes render as a card grid like Browse (#596), inside the
+	// opaque admin panel so the page reads on any theme's backdrop.
+	for _, want := range []string{`id="installed-cards"`, `class="row g-3"`, `class="admin-panel"`, `screenshot_url`, `theme-placeholder`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	if strings.Contains(body, `id="installed-rows"`) {
+		t.Errorf("installed themes must no longer render as a table")
 	}
 }

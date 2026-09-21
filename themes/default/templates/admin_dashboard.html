@@ -1,80 +1,132 @@
 {{ template "header.html" .}}
-<script type="text/javascript">
-
-    function createPost(publish) {
-        var tags = $("#tags").val().split(',')
-        for (var i = 0; i < tags.length; i++) {
-            tags[i] = {"name": tags[i].trim()}
-        }
-
-        var time = $("#created_at").val();
-        var vtime = moment.utc(time)
-
-        var post = {
-            "title": $("#title").val(),
-            "created_at": vtime,
-            "content": simplemde.value(),
-            "tags": tags,
-            "draft": !publish,
-        }
-        console.log("POST: " + JSON.stringify(post));
-
-        $.ajax({
-            url: "/api/v1/posts",
-            type: "post",
-            dataType: "json",
-            contentType: "application/json",
-            success: function(json) {
-                var time = moment(json.created_at);
-                var slug = json.slug;
-                window.location.href="/posts/" + time.format("YYYY/MM/DD") + "/" + slug;
-            },
-            error: function(jqXHR, textStatus, errorThrown) {
-                alert("ERROR: " + textStatus + " " + errorThrown);
-            },
-            data: JSON.stringify(post)
-        });
-    }
-</script>
-
 <div class="container">
     {{ template "admin_nav.html" . }}
+    <div class="admin-panel">
     <h1>Dashboard</h1>
-    <p>Welcome to the admin dashboard.</p>
 
-    <h2>Recent Comments <small><a href="/admin/comments">View all &rarr;</a></small></h2>
-    {{ if .recent_comments }}
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Name</th>
-          <th>Email</th>
-          <th>Comment</th>
-          <th>Post</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .recent_comments }}
-        <tr id="comment-row-{{ .ID }}">
-          <td style="white-space:nowrap;">{{ .CreatedAt.Format "Jan 02, 2006 15:04" }}</td>
-          <td>{{ .Name }}</td>
-          <td>{{ .Email }}</td>
-          <td>{{ if gt (len .Content) 80 }}{{ slice .Content 0 80 }}...{{ else }}{{ .Content }}{{ end }}</td>
-          <td>
-            {{ $post := index $.comment_posts .PostID }}
-            {{ if $post.Title }}<a href="{{ $post.Permalink }}">{{ $post.Title }}</a>{{ else }}Post #{{ .PostID }}{{ end }}
-          </td>
-          <td><a href="javascript:void(0)" onclick="deleteComment({{ .ID }})" class="text-danger">[delete]</a></td>
-        </tr>
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-md-3">
+        <a href="/admin/posts" id="tile-posts" class="admin-tile">
+          <div class="card h-100"><div class="card-body">
+            <div class="text-muted small text-uppercase">Posts</div>
+            <div class="fs-1 fw-semibold lh-1 my-1">{{ .post_count }}</div>
+            <div class="text-muted small">{{ .draft_count }} draft{{ if ne .draft_count 1 }}s{{ end }}</div>
+          </div></div>
+        </a>
+      </div>
+      <div class="col-6 col-md-3">
+        <a href="/admin/pages" id="tile-pages" class="admin-tile">
+          <div class="card h-100"><div class="card-body">
+            <div class="text-muted small text-uppercase">Pages</div>
+            <div class="fs-1 fw-semibold lh-1 my-1">{{ .page_count }}</div>
+            <div class="text-muted small">&nbsp;</div>
+          </div></div>
+        </a>
+      </div>
+      <div class="col-6 col-md-3">
+        <a href="/admin/comments" id="tile-comments" class="admin-tile">
+          <div class="card h-100"><div class="card-body">
+            <div class="text-muted small text-uppercase">Comments</div>
+            <div class="fs-1 fw-semibold lh-1 my-1">{{ .comment_count }}</div>
+            <div class="text-muted small">&nbsp;</div>
+          </div></div>
+        </a>
+      </div>
+      <div class="col-6 col-md-3">
+        <a href="/admin/users" id="tile-users" class="admin-tile">
+          <div class="card h-100"><div class="card-body">
+            <div class="text-muted small text-uppercase">Users</div>
+            <div class="fs-1 fw-semibold lh-1 my-1">{{ .user_count }}</div>
+            <div class="text-muted small">&nbsp;</div>
+          </div></div>
+        </a>
+      </div>
+    </div>
+
+    <div class="row g-4">
+      <div class="col-lg-8">
+        <h2 class="fs-4">Recent Posts <small class="fs-6"><a href="/admin/posts">View all &rarr;</a></small></h2>
+        {{ if .recent_posts }}
+        <table class="table">
+          <tbody>
+            {{ range .recent_posts }}
+            <tr class="recent-post">
+              <td><a href="{{ .Adminlink }}">{{ .Title }}</a>{{ if .Draft }} <span class="badge text-bg-secondary">Draft</span>{{ end }}</td>
+              <td class="text-muted text-end" style="white-space:nowrap;">{{ .CreatedAt.Format "Jan 02, 2006" }}</td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+        {{ else }}
+        <p class="text-muted">No posts yet. <a href="/admin/newpost">Write your first post</a>.</p>
         {{ end }}
-      </tbody>
-    </table>
-    {{ else }}
-    <p>No comments yet.</p>
-    {{ end }}
 
+        <h2 class="fs-4 mt-4">Recent Comments <small class="fs-6"><a href="/admin/comments">View all &rarr;</a></small></h2>
+        {{ if .recent_comments }}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Comment</th>
+              <th>Post</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .recent_comments }}
+            <tr id="comment-row-{{ .ID }}">
+              <td style="white-space:nowrap;">{{ .CreatedAt.Format "Jan 02, 2006 15:04" }}</td>
+              <td>{{ .Name }}</td>
+              <td>{{ .Email }}</td>
+              <td>{{ if gt (len .Content) 80 }}{{ slice .Content 0 80 }}...{{ else }}{{ .Content }}{{ end }}</td>
+              <td>
+                {{ $post := index $.comment_posts .PostID }}
+                {{ if $post.Title }}<a href="{{ $post.Permalink }}">{{ $post.Title }}</a>{{ else }}Post #{{ .PostID }}{{ end }}
+              </td>
+              <td><a href="javascript:void(0)" onclick="deleteComment({{ .ID }})" class="text-danger">[delete]</a></td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+        {{ else }}
+        <p class="text-muted">No comments yet.</p>
+        {{ end }}
+      </div>
+
+      <div class="col-lg-4">
+        <h2 class="fs-4">Site</h2>
+        <div class="card">
+          <ul class="list-group list-group-flush">
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+              <span>Theme</span>
+              <a href="/admin/themes"><code>{{ .active_theme }}</code></a>
+            </li>
+            <li class="list-group-item">
+              <div class="d-flex justify-content-between align-items-center">
+                <span>Plugins</span>
+                <a href="/admin/plugins">Manage &rarr;</a>
+              </div>
+              {{ if .enabled_plugins }}
+              <ul class="list-unstyled mb-0 mt-1 small">
+                {{ range .enabled_plugins }}
+                <li><span class="badge text-bg-light">{{ .DisplayName }}</span></li>
+                {{ end }}
+              </ul>
+              {{ else }}
+              <div class="text-muted small mt-1">No plugins enabled.</div>
+              {{ end }}
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+              <span>goblog</span>
+              <span class="text-muted">{{ .version }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    </div> <!-- / admin-panel -->
 </div> <!-- / container -->
 
 <script type="text/javascript">
@@ -91,7 +143,7 @@
       } else {
         alert("Failed to delete comment.");
       }
-    });
+    }).catch(function() { alert("Failed to delete comment: could not reach the server."); });
   }
 </script>
 

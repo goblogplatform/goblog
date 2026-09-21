@@ -7,6 +7,7 @@ import (
 	"goblog/admin"
 	"goblog/auth"
 	"goblog/blog"
+	tinstaller "goblog/theme/installer"
 	"html/template"
 	"io"
 	"io/ioutil"
@@ -19,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -458,18 +460,26 @@ func TestCreatePost(t *testing.T) {
 		t.Fatalf("Expected to get status %d but instead got %d\n%s", http.StatusBadRequest, w.Code, body)
 	}
 
-	//get admin
+	//get admin: /admin is the dashboard's front door and redirects there
 	router.SetFuncMap(template.FuncMap{
 		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
 	})
 	router.LoadHTMLGlob("../themes/default/templates/*")
-	a.On("IsAdmin", mock.Anything).Return(true).Twice()
-	a.On("IsLoggedIn", mock.Anything).Return(true).Once()
+	a.On("IsAdmin", mock.Anything).Return(true).Once()
 	req, _ = http.NewRequest("GET", "/admin", bytes.NewBuffer(jsonValue))
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("Expected to get status %d but instead got %d\n", http.StatusOK, w.Code)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/admin/dashboard" {
+		t.Fatalf("Expected a %d redirect to /admin/dashboard but got %d %q\n", http.StatusFound, w.Code, w.Header().Get("Location"))
+	}
+
+	//get admin: not admin -> same 401 as every other admin page, no redirect
+	a.On("IsAdmin", mock.Anything).Return(false).Once()
+	req, _ = http.NewRequest("GET", "/admin", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Expected to get status %d for non-admin /admin but instead got %d\n", http.StatusUnauthorized, w.Code)
 	}
 
 	// Create a comment to test deletion
@@ -828,11 +838,7 @@ func TestAdminSettings_RendersCheckboxSetting(t *testing.T) {
 				gin.SetMode(gin.TestMode)
 				router := gin.New()
 				router.Use(sessions.Sessions("s", cookie.NewStore([]byte("test"))))
-				tmpl := template.Must(template.New("").Funcs(template.FuncMap{
-					"rawHTML": func(s string) template.HTML { return template.HTML(s) },
-				}).ParseGlob("../templates/shared/*.html"))
-				template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
-				router.SetHTMLTemplate(tmpl)
+				router.SetHTMLTemplate(themeTemplates(t, theme))
 				router.GET("/admin/settings", ad.AdminSettings)
 
 				a.On("IsAdmin", mock.Anything).Return(true)
@@ -875,11 +881,7 @@ func newUsersHarness(t *testing.T, theme string) (*gin.Engine, *Auth, *gorm.DB) 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(sessions.Sessions("s", cookie.NewStore([]byte("test"))))
-	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
-		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
-	}).ParseGlob("../templates/shared/*.html"))
-	template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
-	router.SetHTMLTemplate(tmpl)
+	router.SetHTMLTemplate(themeTemplates(t, theme))
 	router.GET("/admin/users", ad.AdminUsers)
 	router.POST("/api/v1/admins", ad.PromoteAdmin)
 	router.DELETE("/api/v1/admins", ad.DemoteAdmin)
@@ -1114,5 +1116,225 @@ func TestDemoteAdminAPI(t *testing.T) {
 	db.Model(&auth.AdminUser{}).Count(&n)
 	if n != 1 {
 		t.Fatalf("expected exactly one admin to remain, got %d", n)
+	}
+}
+
+// themeTemplates parses the templates the way theme.Load layers them: the
+// shared set, then default, then the named theme on top — so a theme that
+// ships no admin templates (minimal) renders default's.
+func themeTemplates(t *testing.T, theme string) *template.Template {
+	t.Helper()
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	if theme != "default" {
+		template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
+	}
+	return tmpl
+}
+
+// newAdminHarness wires every admin HTML route over a fresh sqlite DB with a
+// real auth.Auth for user management and the given theme's templates.
+func newAdminHarness(t *testing.T, theme string) (*gin.Engine, *Auth, *gorm.DB, *admin.Admin) {
+	t.Helper()
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &auth.AdminUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{})
+	realAuth := auth.New(db, "test")
+	a := &Auth{real: &realAuth}
+	b := blog.New(db, a, "test")
+	ad := admin.New(db, a, &b, "v9.9.9-test")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(sessions.Sessions("s", cookie.NewStore([]byte("test"))))
+	router.SetHTMLTemplate(themeTemplates(t, theme))
+	router.GET("/admin", ad.Admin)
+	router.GET("/admin/dashboard", ad.AdminDashboard)
+	router.GET("/admin/posts", ad.AdminPosts)
+	router.GET("/admin/newpost", ad.AdminNewPost)
+	router.GET("/admin/pages", ad.AdminPages)
+	router.GET("/admin/pages/:id", ad.AdminEditPage)
+	router.GET("/admin/comments", ad.AdminComments)
+	router.GET("/admin/users", ad.AdminUsers)
+	router.GET("/admin/post-types", ad.AdminPostTypes)
+	router.GET("/admin/post-types/:id", ad.AdminEditPostType)
+	router.GET("/admin/plugins", ad.AdminPlugins)
+	router.GET("/admin/themes", ad.AdminThemes)
+	router.GET("/admin/posts/:yyyy/:mm/:dd/:slug", ad.Post)
+	return router, a, db, &ad
+}
+
+func getHTML(t *testing.T, router *gin.Engine, path string) string {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", path, nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s: expected 200, got %d: %.300s", path, w.Code, w.Body.String())
+	}
+	return w.Body.String()
+}
+
+// TestAdminDashboard checks the dashboard summary (#596): count tiles that
+// link to their admin pages, the newest posts with draft badges linking to
+// their admin edit page, recent comments, and the Site panel.
+func TestAdminDashboard(t *testing.T) {
+	router, a, db, _ := newAdminHarness(t, "default")
+	a.On("IsAdmin", mock.Anything).Return(true)
+	a.On("IsLoggedIn", mock.Anything).Return(true)
+
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 1; i <= 7; i++ {
+		db.Create(&blog.Post{Title: "Dash Post " + strconv.Itoa(i), Slug: "dash-post-" + strconv.Itoa(i), Content: "x", Draft: i == 7, PostTypeID: pt.ID, CreatedAt: base.Add(time.Duration(i) * time.Hour)})
+	}
+	db.Create(&blog.Page{Title: "About", Slug: "about", Enabled: true})
+	db.Create(&blog.Comment{PostID: 1, Name: "Commenter", Content: "Nice post"})
+	seedUser(t, db, auth.ProviderGitHub, "1", "boss", true)
+	seedUser(t, db, auth.ProviderGitHub, "2", "plain", false)
+	db.Create(&blog.Setting{Key: "theme", Value: "minimal"})
+
+	body := getHTML(t, router, "/admin/dashboard")
+
+	tile := func(id string) string {
+		re := regexp.MustCompile(`(?s)<a[^>]*id="tile-` + id + `"[^>]*>.*?</a>`)
+		m := re.FindString(body)
+		if m == "" {
+			t.Fatalf("no %s tile", id)
+		}
+		return m
+	}
+	if m := tile("posts"); !strings.Contains(m, `href="/admin/posts"`) || !strings.Contains(m, ">6<") || !strings.Contains(m, "1 draft") {
+		t.Errorf("posts tile should show 6 published, 1 draft and link to /admin/posts: %s", m)
+	}
+	if m := tile("pages"); !strings.Contains(m, `href="/admin/pages"`) || !strings.Contains(m, ">1<") {
+		t.Errorf("pages tile: %s", m)
+	}
+	if m := tile("comments"); !strings.Contains(m, `href="/admin/comments"`) || !strings.Contains(m, ">1<") {
+		t.Errorf("comments tile: %s", m)
+	}
+	if m := tile("users"); !strings.Contains(m, `href="/admin/users"`) || !strings.Contains(m, ">2<") {
+		t.Errorf("users tile: %s", m)
+	}
+
+	// Recent posts: the latest five, newest first, linking to the admin editor.
+	rows := regexp.MustCompile(`(?s)<tr class="recent-post">.*?</tr>`).FindAllString(body, -1)
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 recent posts, got %d", len(rows))
+	}
+	if !strings.Contains(rows[0], "Dash Post 7") || !strings.Contains(rows[4], "Dash Post 3") {
+		t.Errorf("recent posts must be newest first and capped at five: %v", rows)
+	}
+	var seven blog.Post
+	db.Preload("PostType").Where("slug = ?", "dash-post-7").First(&seven)
+	if !strings.Contains(body, `href="`+seven.Adminlink()+`"`) {
+		t.Errorf("recent post must link to its admin page %s", seven.Adminlink())
+	}
+	if !strings.Contains(body, "Draft</span>") {
+		t.Errorf("the draft post must carry a Draft badge")
+	}
+	if !strings.Contains(body, "Nice post") || !strings.Contains(body, `id="comment-row-`) {
+		t.Errorf("expected the recent comments table")
+	}
+
+	// Site panel.
+	if !strings.Contains(body, `href="/admin/themes"`) || !strings.Contains(body, ">minimal<") {
+		t.Errorf("site panel must name the active theme and link to /admin/themes")
+	}
+	if !strings.Contains(body, `href="/admin/plugins"`) || !strings.Contains(body, "No plugins enabled") {
+		t.Errorf("site panel must list enabled plugins (none here) and link to /admin/plugins")
+	}
+	if !strings.Contains(body, "v9.9.9-test") {
+		t.Errorf("site panel must show the goblog version")
+	}
+	if strings.Contains(body, "Welcome to the admin dashboard") {
+		t.Errorf("the placeholder welcome text should be gone")
+	}
+	if !strings.Contains(body, `class="admin-panel"`) {
+		t.Errorf("admin content must sit in the opaque admin panel")
+	}
+}
+
+// TestAdminDashboard_ActiveThemeFromInstaller: when the theme installer is
+// wired, its view of the active theme wins over the stored setting.
+func TestAdminDashboard_ActiveThemeFromInstaller(t *testing.T) {
+	router, a, db, ad := newAdminHarness(t, "default")
+	a.On("IsAdmin", mock.Anything).Return(true)
+	a.On("IsLoggedIn", mock.Anything).Return(true)
+	db.Create(&blog.Setting{Key: "theme", Value: "stale"})
+	ad.Themes = &tinstaller.Installer{ActiveTheme: func() string { return "ocean" }}
+	body := getHTML(t, router, "/admin/dashboard")
+	if !strings.Contains(body, ">ocean<") || strings.Contains(body, ">stale<") {
+		t.Errorf("expected the installer's active theme")
+	}
+}
+
+// TestAdminEmptyStates: every list page says so when it has nothing to list,
+// with a call to action where one exists (#596).
+func TestAdminEmptyStates(t *testing.T) {
+	for _, theme := range []string{"default", "minimal"} {
+		t.Run(theme, func(t *testing.T) {
+			router, a, _, _ := newAdminHarness(t, theme)
+			a.On("IsAdmin", mock.Anything).Return(true)
+			a.On("IsLoggedIn", mock.Anything).Return(true)
+			cases := map[string][]string{
+				"/admin/posts":      {"No posts yet", `href="/admin/newpost"`},
+				"/admin/pages":      {"No pages yet", "createPage()"},
+				"/admin/post-types": {"No post types yet"},
+				"/admin/comments":   {"No comments yet"},
+				"/admin/users":      {"No users yet"},
+				"/admin/dashboard":  {"No posts yet", "No comments yet"},
+			}
+			for path, wants := range cases {
+				body := getHTML(t, router, path)
+				for _, want := range wants {
+					if !strings.Contains(body, want) {
+						t.Errorf("%s: missing %q", path, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestAdminPages_RenderInPanel: every admin page wraps its content in the
+// opaque panel below the nav, in default and in a theme that ships no admin
+// templates of its own (minimal falls back to default's).
+func TestAdminPages_RenderInPanel(t *testing.T) {
+	for _, theme := range []string{"default", "minimal"} {
+		t.Run(theme, func(t *testing.T) {
+			router, a, db, _ := newAdminHarness(t, theme)
+			a.On("IsAdmin", mock.Anything).Return(true)
+			a.On("IsLoggedIn", mock.Anything).Return(true)
+			pt := blog.PostType{Name: "Post", Slug: "posts"}
+			db.Create(&pt)
+			post := blog.Post{Title: "Panel Post", Slug: "panel-post", Content: "x", PostTypeID: pt.ID}
+			db.Create(&post)
+			db.Preload("PostType").First(&post, post.ID)
+			page := blog.Page{Title: "P", Slug: "p"}
+			db.Create(&page)
+			for _, path := range []string{
+				"/admin/dashboard", "/admin/posts", "/admin/newpost", "/admin/pages",
+				"/admin/pages/" + strconv.Itoa(int(page.ID)), "/admin/comments", "/admin/users",
+				"/admin/post-types", "/admin/post-types/" + strconv.Itoa(int(pt.ID)),
+				"/admin/plugins", "/admin/themes", post.Adminlink(),
+			} {
+				body := getHTML(t, router, path)
+				if !strings.Contains(body, `class="admin-panel"`) {
+					t.Errorf("%s: content is not wrapped in .admin-panel", path)
+				}
+				if !strings.Contains(body, `href="/css/admin.css"`) {
+					t.Errorf("%s: admin.css is not linked", path)
+				}
+				if !strings.Contains(body, `class="nav-scroller`) {
+					t.Errorf("%s: admin nav missing", path)
+				}
+				if regexp.MustCompile(`class="[^"]*\bh[1-6]\b[^"]*"`).MatchString(body) {
+					t.Errorf("%s: Tachyons .h1-.h6 class in use (it sets height, not type size)", path)
+				}
+			}
+		})
 	}
 }
