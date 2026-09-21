@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -253,5 +254,141 @@ func TestAdminPluginsPage(t *testing.T) {
 	}
 	if !strings.Contains(body, "data-action=") {
 		t.Errorf("page missing data-action= driven controls")
+	}
+	if !strings.Contains(body, `href="/admin/plugins/' + esc(safeName(p.name)) + '">Settings</a>`) {
+		t.Errorf("installed rows must link Settings to the plugin's own page")
+	}
+}
+
+// settingsPlugin is a compiled-in plugin with a text, a textarea and a
+// password setting plus the enabled switch, for the per-plugin page.
+type settingsPlugin struct{ plugin.BasePlugin }
+
+func (settingsPlugin) Name() string        { return "hello-world" }
+func (settingsPlugin) DisplayName() string { return "Hello World" }
+func (settingsPlugin) Version() string     { return "1.0.0" }
+func (settingsPlugin) Settings() []plugin.SettingDefinition {
+	return []plugin.SettingDefinition{
+		{Key: "enabled", Type: "text", DefaultValue: "true", Label: "Enabled"},
+		{Key: "message", Type: "text", DefaultValue: "hi", Label: "Message", Description: "What to say."},
+		{Key: "notes", Type: "textarea", DefaultValue: "", Label: "Notes"},
+		{Key: "api_key", Type: "password", DefaultValue: "", Label: "API key"},
+	}
+}
+
+// barePlugin declares no settings at all.
+type barePlugin struct{ plugin.BasePlugin }
+
+func (barePlugin) Name() string        { return "bare" }
+func (barePlugin) DisplayName() string { return "Bare" }
+func (barePlugin) Version() string     { return "0.0.1" }
+
+// pluginPageHarness registers settingsPlugin and barePlugin and the
+// per-plugin settings route with the default theme's templates.
+func pluginPageHarness(t *testing.T) *pluginsHarness {
+	t.Helper()
+	h := newPluginsHarness(t)
+	for _, p := range []plugin.Plugin{settingsPlugin{}, barePlugin{}} {
+		if err := h.inst.Registry.RegisterDynamic(p, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.inst.Registry.InitPlugin(p.Name()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	h.router.SetHTMLTemplate(tmpl)
+	h.router.GET("/admin/plugins/:name", func(c *gin.Context) { adminFromHarness(h).AdminPluginSettings(c) })
+	return h
+}
+
+func TestAdminPluginSettingsPage_NonAdmin(t *testing.T) {
+	h := pluginPageHarness(t)
+	h.auth.On("IsAdmin", mock.Anything).Return(false)
+	if w := h.do("GET", "/admin/plugins/hello-world", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+// TestAdminPluginSettingsPage_Renders checks the page for a registered
+// plugin: its name, the enabled switch and one input per setting using the
+// <name>.<key> ids and JS hooks admin-script.js expects, with the password
+// rendered blank so the stored secret never reaches the page.
+func TestAdminPluginSettingsPage_Renders(t *testing.T) {
+	h := pluginPageHarness(t)
+	h.auth.On("IsAdmin", mock.Anything).Return(true)
+	h.auth.On("IsLoggedIn", mock.Anything).Return(true)
+	h.inst.Registry.UpdateSetting("hello-world", "api_key", "s3cret")
+	h.inst.Registry.UpdateSetting("hello-world", "message", "howdy")
+
+	w := h.do("GET", "/admin/plugins/hello-world", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("page: %d %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		`class="admin-panel"`, `href="/admin/plugins">&larr; Back to Plugins</a>`, "<h1>Hello World", "(hello-world)",
+		`id="hello-world.enabled" name="hello-world.enabled" data-plugin="hello-world" checked`, `onchange="togglePluginEnabled(this);"`,
+		`<form class="plugin-settings-form" data-plugin="hello-world">`, `onclick="updatePluginSettings(this);"`,
+		`id="hello-world.message" name="hello-world.message" value="howdy"`, "What to say.",
+		`<textarea id="hello-world.notes" name="hello-world.notes"`,
+		`type="password" id="hello-world.api_key" name="hello-world.api_key" value=""`, "leave blank to keep",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "s3cret") {
+		t.Errorf("page leaks the stored password")
+	}
+	if n := strings.Count(body, `name="hello-world.enabled"`); n != 1 {
+		t.Errorf("enabled switch rendered %d times, want once (it is not a form field)", n)
+	}
+	if strings.Contains(body, "no settings beyond") {
+		t.Errorf("page claims the plugin has no settings")
+	}
+	if m := regexp.MustCompile(`class="h[1-6]"`).FindString(body); m != "" {
+		t.Errorf("page uses Tachyons-clashing %s", m)
+	}
+}
+
+// TestAdminPluginSettingsPage_NoSettings checks a plugin that declares no
+// settings still gets a page with the enabled switch.
+func TestAdminPluginSettingsPage_NoSettings(t *testing.T) {
+	h := pluginPageHarness(t)
+	h.auth.On("IsAdmin", mock.Anything).Return(true)
+	h.auth.On("IsLoggedIn", mock.Anything).Return(true)
+	w := h.do("GET", "/admin/plugins/bare", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("page: %d %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"<h1>Bare", `name="bare.enabled" data-plugin="bare"`, "no settings beyond"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	if strings.Contains(body, `name="bare.enabled" data-plugin="bare" checked`) {
+		t.Errorf("a plugin never enabled renders its switch on")
+	}
+}
+
+// TestAdminPluginSettingsPage_NotFound checks an unregistered name, and a
+// name that breaks the plugin slug rule, both get the admin 404 page.
+func TestAdminPluginSettingsPage_NotFound(t *testing.T) {
+	h := pluginPageHarness(t)
+	h.auth.On("IsAdmin", mock.Anything).Return(true)
+	h.auth.On("IsLoggedIn", mock.Anything).Return(true)
+	for _, name := range []string{"nope", "Hello-World", "hello_world", "..", "a%20b"} {
+		w := h.do("GET", "/admin/plugins/"+name, "")
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: expected 404, got %d", name, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "Plugin Not Found") {
+			t.Errorf("%s: expected the error page, got %.200s", name, w.Body.String())
+		}
 	}
 }

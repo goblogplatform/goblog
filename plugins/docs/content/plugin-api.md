@@ -26,7 +26,7 @@ Under `validate-plugin` the four load-time exports run with no store and no netw
 
 **Output:** `{"name": "…", "display_name": "…", "version": "…"}`. `name` and `version` are required — a module without both is rejected with `identity must include name and version`. `name` must match the manifest's `name` (it keys the plugin's settings and store), and `version` must match the release tag without the `v`, or the directory rejects the release.
 
-**What goblog does:** `name` becomes the plugin's identifier everywhere (settings, store, admin, log lines); `display_name` labels its settings group under **Admin → Settings**.
+**What goblog does:** `name` becomes the plugin's identifier everywhere (settings, store, admin, log lines); `display_name` titles its settings page under **Admin → Plugins**.
 
 ```go
 //go:wasmexport identity
@@ -51,10 +51,10 @@ func identity() int32 {
 
 **What goblog does:** at startup and after an install or update, every declared key that has no stored value is seeded with its `default`. From then on the stored values are what the admin form edits and what reaches every hook, job and `on_init` call as `settings`. A key you stop declaring keeps its stored value but is no longer shown.
 
-The key `enabled` is special: it is the on/off switch in the plugin's card header under **Admin → Settings**, stored as `true` or `false`. Its effect:
+The key `enabled` is special: it is the on/off switch on the plugin's settings page (**Admin → Plugins → Settings**, also in the Installed list there), stored as `true` or `false`. Its effect:
 
 - **Template hooks and jobs:** when you declare `enabled`, goblog skips `template_head`, `template_footer`, `template_data` and `run_job` unless the stored value is `true`. Without an `enabled` setting they always run.
-- **Pages:** a page is served, and listed in the nav, only while the owning plugin's stored `enabled` is `true` — with or without a declaration. A plugin that exports `pages` should therefore declare `enabled` (with `default` `true` if it should work out of the box) — a plugin with no settings at all has no card, so no switch — or its pages answer *Page Not Available*.
+- **Pages:** a page is served, and listed in the nav, only while the owning plugin's stored `enabled` is `true` — with or without a declaration. A plugin that exports `pages` should therefore declare `enabled` (with `default` `true` if it should work out of the box) or its pages answer *Page Not Available* until an admin flips the switch — every installed plugin has one on its Admin → Plugins settings page, declared settings or not.
 
 ```go
 //go:wasmexport settings

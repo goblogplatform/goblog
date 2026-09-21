@@ -13,7 +13,7 @@ These pages tell you how to write and publish each. If you are here for a specif
 
 A plugin can:
 
-- declare **settings**, which appear under **Admin → Settings** grouped by plugin and reach every call as strings;
+- declare **settings**, which appear on the plugin's own page under **Admin → Plugins** and reach every call as strings;
 - inject HTML into `<head>` and before `</body>` on every rendered page;
 - own **pages** of its own: a page type with a slug, an optional nav entry, and everything under that slug;
 - run **scheduled jobs** at an interval it chooses;

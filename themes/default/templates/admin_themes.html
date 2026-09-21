@@ -1,13 +1,14 @@
 {{ template "header.html" .}}
 <div class="container">
     {{ template "admin_nav.html" . }}
+    <div class="admin-panel">
     <h1>Themes</h1>
     <p class="text-muted">Browse the <a href="https://www.goblog.live/themes" target="_blank" rel="noopener">theme directory</a> and install themes with one click. Installed themes live under <code>themes/installed/</code>. Themes are code that renders every page, including this admin — install only themes you trust; the directory checks that a theme is well-formed, not that it is benign.</p>
 
     <div id="themes-error" class="alert alert-danger" role="alert" hidden></div>
     <div id="themes-disabled" class="alert alert-warning" role="alert" hidden></div>
     <div id="themes-index-error" class="alert alert-warning" role="alert" hidden>
-        <span id="themes-index-error-text"></span> — directory URL is set under <a href="/admin/settings">Settings → theme_directory_url</a>.
+        <span id="themes-index-error-text"></span> — directory URL is set under <a href="/admin/settings#directories">Settings → Directories</a>.
         <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="refreshDirectory()">Refresh</button>
     </div>
 
@@ -17,10 +18,7 @@
     </ul>
     <div class="tab-content">
         <div class="tab-pane fade show active" id="pane-installed" role="tabpanel">
-            <table class="table align-middle">
-                <thead><tr><th>Theme</th><th>Version</th><th>Type</th><th>Active</th><th></th></tr></thead>
-                <tbody id="installed-rows"><tr><td colspan="5" class="text-muted">Loading…</td></tr></tbody>
-            </table>
+            <div id="installed-cards" class="row g-3"><div class="col-12 text-muted">Loading…</div></div>
         </div>
         <div class="tab-pane fade" id="pane-browse" role="tabpanel">
             <div class="row g-2 mb-3">
@@ -37,6 +35,7 @@
             <div id="browse-cards" class="row g-3"><div class="col-12 text-muted">Loading…</div></div>
         </div>
     </div>
+    </div> <!-- / admin-panel -->
 </div>
 
 <script>
@@ -82,29 +81,40 @@
   }
 
   function themeTypeBadge(t) {
-    return t.builtin ? '<span class="badge text-bg-light">built-in</span>' : '<span class="badge text-bg-secondary">installed</span>';
+    return t.builtin ? '<span class="badge text-bg-light">built-in</span>' : '<span class="badge text-bg-secondary">directory</span>';
   }
 
+  // Installed themes render as the same card grid as Browse. The screenshot
+  // comes from the directory entry (Status() copies it onto the installed
+  // row); built-in and hand-installed themes have none and get a neutral
+  // tile carrying the display name instead.
   function renderInstalled(st) {
-    var rows = st.installed.map(function (t) {
-      var activeCell = t.active
-        ? '<span class="text-success" aria-label="Active theme">✓</span>'
-        : '<button type="button" class="btn btn-sm btn-outline-primary" data-action="activate" data-name="' + esc(t.name) + '">Activate</button>';
+    var cards = st.installed.map(function (t) {
+      var shot = httpURL(t.screenshot_url);
+      var media = shot
+        ? '<img src="' + esc(shot) + '" class="card-img-top" alt="Screenshot of ' + esc(t.display_name) + '" loading="lazy">'
+        : '<div class="theme-placeholder" aria-hidden="true">' + esc(t.display_name) + '</div>';
       var actions = "";
+      if (!t.active) {
+        actions += '<button type="button" class="btn btn-sm btn-outline-primary me-1" data-action="activate" data-name="' + esc(t.name) + '">Activate</button>';
+      }
       if (t.update_available) {
         actions += '<button type="button" class="btn btn-sm btn-primary me-1" data-action="update" data-name="' + esc(t.name) + '">Update to v' + esc(t.latest_version) + '</button>';
       }
       if (!t.builtin && !t.active) {
         actions += '<button type="button" class="btn btn-sm btn-outline-danger me-1" data-action="uninstall" data-name="' + esc(t.name) + '">Uninstall</button>';
       }
-      return '<tr id="installed-' + esc(t.name) + '">' +
-        '<td><strong>' + esc(t.display_name) + '</strong><br><small class="text-muted">' + esc(t.name) + '</small></td>' +
-        '<td>' + (t.version ? "v" + esc(t.version) : "") + '</td>' +
-        '<td>' + themeTypeBadge(t) + '</td>' +
-        '<td>' + activeCell + '</td>' +
-        '<td class="text-end">' + actions + '<div class="small text-danger row-error"></div></td></tr>';
+      var activeBadge = t.active ? ' <span class="badge text-bg-success" aria-label="Active theme">Active</span>' : '';
+      return '<div class="col-md-6"><div class="card h-100" id="installed-' + esc(t.name) + '">' +
+        media +
+        '<div class="card-body">' +
+        '<h5 class="card-title mb-1">' + esc(t.display_name) + (t.version ? ' <small class="text-muted">v' + esc(t.version) + '</small>' : '') + '</h5>' +
+        '<p class="mb-0 small text-muted">' + esc(t.name) + ' · ' + themeTypeBadge(t) + activeBadge + '</p>' +
+        '</div><div class="card-footer d-flex justify-content-end align-items-center">' +
+        (actions || '<span class="small text-muted">This is the active theme.</span>') +
+        '</div><div class="small text-danger px-3 pb-2 row-error"></div></div></div>';
     });
-    document.getElementById("installed-rows").innerHTML = rows.join("") || '<tr><td colspan="5" class="text-muted">No themes found.</td></tr>';
+    document.getElementById("installed-cards").innerHTML = cards.join("") || '<div class="col-12 text-muted">No themes found.</div>';
   }
 
   function renderBrowse(list) {
@@ -192,7 +202,7 @@
   // every refresh, so bind once on the stable containers instead of via
   // inline handlers carrying directory data (name/URL strings) into an HTML
   // attribute that the browser would entity-decode before evaluating.
-  document.getElementById("installed-rows").addEventListener("click", function (e) {
+  document.getElementById("installed-cards").addEventListener("click", function (e) {
     var btn = e.target.closest("[data-action]");
     if (btn) { themeAction(btn.dataset.action, btn.dataset.name, btn); }
   });

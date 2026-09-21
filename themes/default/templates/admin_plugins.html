@@ -1,6 +1,7 @@
 {{ template "header.html" .}}
 <div class="container">
     {{ template "admin_nav.html" . }}
+    <div class="admin-panel">
     <h1>Plugins</h1>
     <p class="text-muted">Browse the <a href="https://www.goblog.live/plugins" target="_blank" rel="noopener">plugin directory</a> and install plugins with one click. Directory plugins run sandboxed in WebAssembly and can add pages, background jobs, settings and head/footer HTML. They can only reach the hosts they declare.</p>
 
@@ -9,7 +10,7 @@
         WebAssembly plugins are disabled (<code>ENABLE_WASM_PLUGINS=false</code>). Remove that setting (WASM is on by default) to install plugins from the directory. You can still browse it.
     </div>
     <div id="plugins-index-error" class="alert alert-warning" role="alert" hidden>
-        <span id="plugins-index-error-text"></span> — directory URL is set under <a href="/admin/settings">Settings → plugin_directory_url</a>.
+        <span id="plugins-index-error-text"></span> — directory URL is set under <a href="/admin/settings#directories">Settings → Directories</a>.
         <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="refreshDirectory()">Refresh</button>
     </div>
     <div id="plugins-trust" class="alert alert-info alert-dismissible" role="alert">
@@ -64,6 +65,7 @@
             </table>
         </div>
     </div>
+    </div> <!-- / admin-panel -->
 </div>
 
 <script>
@@ -145,7 +147,7 @@
       if (p.dynamic) {
         actions += '<button type="button" class="btn btn-sm btn-outline-danger me-1" data-action="uninstall" data-name="' + esc(p.name) + '">Uninstall</button>';
       }
-      actions += '<a class="btn btn-sm btn-link" href="/admin/settings#plugin-body-' + esc(p.name) + '">Settings</a>';
+      if (safeName(p.name)) { actions += '<a class="btn btn-sm btn-link" href="/admin/plugins/' + esc(safeName(p.name)) + '">Settings</a>'; }
       return '<tr id="installed-' + esc(p.name) + '">' +
         '<td><strong>' + esc(p.display_name) + '</strong><br><small class="text-muted">' + esc(p.name) + '</small></td>' +
         '<td>v' + esc(p.version) + '</td>' +
@@ -331,12 +333,16 @@
     if (action === "readme") {
       var box = container.querySelector("[data-readme]");
       if (!box.hidden) { box.hidden = true; btn.textContent = "Show README"; return; }
+      // The README is fetched once per card; after that the toggle only
+      // shows and hides what is already in the box.
+      if (box.dataset.loaded) { box.hidden = false; btn.textContent = "Hide README"; return; }
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading…';
       api("GET", "/api/v1/directory/repos/" + encodeURIComponent(id)).then(function (data) {
         // readme_html is GitHub-rendered and sanitized, the same HTML the
         // public directory page shows; it is the one field inserted as-is.
         box.innerHTML = (data.detail && data.detail.readme_html) || "<em>No README.</em>";
+        box.dataset.loaded = "1";
         box.hidden = false; btn.disabled = false; btn.textContent = "Hide README";
       }).catch(function (e) {
         btn.disabled = false; btn.textContent = "Show README";
@@ -354,7 +360,12 @@
     btn.disabled = true;
     var label = btn.innerHTML;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> ' + label;
-    function restore() { btn.disabled = false; btn.innerHTML = label; }
+    // A successful action re-renders the lists, which replaces this button
+    // with a fresh one (or drops it: an approved card moves to Listed), so
+    // restoring only matters while the button is still in the page — after
+    // a failed action, or when loadDirectory() swallowed a fetch error and
+    // left the old markup in place.
+    function restore() { if (btn.isConnected) { btn.disabled = false; btn.innerHTML = label; } }
     var p = action === "delist"
       ? api("DELETE", "/api/v1/directory/repos/" + encodeURIComponent(id))
       : api("POST", "/api/v1/directory/repos/" + encodeURIComponent(id) + "/" + action, body);

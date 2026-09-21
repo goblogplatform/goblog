@@ -67,7 +67,7 @@ Every template is executed with a map, so keys are reached as `.settings`, `.pos
 | `title` | The page title default's head uses when there is no `post`. |
 | `version` | The running goblog version, for the footer. |
 | `recent` | The newest published post, for the "most recent" block in default's footer. |
-| `admin_page` | True on admin renders; default's head loads the editor scripts when it is set. |
+| `admin_page` | True on admin renders; default's head loads the editor scripts and, after your `goblog.css`, goblog's own `/css/admin.css`, which puts the admin nav and content on an opaque `.admin-panel` surface — so admin pages read on a photo or dark backdrop without the theme doing anything. |
 | `plugin_head_html`, `plugin_footer_html`, `plugins` | The HTML installed plugins inject and their per-template data, keyed by plugin name. Added to every **public** render; admin pages are rendered without them. |
 
 Beyond those, each template gets its own data. This is the contract of the running version, read off the render calls in `blog/blog.go` and `admin/`; a release can add keys, and removals are noted in the changelog.
@@ -86,7 +86,7 @@ Beyond those, each template gets its own data. This is the contract of the runni
 | `tag.html` | `/tag/<name>` | `posts`, `tag` |
 | `login.html` | `/login` | `client_id`, `next`, `email_login_enabled` |
 | `error.html` | 404s, a disabled or uninstalled plugin's page, unauthorized | `error`, `description` |
-| `admin*.html` | `/admin/…` | per page: `posts`, `post_types`, `pages`, `comments`, `users`, `themes`, `plugin_settings`, … — read `admin/admin.go` before overriding one |
+| `admin*.html` | `/admin/…` | per page: `posts`, `post_types`, `pages`, `comments`, `users`, `themes`, `setting_groups`, `plugin`, … — read `admin/admin.go` and `admin/plugins.go` before overriding one |
 | `wizard_*.html` | the install wizard, before there is a database | only `version` and `title` (and `errors`) — none of the common keys exist yet |
 
 Six templates in default — `about.html`, `archives.html`, `posts.html`, `presentations.html`, `projects.html`, `tags.html` — are left over from before pages were configurable; no route renders them today, so there is nothing to override. Post, page, tag and setting objects are goblog's own types: `.post.Title`, `.post.Permalink`, `.post.Tags`, `.post.CreatedAt.Format "Jan 02, 2006"`, `.page.HasHero`, `.page.HeroURL`. Default's templates show what each has; the Go types are in `blog/`.
@@ -97,7 +97,7 @@ Themes are looked up in two roots, built-in first: `themes/` in the working dire
 
 Then activate it, either way:
 
-- **Admin → Settings → theme** lists every theme in both roots; save the form.
+- **Admin → Settings → Appearance → Theme** lists every theme in both roots; save the form.
 - **Admin → Themes** lists it under **Installed** with an *installed* badge — the display name comes from your `goblog-theme.json` — next to the built-ins. Press **Activate**.
 
 Both write the `theme` setting and reload the template set at once, without a restart. Edits to your files are not watched: after changing a template, save the setting again (or activate another theme and back) to re-parse. Static files are read from disk on every request, so CSS changes show on reload.

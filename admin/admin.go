@@ -48,11 +48,12 @@ func New(db *gorm.DB, auth auth.IAuth, b *blog.Blog, version string) Admin {
 // ListThemes returns every theme goblog can activate: built-in and installed.
 func ListThemes() []string { return theme.List() }
 
-// getPluginSettings retrieves plugin settings groups from the registry on the Gin context.
-func (a *Admin) getPluginSettings(c *gin.Context) interface{} {
+// pluginRegistry returns the plugin registry the plugin middleware put on
+// the Gin context, or nil when none is wired.
+func pluginRegistry(c *gin.Context) *gplugin.Registry {
 	if reg, exists := c.Get("plugin_registry"); exists {
 		if r, ok := reg.(*gplugin.Registry); ok {
-			return r.GetAllSettings()
+			return r
 		}
 	}
 	return nil
@@ -588,24 +589,55 @@ func (a *Admin) GetSettings(c *gin.Context) {
 
 //////HTML API///////
 
-// Admin is the admin dashboard of the website
+// Admin sends /admin to the dashboard. It used to render admin.html, an
+// "all posts + create post" mashup that duplicated two other pages.
 func (a *Admin) Admin(c *gin.Context) {
 	if !a.auth.IsAdmin(c) {
 		c.JSON(http.StatusUnauthorized, "Not Authorized")
 		return
 	}
-	c.HTML(http.StatusOK, "admin.html", gin.H{
-		"posts":      a.b.GetPosts(true),
-		"logged_in":  a.auth.IsLoggedIn(c),
-		"is_admin":   a.auth.IsAdmin(c),
-		"version":    a.version,
-		"recent":     a.b.GetLatest(),
-		"admin_page": true,
-		"settings":   a.b.GetSettings(),
-		"nav_pages":  a.b.GetNavPages(),
-	})
+	c.Redirect(http.StatusFound, "/admin/dashboard")
 }
 
+// pluginSummary is one enabled plugin as the dashboard's Site panel lists it.
+type pluginSummary struct {
+	Name        string
+	DisplayName string
+}
+
+// enabledPlugins lists the registered plugins that are switched on, in
+// registration order, from the registry on the Gin context (nil when the
+// middleware is not installed, e.g. in tests).
+func (a *Admin) enabledPlugins(c *gin.Context) []pluginSummary {
+	var out []pluginSummary
+	if reg, exists := c.Get("plugin_registry"); exists {
+		if r, ok := reg.(*gplugin.Registry); ok {
+			for _, p := range r.Plugins() {
+				if r.IsPluginEnabled(p.Name()) {
+					out = append(out, pluginSummary{Name: p.Name(), DisplayName: p.DisplayName()})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// activeTheme is the theme rendering this request: the installer's view when
+// it is wired (it tracks activations without a restart), else the setting.
+func (a *Admin) activeTheme() string {
+	if a.Themes != nil && a.Themes.ActiveTheme != nil {
+		return a.Themes.ActiveTheme()
+	}
+	if t, ok := a.b.GetSettings()["theme"]; ok && t.Value != "" {
+		return t.Value
+	}
+	return theme.DefaultName
+}
+
+const dashboardRecentPosts = 5
+
+// AdminDashboard renders the admin landing page: content counts, the newest
+// posts and comments, and what the site is running (theme, plugins, version).
 func (a *Admin) AdminDashboard(c *gin.Context) {
 	if !a.auth.IsAdmin(c) {
 		c.JSON(http.StatusUnauthorized, "Not Authorized")
@@ -617,8 +649,13 @@ func (a *Admin) AdminDashboard(c *gin.Context) {
 		postIDs = append(postIDs, comment.PostID)
 	}
 	commentPosts := a.b.GetPostsByIDs(postIDs)
+	published, drafts := a.b.CountPosts()
+	// ListUsers already counts; one row is the cheapest page that reports it.
+	_, userCount, err := a.auth.ListUsers(0, 1)
+	if err != nil {
+		log.Println("ERROR COUNTING USERS: ", err)
+	}
 	c.HTML(http.StatusOK, "admin_dashboard.html", gin.H{
-		"posts":           a.b.GetPosts(true),
 		"logged_in":       a.auth.IsLoggedIn(c),
 		"is_admin":        a.auth.IsAdmin(c),
 		"version":         a.version,
@@ -628,6 +665,14 @@ func (a *Admin) AdminDashboard(c *gin.Context) {
 		"recent_comments": recentComments,
 		"comment_posts":   commentPosts,
 		"nav_pages":       a.b.GetNavPages(),
+		"post_count":      published,
+		"draft_count":     drafts,
+		"page_count":      a.b.CountPages(),
+		"comment_count":   a.b.CountComments(),
+		"user_count":      userCount,
+		"recent_posts":    a.b.GetRecentPosts(dashboardRecentPosts),
+		"active_theme":    a.activeTheme(),
+		"enabled_plugins": a.enabledPlugins(c),
 	})
 }
 
@@ -672,17 +717,18 @@ func (a *Admin) AdminSettings(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, "Not Authorized")
 		return
 	}
+	settings := a.b.GetSettings()
 	c.HTML(http.StatusOK, "admin_settings.html", gin.H{
-		"posts":           a.b.GetPosts(true),
-		"logged_in":       a.auth.IsLoggedIn(c),
-		"is_admin":        a.auth.IsAdmin(c),
-		"version":         a.version,
-		"recent":          a.b.GetLatest(),
-		"admin_page":      true,
-		"settings":        a.b.GetSettings(),
-		"nav_pages":       a.b.GetNavPages(),
-		"themes":          ListThemes(),
-		"plugin_settings": a.getPluginSettings(c),
+		"posts":          a.b.GetPosts(true),
+		"logged_in":      a.auth.IsLoggedIn(c),
+		"is_admin":       a.auth.IsAdmin(c),
+		"version":        a.version,
+		"recent":         a.b.GetLatest(),
+		"admin_page":     true,
+		"settings":       settings,
+		"setting_groups": GroupSettings(settings),
+		"nav_pages":      a.b.GetNavPages(),
+		"themes":         ListThemes(),
 	})
 }
 

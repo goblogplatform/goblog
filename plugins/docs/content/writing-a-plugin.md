@@ -77,7 +77,7 @@ func outputJSON(v any) int32 {
 }
 ```
 
-`settings` declares what appears under **Admin → Settings** for this plugin. Each entry has a `key`, a `type` (`text` for a single-line input, `textarea` for a multi-line one, or `password` for an input that renders empty and keeps the stored value when saved blank — see [settings](/docs/plugin-api#settings); there is no checkbox type, so booleans are the strings `true` and `false`; the `enabled` key alone gets the card's on/off switch), a `default`, a `label` and a `description`. A setting named `enabled` is special: when you declare one, goblog does not call your template hooks or jobs unless its value is `true`. Hello checks it again anyway, which costs nothing and keeps the module correct on its own.
+`settings` declares what appears on the plugin's settings page under **Admin → Plugins**. Each entry has a `key`, a `type` (`text` for a single-line input, `textarea` for a multi-line one, or `password` for an input that renders empty and keeps the stored value when saved blank — see [settings](/docs/plugin-api#settings); there is no checkbox type, so booleans are the strings `true` and `false`; the `enabled` key alone gets the page's on/off switch), a `default`, a `label` and a `description`. A setting named `enabled` is special: when you declare one, goblog does not call your template hooks or jobs unless its value is `true`. Hello checks it again anyway, which costs nothing and keeps the module correct on its own.
 
 ```go
 //go:wasmexport settings
@@ -168,7 +168,7 @@ If the plugin needs the network, write a sidecar with the same base name declari
 
 as `plugins/wasm/hello.json`. (The installer writes this file for you when you install from the directory; by hand, you write it.) In Docker, bind-mount `plugins/wasm/` so the files survive a restart.
 
-Restart goblog. The plugin appears under **Admin → Plugins** and its settings under **Admin → Settings → Hello**. Hello's `enabled` setting defaults to `true`, so the greeting is already at the bottom of every page — the last thing before `</body>`, after the theme's footer. Change `message` and reload to see it update; set `enabled` to `false` to hide it.
+Restart goblog. The plugin appears under **Admin → Plugins** and its settings under **Admin → Plugins → Hello → Settings**. Hello's `enabled` setting defaults to `true`, so the greeting is already at the bottom of every page — the last thing before `</body>`, after the theme's footer. Change `message` and reload to see it update; set `enabled` to `false` to hide it.
 
 ## Next
 

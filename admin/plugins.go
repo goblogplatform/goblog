@@ -7,7 +7,9 @@ import (
 	"sort"
 	"strings"
 
+	gplugin "goblog/plugin"
 	"goblog/plugin/installer"
+	"goblog/plugins/directory"
 
 	"github.com/gin-gonic/gin"
 )
@@ -172,6 +174,43 @@ func (a *Admin) RefreshPluginDirectory(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Directory refreshed"})
+}
+
+// AdminPluginSettings renders one installed plugin's settings page:
+// GET /admin/plugins/:name. The name must follow the plugin name rule and
+// be registered; anything else is the admin 404 page.
+func (a *Admin) AdminPluginSettings(c *gin.Context) {
+	if !a.auth.IsAdmin(c) {
+		c.JSON(http.StatusUnauthorized, "Not Authorized")
+		return
+	}
+	name := c.Param("name")
+	var group gplugin.PluginSettingsGroup
+	found := false
+	if reg := pluginRegistry(c); reg != nil && directory.ValidName(name) {
+		group, found = reg.PluginSettings(name)
+	}
+	if !found {
+		c.HTML(http.StatusNotFound, "error.html", gin.H{
+			"error":       "Plugin Not Found",
+			"description": "No installed plugin named " + name,
+			"version":     a.version,
+			"admin_page":  true,
+			"settings":    a.b.GetSettings(),
+			"nav_pages":   a.b.GetNavPages(),
+		})
+		return
+	}
+	c.HTML(http.StatusOK, "admin_plugin_settings.html", gin.H{
+		"plugin":     group,
+		"logged_in":  a.auth.IsLoggedIn(c),
+		"is_admin":   a.auth.IsAdmin(c),
+		"version":    a.version,
+		"recent":     a.b.GetLatest(),
+		"admin_page": true,
+		"settings":   a.b.GetSettings(),
+		"nav_pages":  a.b.GetNavPages(),
+	})
 }
 
 // AdminPlugins renders the Plugins admin page; the data is loaded by the page over the API.

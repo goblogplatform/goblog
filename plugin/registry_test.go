@@ -163,6 +163,47 @@ func TestGetAllSettings(t *testing.T) {
 	}
 }
 
+// TestPluginSettings checks the one-plugin lookup the per-plugin admin page
+// uses: a registered name gives its definitions and stored values, a plugin
+// with no settings is still found (its enabled switch is always shown), and
+// an unknown name reports not found.
+func TestPluginSettings(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&plugin.PluginSetting{}); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := plugin.NewRegistry(db)
+	reg.Register(&testPlugin{})
+	reg.Register(&noSettingsPlugin{})
+	reg.Init()
+	reg.UpdateSetting("test", "enabled", "true")
+
+	g, ok := reg.PluginSettings("test")
+	if !ok || g.PluginName != "test" || g.DisplayName != "Test Plugin" || len(g.Settings) != 1 {
+		t.Fatalf("PluginSettings(test) = %+v, %v", g, ok)
+	}
+	if g.CurrentValues["api_key"] != "default123" || g.CurrentValues["enabled"] != "true" {
+		t.Errorf("current values = %v", g.CurrentValues)
+	}
+	if g, ok := reg.PluginSettings("bare"); !ok || len(g.Settings) != 0 || g.CurrentValues == nil {
+		t.Errorf("PluginSettings(bare) = %+v, %v; want found with no definitions", g, ok)
+	}
+	if g, ok := reg.PluginSettings("nope"); ok {
+		t.Errorf("PluginSettings(nope) = %+v, want not found", g)
+	}
+}
+
+// noSettingsPlugin declares nothing but its identity.
+type noSettingsPlugin struct{ plugin.BasePlugin }
+
+func (noSettingsPlugin) Name() string        { return "bare" }
+func (noSettingsPlugin) DisplayName() string { return "Bare" }
+func (noSettingsPlugin) Version() string     { return "0.0.1" }
+
 // pagePlugin owns a page and uses SubPath: "" renders a template, "data.json"
 // writes JSON itself, anything else is declined.
 type pagePlugin struct {

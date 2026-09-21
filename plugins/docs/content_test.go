@@ -114,7 +114,7 @@ func knownIdentifiers() map[string]bool {
 		"nav_pages", "is_admin", "logged_in", "admin_page", "recent_posts",
 		"post_type", "post_types", "comment_error", "comment_token", "comment_user",
 		"outbound_links", "external_backlinks", "client_id", "email_login_enabled",
-		"plugin_settings",
+		"setting_groups",
 
 		// Template data keys added by plugin/registry.go and plugin/wasm/wasm.go
 		// for plugin-owned pages (plugin-api.md "render_page").

@@ -1,6 +1,7 @@
 {{ template "header.html" .}}
 <div class="container">
     {{ template "admin_nav.html" . }}
+    <div class="admin-panel">
     <h1>Edit Post Type: {{ .post_type.Name }}</h1>
 
     <div id="ajax-error" class="alert alert-danger" role="alert" style="display: none;"></div>
@@ -29,6 +30,7 @@
         <a href="/admin/post-types" class="btn btn-secondary">Back to Post Types</a>
         <a href="/{{ .post_type.Slug }}" class="btn btn-outline-primary" target="_blank">View Listing</a>
     </form>
+    </div> <!-- / admin-panel -->
 </div>
 
 <script>

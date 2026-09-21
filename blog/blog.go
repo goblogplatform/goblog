@@ -142,6 +142,35 @@ func (b *Blog) GetLatest() Post {
 	return post
 }
 
+// GetRecentPosts returns the newest n posts, drafts included, for the admin
+// dashboard.
+func (b *Blog) GetRecentPosts(n int) []Post {
+	var posts []Post
+	(*b.db).Preload("PostType").Order("created_at desc").Limit(n).Find(&posts)
+	return posts
+}
+
+// CountPosts returns how many posts are published and how many are drafts.
+func (b *Blog) CountPosts() (published, drafts int64) {
+	(*b.db).Model(&Post{}).Where("draft = ?", false).Count(&published)
+	(*b.db).Model(&Post{}).Where("draft = ?", true).Count(&drafts)
+	return published, drafts
+}
+
+// CountPages returns the number of pages, enabled or not.
+func (b *Blog) CountPages() int64 {
+	var n int64
+	(*b.db).Model(&Page{}).Count(&n)
+	return n
+}
+
+// CountComments returns the number of comments across all posts.
+func (b *Blog) CountComments() int64 {
+	var n int64
+	(*b.db).Model(&Comment{}).Count(&n)
+	return n
+}
+
 func (b *Blog) getTags() []Tag {
 	var tags []Tag
 	(*b.db).Preload("Posts").Order("name asc").Find(&tags)

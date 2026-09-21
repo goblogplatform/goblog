@@ -93,7 +93,8 @@ func newHarness(t *testing.T) *harness {
 	entry := func(name, version string, files map[string][]byte, min string) directory.Entry {
 		return directory.Entry{Kind: registry.KindTheme, Name: name, DisplayName: strings.ToUpper(name), Description: "d", Version: version, Author: "a", License: "MIT",
 			SourceURL: "https://github.com/o/" + name, DownloadURL: h.srv.URL + "/o/" + name + "/archive/refs/tags/v" + version + ".zip",
-			SHA256: registry.ContentHash(files), MinGoblogVersion: min, InstallType: "theme", AllowedHosts: []string{}, Stars: 1}
+			SHA256: registry.ContentHash(files), MinGoblogVersion: min, InstallType: "theme", AllowedHosts: []string{}, Stars: 1,
+			ScreenshotURL: "https://raw.test/o/" + name + "/screenshot.png"}
 	}
 	h.index = []directory.Entry{
 		entry("ocean", "1.0.0", oceanFiles, "0.5.0"),
@@ -174,6 +175,16 @@ func TestInstallActivateUpdateUninstall(t *testing.T) {
 	}
 	if ocean.Version != "1.0.0" || ocean.Builtin || ocean.UpdateAvailable {
 		t.Errorf("ocean status = %+v", ocean)
+	}
+	// The installed row carries the directory's screenshot so the admin page
+	// can show installed themes as cards; built-ins have none.
+	if ocean.ScreenshotURL != "https://raw.test/o/ocean/screenshot.png" {
+		t.Errorf("ocean screenshot = %q", ocean.ScreenshotURL)
+	}
+	for _, i := range st.Installed {
+		if i.Builtin && i.ScreenshotURL != "" {
+			t.Errorf("built-in %s must not carry a screenshot: %+v", i.Name, i)
+		}
 	}
 
 	if err := h.inst.ActivateTheme("ocean"); err != nil || h.active != "ocean" {
