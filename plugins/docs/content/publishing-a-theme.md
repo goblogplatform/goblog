@@ -38,7 +38,7 @@ The archive of the tag must be **16 MiB or smaller**, with **at most 2000 entrie
 
 | Field | Rule |
 |---|---|
-| `name` | `^[a-z0-9-]+$` and unique among the directory's themes. It becomes the directory name under `themes/installed/` and the value of the site's `theme` setting once installed, so keep it stable across versions. **Reserved:** `default`, `minimal`, `installed` and `shared` are refused. A goblog also never installs a directory theme over a built-in of the same name (`forest` is published to the directory and compiled in, so it is not reserved, but an operator whose goblog ships it cannot install the directory copy). |
+| `name` | `^[a-z0-9-]+$` and unique among the directory's themes. It becomes the directory name under `themes/installed/` and the value of the site's `theme` setting once installed, so keep it stable across versions. **Reserved:** `default`, `minimal`, `installed` and `shared` are refused. A goblog also never installs a directory theme over a built-in of the same name, or over a theme an operator copied in by hand. |
 | `display_name` | The label in the directory listing. Required. |
 | `description` | One sentence for the listing. Required. |
 | `author` | Required. |

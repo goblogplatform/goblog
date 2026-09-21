@@ -74,10 +74,14 @@ type Installer struct {
 
 	// mu serializes Install/Update/Uninstall so two callers acting on the
 	// same (or different) plugin names cannot interleave writes to the
-	// dynamic directory or the registry. Status and Refresh do not take it.
+	// dynamic directory or the registry. Status and Refresh do not take it,
+	// and neither does the download: Install and Update fetch and verify the
+	// module first, take mu, and repeat their registry/filesystem checks
+	// under it, so a slow download never queues an Uninstall behind it.
 	mu sync.Mutex
 
-	// urlMu guards lastURL, the index URL last fetched by ensureIndex.
+	// urlMu guards lastURL, the index URL last fetched by ensureIndex, and
+	// serializes ensureIndex itself (see there).
 	urlMu   sync.Mutex
 	lastURL string
 
@@ -191,12 +195,17 @@ func (i *Installer) Refresh() error {
 // older than staleAfter is also refreshed here (errors are logged; the old
 // copy stays in place and is still served). A fresh-empty cache defers to
 // Ensure's own throttled fetch-and-retry behaviour.
+//
+// urlMu is held across the URL-change fetch so that callers arriving while
+// it is in flight wait for it (at most the fetcher's client timeout) rather
+// than find an empty cache: Ensure would see the attempt already claimed
+// and return at once, and the caller would report the directory as
+// unavailable moments before it was.
 func (i *Installer) ensureIndex(indexURL string) {
 	i.urlMu.Lock()
-	changed := indexURL != i.lastURL
-	i.lastURL = indexURL
-	i.urlMu.Unlock()
-	if changed {
+	defer i.urlMu.Unlock()
+	if indexURL != i.lastURL {
+		i.lastURL = indexURL
 		if err := i.Directory.Refresh(indexURL); err != nil {
 			log.Printf("Installer: fetching directory index at %s: %v", indexURL, err)
 		}
@@ -337,10 +346,23 @@ func (i *Installer) dynamic(name string) (plugin.DynamicInfo, bool) {
 	return plugin.DynamicInfo{}, false
 }
 
+// installable refuses a name that is already registered or whose module
+// path is occupied. Nothing registered under this name, yet a module
+// sitting at its path, is an operator-dropped file or one that failed to
+// load at boot; overwriting it silently would hide that, so it is refused
+// and said so. Called before the download and again under mu.
+func (i *Installer) installable(name, path string) error {
+	if i.isRegistered(name) {
+		return ErrAlreadyInstalled
+	}
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%w: a file for %q already exists in plugins/wasm; remove it first", ErrAlreadyInstalled, name)
+	}
+	return nil
+}
+
 // Install downloads, verifies, writes, loads and registers a directory plugin.
 func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
 	if !i.WasmEnabled {
 		return Result{}, ErrWasmDisabled
 	}
@@ -348,18 +370,20 @@ func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if i.isRegistered(name) {
-		return Result{}, ErrAlreadyInstalled
-	}
 	path := i.wasmPath(e.Name)
-	// Nothing registered under this name, yet a module is sitting at its
-	// path: an operator-dropped file, or one that failed to load at boot.
-	// Overwriting it silently would hide that; refuse and say so.
-	if _, err := os.Stat(path); err == nil {
-		return Result{}, fmt.Errorf("%w: a file for %q already exists in plugins/wasm; remove it first", ErrAlreadyInstalled, e.Name)
+	if err := i.installable(e.Name, path); err != nil {
+		return Result{}, err
 	}
 	src, p, err := i.fetchAndCheck(ctx, e)
 	if err != nil {
+		return Result{}, err
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	// Another Install of the same name may have won while this one was
+	// downloading.
+	if err := i.installable(e.Name, path); err != nil {
+		closePlugin(p)
 		return Result{}, err
 	}
 	if err := writeModule(path, src, e.AllowedHosts); err != nil {
@@ -379,32 +403,53 @@ func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 	return Result{Name: e.Name, Version: e.Version, Message: fmt.Sprintf("Installed %s v%s", e.DisplayName, e.Version)}, nil
 }
 
+// updatable returns the installed dynamic plugin name, refusing when there
+// is none or when e is not newer than it. Called before the download and
+// again under mu.
+func (i *Installer) updatable(name string, e directory.Entry) (plugin.DynamicInfo, error) {
+	d, ok := i.dynamic(name)
+	if !ok {
+		return plugin.DynamicInfo{}, ErrNotInstalled
+	}
+	if _, ok := parseVersion(d.Version); !ok {
+		return plugin.DynamicInfo{}, fmt.Errorf("%w: installed version %q is not semver", ErrUpToDate, d.Version)
+	}
+	if !Newer(e.Version, d.Version) {
+		return plugin.DynamicInfo{}, fmt.Errorf("%w: %s is at v%s; the directory has v%s", ErrUpToDate, name, d.Version, e.Version)
+	}
+	return d, nil
+}
+
 // Update replaces an installed dynamic plugin with the index version. If the
 // new module fails to load, the previous files and plugin are restored. A
 // Yaegi plugin (Runtime "go") is replaced by the wasm module: its .go file
 // stays until the new plugin is registered and is removed afterwards.
 func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
 	if !i.WasmEnabled {
 		return Result{}, ErrWasmDisabled
 	}
-	d, ok := i.dynamic(name)
-	if !ok {
+	if _, ok := i.dynamic(name); !ok {
 		return Result{}, ErrNotInstalled
 	}
 	e, err := i.lookup(name)
 	if err != nil {
 		return Result{}, err
 	}
-	if _, ok := parseVersion(d.Version); !ok {
-		return Result{}, fmt.Errorf("%w: installed version %q is not semver", ErrUpToDate, d.Version)
-	}
-	if !Newer(e.Version, d.Version) {
-		return Result{}, fmt.Errorf("%w: %s is at v%s; the directory has v%s", ErrUpToDate, name, d.Version, e.Version)
+	if _, err := i.updatable(name, e); err != nil {
+		return Result{}, err
 	}
 	src, p, err := i.fetchAndCheck(ctx, e)
 	if err != nil {
+		return Result{}, err
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	// The plugin may have been uninstalled or updated by another call
+	// while this one was downloading; d must describe what is installed
+	// now, not what was.
+	d, err := i.updatable(name, e)
+	if err != nil {
+		closePlugin(p)
 		return Result{}, err
 	}
 

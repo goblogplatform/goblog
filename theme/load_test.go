@@ -3,6 +3,7 @@ package theme
 import (
 	"bytes"
 	"html/template"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -62,6 +63,34 @@ func TestLoad_FallsBackToDefault(t *testing.T) {
 		if got := render(t, tmpl, "home.html"); got != "default home" {
 			t.Errorf("Load(%q) rendered %q", name, got)
 		}
+	}
+}
+
+func TestLoad_PartialFailureFallsBackWholesale(t *testing.T) {
+	builtin, installed := roots(t)
+	withShared(t)
+	mkTheme(t, filepath.Join(builtin, DefaultName), map[string]string{"home.html": "default home", "post.html": "default post"})
+	// home.html parses; post.html does not. ParseFiles has already added
+	// home.html to the set by the time it fails, so Load must rebuild the
+	// base rather than hand back a half-applied theme.
+	mkTheme(t, filepath.Join(installed, "ocean"), map[string]string{"home.html": "ocean home", "post.html": "{{ if }}"})
+
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	tmpl, loaded, err := Load("ocean", nil)
+	if err != nil || loaded != DefaultName {
+		t.Fatalf("Load = %q, %v; want default", loaded, err)
+	}
+	if got := render(t, tmpl, "home.html"); got != "default home" {
+		t.Errorf("the theme's good file must not survive its bad one: %q", got)
+	}
+	if got := render(t, tmpl, "post.html"); got != "default post" {
+		t.Errorf("post.html = %q", got)
+	}
+	if out := logs.String(); !strings.Contains(out, `theme "ocean"`) || !strings.Contains(out, "post.html") || !strings.Contains(out, "falling back to default") {
+		t.Errorf("fallback must be logged with the theme and file named, got %q", out)
 	}
 }
 

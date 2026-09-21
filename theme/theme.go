@@ -59,9 +59,12 @@ func Dir(name string) (string, bool) {
 	return "", false
 }
 
-// IsBuiltin reports whether name resolves to the built-in root.
+// IsBuiltin reports whether name resolves to the built-in root. Dir looks
+// there first, so a theme is built-in exactly when Dir lands there — even
+// if an installed copy of the same name exists underneath.
 func IsBuiltin(name string) bool {
-	return ValidName(name) && hasTemplates(filepath.Join(BuiltinRoot, name))
+	dir, ok := Dir(name)
+	return ok && dir == filepath.Join(BuiltinRoot, name)
 }
 
 // List returns every theme name from both roots, sorted. "default" is

@@ -815,7 +815,7 @@ func TestAdminComments(t *testing.T) {
 // (comments_require_login, issue #524) renders as a checkbox reflecting its
 // value in every theme, rather than a required text input.
 func TestAdminSettings_RendersCheckboxSetting(t *testing.T) {
-	for _, theme := range []string{"default", "forest", "minimal"} {
+	for _, theme := range []string{"default", "minimal"} {
 		for _, value := range []string{"true", "false"} {
 			t.Run(theme+"/"+value, func(t *testing.T) {
 				db, _ := gorm.Open(sqlite.Open(":memory:"))
@@ -931,7 +931,7 @@ func TestAdminUsers_NonAdmin_Unauthorized(t *testing.T) {
 // admin status and the right control: promote for GitHub non-admins, demote
 // for admins, and nothing for email users (#565) or the last admin.
 func TestAdminUsers_RendersUsers(t *testing.T) {
-	for _, theme := range []string{"default", "forest", "minimal"} {
+	for _, theme := range []string{"default", "minimal"} {
 		t.Run(theme, func(t *testing.T) {
 			router, a, db := newUsersHarness(t, theme)
 			boss := seedUser(t, db, auth.ProviderGitHub, "1", "boss", true)
