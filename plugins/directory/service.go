@@ -550,10 +550,11 @@ func (s *Service) nameOf(repo string) (kind, name string, ok bool) {
 }
 
 // regenerate rebuilds the cached index for every kind from the approved
-// builds. The database is read with mu held, not just the swap: two
-// curation actions regenerating at once could otherwise install the older
-// snapshot last, leaving the index stale until the next refresh. Readers
-// wait out two small queries, which is nothing next to a rebuild.
+// builds. mu is held for the whole rebuild — the reads and the re-encoding
+// — not just the swap: two curation actions regenerating at once could
+// otherwise install the older snapshot last, leaving the index stale until
+// the next refresh. Readers wait out two small queries and the encoding of
+// a few dozen entries, and only on a curation action.
 func (s *Service) regenerate() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -3,6 +3,7 @@ package directory
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -146,6 +147,23 @@ func TestRenderPage_SubmitAlreadyListedLinksToActualKind(t *testing.T) {
 	_, data = f.p.RenderPage(ctx, ThemePageType)
 	if html := content(t, data); !strings.Contains(html, `href="/skins/ocean"`) {
 		t.Errorf("same-kind link should use the request slug:\n%s", html)
+	}
+}
+
+// A full review queue is a retry-later condition like the rate limit, so
+// it sets 429 rather than a 200 carrying an error message.
+func TestRenderPage_SubmitQueueFullIs429(t *testing.T) {
+	f := newPluginFixture(t)
+	for i := 0; i < maxPending; i++ {
+		seed(t, f.db, KindPlugin, fmt.Sprintf("o/pending-%d", i), StatusPending, doc(fmt.Sprintf("pending-%d", i), "1.0.0", 0))
+	}
+	ctx, w := newRenderCtx(t, http.MethodPost, "/plugins/submit", "submit", url.Values{"repo": {"o/hello"}})
+	_, data := f.p.RenderPage(ctx, PageType)
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("full queue should set 429, got %d", w.Code)
+	}
+	if html := content(t, data); !strings.Contains(html, ErrQueueFull.Error()) {
+		t.Errorf("full queue should tell the submitter:\n%s", html)
 	}
 }
 
