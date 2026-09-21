@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -45,6 +46,7 @@ var (
 	ErrChecksum             = errors.New("the downloaded archive does not match the directory index; the index may be stale, refresh and try again")
 	ErrAlreadyInstalled     = errors.New("a theme with this name is already installed")
 	ErrNotInstalled         = errors.New("this theme is not installed")
+	ErrNotManaged           = errors.New("this theme was copied in by hand, not installed from the directory; remove or rename it to install the directory version")
 	ErrBuiltin              = errors.New("built-in themes cannot be installed, updated or removed")
 	ErrActive               = errors.New("the active theme cannot be removed; activate another theme first")
 	ErrLoad                 = errors.New("the theme failed to load")
@@ -65,7 +67,12 @@ type Installer struct {
 	ActiveTheme func() string           // the theme currently rendering
 	Activate    func(name string) error // persist the setting and hot-reload
 
-	mu      sync.Mutex // serializes Install/Update/Uninstall/ActivateTheme
+	// mu serializes what touches the installed root or the active theme:
+	// placing an unpacked archive, removing a theme, activating one. The
+	// download and its checks run before it is taken, so a slow archive
+	// fetch never queues ActivateTheme or Uninstall behind it; the state
+	// checks made before the download are repeated once it is held.
+	mu      sync.Mutex
 	urlMu   sync.Mutex
 	lastURL string
 }
@@ -155,12 +162,13 @@ func (i *Installer) Refresh() error {
 
 // ensureIndex mirrors the plugin installer: refetch on a URL change or a
 // stale cache, otherwise defer to the fetcher's own throttled first fetch.
+// urlMu is held throughout so callers arriving during a fetch wait for it
+// rather than find an empty cache.
 func (i *Installer) ensureIndex(indexURL string) {
 	i.urlMu.Lock()
-	changed := indexURL != i.lastURL
-	i.lastURL = indexURL
-	i.urlMu.Unlock()
-	if changed {
+	defer i.urlMu.Unlock()
+	if indexURL != i.lastURL {
+		i.lastURL = indexURL
 		if err := i.Directory.Refresh(indexURL); err != nil {
 			log.Printf("Theme installer: fetching directory index at %s: %v", indexURL, err)
 		}
@@ -298,8 +306,6 @@ func (i *Installer) fetchAndCheck(ctx context.Context, e directory.Entry) (map[s
 
 // Install downloads, verifies and unpacks a directory theme.
 func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
 	if theme.IsBuiltin(name) {
 		return Result{}, ErrBuiltin
 	}
@@ -314,6 +320,13 @@ func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	// Another Install of the same name may have finished while this one
+	// was downloading.
+	if _, ok := theme.Dir(e.Name); ok {
+		return Result{}, ErrAlreadyInstalled
+	}
 	if err := i.place(e, files); err != nil {
 		return Result{}, err
 	}
@@ -321,29 +334,52 @@ func (i *Installer) Install(ctx context.Context, name string) (Result, error) {
 	return Result{Name: e.Name, Version: e.Version, Message: fmt.Sprintf("Installed %s v%s", e.DisplayName, e.Version)}, nil
 }
 
+// updatable checks that name is on disk as an installed directory theme
+// (one with the manifest an install writes) and that e is newer than it.
+// A theme copied in by hand has no manifest: its version is unknown and it
+// may not even be the directory's theme, so replacing it wholesale on an
+// admin's click is refused; the admin removes or renames it first.
+func updatable(name string, e directory.Entry) error {
+	dir, ok := theme.Dir(name)
+	if !ok {
+		return ErrNotInstalled
+	}
+	current, ok := installedVersion(dir)
+	if !ok {
+		return ErrNotManaged
+	}
+	if current.Version != "" && !pinstaller.Newer(e.Version, current.Version) {
+		return fmt.Errorf("%w: %s is at v%s; the directory has v%s", ErrUpToDate, name, current.Version, e.Version)
+	}
+	return nil
+}
+
 // Update replaces an installed theme with the index version. The previous
 // directory is kept aside until the new one is in place and restored if
 // anything fails; the active theme is reloaded afterwards.
 func (i *Installer) Update(ctx context.Context, name string) (Result, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
 	if theme.IsBuiltin(name) {
 		return Result{}, ErrBuiltin
 	}
-	dir, ok := theme.Dir(name)
-	if !ok {
+	if _, ok := theme.Dir(name); !ok {
 		return Result{}, ErrNotInstalled
 	}
 	e, err := i.lookup(name)
 	if err != nil {
 		return Result{}, err
 	}
-	current, _ := installedVersion(dir)
-	if current.Version != "" && !pinstaller.Newer(e.Version, current.Version) {
-		return Result{}, fmt.Errorf("%w: %s is at v%s; the directory has v%s", ErrUpToDate, name, current.Version, e.Version)
+	if err := updatable(name, e); err != nil {
+		return Result{}, err
 	}
 	files, err := i.fetchAndCheck(ctx, e)
 	if err != nil {
+		return Result{}, err
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	// The theme may have been removed or updated by another call while
+	// this one was downloading.
+	if err := updatable(name, e); err != nil {
 		return Result{}, err
 	}
 	if err := i.place(e, files); err != nil {
@@ -417,6 +453,73 @@ func (i *Installer) place(e directory.Entry, files map[string][]byte) error {
 		os.RemoveAll(prev)
 	}
 	return nil
+}
+
+// tmpDirPattern matches the directories place unpacks into: "." + name +
+// ".tmp-" plus whatever MkdirTemp appends. Go currently appends digits,
+// but that is documented only as "a random string", so any non-empty
+// suffix counts; a theme name cannot contain "." so the match is
+// unambiguous.
+var tmpDirPattern = regexp.MustCompile(`^\.([A-Za-z0-9_-]+)\.tmp-.+$`)
+
+// Sweep cleans up what a crash inside place can leave under Dir, and is
+// meant to run once at startup, before any install. Two kinds of leftover
+// exist:
+//
+//   - ".<name>.tmp-<n>": an unpack that was never renamed into place. It
+//     is removed even when it looks complete, because a crash while it was
+//     still being written leaves the same shape; the admin re-runs the
+//     install or update and gets a verified copy.
+//   - "<name>.prev": the previous version, set aside for the swap. If
+//     "<name>" exists the swap finished and only the removal of .prev was
+//     lost, so .prev is dropped. If "<name>" is missing the crash hit
+//     between the two renames and the theme has vanished from disk; the
+//     previous version is renamed back so the site keeps the theme it had,
+//     rather than promoting a tmp directory whose completeness is unknown.
+//
+// Anything else in Dir — installed themes, files, directories of another
+// shape — is left alone. Every recoverable problem is attempted; the
+// failures are returned together so the caller can log them, since none
+// is worth refusing to start over.
+func (i *Installer) Sweep() error {
+	entries, err := os.ReadDir(i.Dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("%w: %v", ErrWrite, err)
+	}
+	var errs []error
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		full := filepath.Join(i.Dir, e.Name())
+		switch name := strings.TrimSuffix(e.Name(), ".prev"); {
+		case tmpDirPattern.MatchString(e.Name()):
+			if err := os.RemoveAll(full); err != nil {
+				errs = append(errs, fmt.Errorf("removing stale %s: %w", e.Name(), err))
+			} else {
+				log.Printf("Theme installer: removed unfinished install %s", e.Name())
+			}
+		case name != e.Name() && theme.ValidName(name):
+			final := filepath.Join(i.Dir, name)
+			if _, err := os.Stat(final); err == nil {
+				if err := os.RemoveAll(full); err != nil {
+					errs = append(errs, fmt.Errorf("removing stale %s: %w", e.Name(), err))
+				} else {
+					log.Printf("Theme installer: removed leftover %s (the update of %s had completed)", e.Name(), name)
+				}
+				continue
+			}
+			if err := os.Rename(full, final); err != nil {
+				errs = append(errs, fmt.Errorf("restoring %s from %s: %w", name, e.Name(), err))
+			} else {
+				log.Printf("Theme installer: restored %s from %s (an update was interrupted; run it again)", name, e.Name())
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Uninstall removes an installed theme; built-ins and the active theme

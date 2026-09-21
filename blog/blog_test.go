@@ -1188,7 +1188,7 @@ func TestNoRoutePost_CommentFormFollowsLoginState(t *testing.T) {
 // TestPostPage_CommentFormFollowsLoginState covers the comment section's three
 // states (issue #524) in every theme.
 func TestPostPage_CommentFormFollowsLoginState(t *testing.T) {
-	for _, theme := range []string{"default", "forest", "minimal"} {
+	for _, theme := range []string{"default", "minimal"} {
 		t.Run(theme+"/required and logged out", func(t *testing.T) {
 			body := renderPostPage(t, theme, nil, "true")
 			if strings.Contains(body, `action="/comments"`) {

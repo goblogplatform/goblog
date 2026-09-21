@@ -26,6 +26,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -359,14 +360,20 @@ func main() {
 	router.Use(sessions.Sessions(hostname, store))
 	log.Println("Session key: ", sessionKey)
 	log.Println("Hostname: ", hostname)
-	// Load templates from the active theme directory, falling back to "default"
-	activeTheme := "default"
+	// Load templates from the active theme directory, falling back to "default".
+	// activeTheme is read by the static handler on every /theme/* request and
+	// written by loadTheme from admin requests (activate, update, settings),
+	// so it is an atomic rather than a plain string.
+	var activeTheme atomic.Pointer[string]
+	initialTheme := theme.DefaultName
 	if !_blog.IsDbNil() {
 		settings := _blog.GetSettings()
 		if t, ok := settings["theme"]; ok && t.Value != "" {
-			activeTheme = t.Value
+			initialTheme = t.Value
 		}
 	}
+	activeTheme.Store(&initialTheme)
+	currentTheme := func() string { return *activeTheme.Load() }
 
 	funcMap := theme.FuncMap()
 	router.SetFuncMap(funcMap)
@@ -376,18 +383,27 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to load templates: %v", err)
 		}
+		if loaded != name {
+			// theme.Load has already logged why; tell the admin what to do.
+			// Forest shipped compiled in through v0.6, so a site still set
+			// to it needs the directory copy installed.
+			if name == "forest" {
+				log.Printf("Theme %q is no longer compiled into goblog; install Forest from Admin → Themes to get it back (rendering default until then)", name)
+			} else {
+				log.Printf("Theme %q could not be loaded; rendering default until it is fixed or reinstalled from Admin → Themes", name)
+			}
+		}
 		log.Println("Loading theme: " + loaded)
 		router.SetHTMLTemplate(tmpl)
-		activeTheme = loaded
+		activeTheme.Store(&loaded)
 	}
-	loadTheme(activeTheme)
 
 	themeInstaller := &tinstaller.Installer{
 		Dir:         theme.InstalledRoot(),
 		Directory:   installer.NewFetcher(nil),
 		Version:     Version,
 		IndexURL:    func() string { return _blog.SettingValue("theme_directory_url", tinstaller.DefaultIndexURL) },
-		ActiveTheme: func() string { return activeTheme },
+		ActiveTheme: currentTheme,
 		Activate: func(name string) error {
 			if db != nil {
 				if err := db.Save(&blog.Setting{Key: "theme", Type: "text", Value: name}).Error; err != nil {
@@ -400,6 +416,12 @@ func main() {
 	}
 	themeInstaller.Directory.SetUserAgent("goblog-theme-installer/" + Version)
 	_admin.Themes = themeInstaller
+	// Recover from an install or update that crashed mid-swap before the
+	// initial load, so a theme sitting under <name>.prev is found.
+	if err := themeInstaller.Sweep(); err != nil {
+		log.Printf("Theme installer: startup sweep of %s: %v", themeInstaller.Dir, err)
+	}
+	loadTheme(initialTheme)
 
 	// Wire up hot-reload callback so theme changes take effect without restart
 	_admin.OnThemeChange = func(name string) {
@@ -407,7 +429,7 @@ func main() {
 	}
 
 	// Theme static files: the active theme's static/, falling back to default's
-	router.GET("/theme/*filepath", theme.StaticHandler(func() string { return activeTheme }))
+	router.GET("/theme/*filepath", theme.StaticHandler(currentTheme))
 
 	getAndHead(router, "/", goblog.rootHandler)
 	getAndHead(router, "/login", goblog.loginHandler)

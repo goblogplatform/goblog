@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"goblog/blog"
 	"goblog/plugin"
@@ -41,7 +42,16 @@ type fixture struct {
 	entries    []map[string]any
 	checksumOK atomic.Bool // when false, wasmEntry carries a wrong sha256 for echo
 	hits       atomic.Int32
+	// /slow-echo.wasm serves echo but first reports on slowStarted and
+	// then waits for release(), so a test can act mid-download.
+	slowStarted chan struct{}
+	slowRelease chan struct{}
+	releaseOnce sync.Once
 }
+
+// release lets every gated download proceed; also run at cleanup so a
+// failed assertion does not hang on the server's close.
+func (f *fixture) release() { f.releaseOnce.Do(func() { close(f.slowRelease) }) }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
@@ -53,7 +63,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{helloV1: src, echoWasm: echo}
+	f := &fixture{helloV1: src, echoWasm: echo, slowStarted: make(chan struct{}, 2), slowRelease: make(chan struct{})}
 	f.checksumOK.Store(true)
 	// The version literal is a same-length rodata string in the module, so
 	// patching it in place yields a valid module that reports 1.2.4.
@@ -71,6 +81,10 @@ func newFixture(t *testing.T) *fixture {
 			w.Write(f.echoWasm)
 		case "/echo-v2.wasm":
 			w.Write(f.echoWasmV2)
+		case "/slow-echo.wasm":
+			f.slowStarted <- struct{}{}
+			<-f.slowRelease
+			w.Write(f.echoWasm)
 		case "/hello.go":
 			w.Write(f.helloV1)
 		case "/redirect":
@@ -80,6 +94,7 @@ func newFixture(t *testing.T) *fixture {
 		}
 	}))
 	t.Cleanup(f.srv.Close)
+	t.Cleanup(f.release)
 	return f
 }
 
@@ -846,6 +861,50 @@ func TestInstall_ConcurrentSameName(t *testing.T) {
 	}
 	if dyn := inst.Registry.Dynamic(); len(dyn) != 1 {
 		t.Errorf("expected exactly one dynamic entry, got %+v", dyn)
+	}
+}
+
+func TestInstall_DoesNotHoldLockDuringDownload(t *testing.T) {
+	f := newFixture(t)
+	slow := f.wasmEntry("echo", "1.2.3", nil)
+	slow["download_url"] = f.srv.URL + "/slow-echo.wasm"
+	f.entries = []map[string]any{slow}
+	inst := newInstaller(t, f)
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := inst.Install(ctx, "echo")
+		done <- err
+	}()
+	select {
+	case <-f.slowStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("download never started")
+	}
+	// The module is still downloading; an unrelated Uninstall must not
+	// queue behind it.
+	answered := make(chan error, 1)
+	go func() { answered <- inst.Uninstall("nope") }()
+	select {
+	case err := <-answered:
+		if !errors.Is(err, ErrNotInstalled) {
+			t.Errorf("uninstall during download: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Uninstall blocked behind an in-flight download")
+	}
+	f.release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("install after release: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("install never finished")
+	}
+	if footer(inst.Registry, "echo") == "" {
+		t.Error("the plugin should be registered and alive after the install")
 	}
 }
 

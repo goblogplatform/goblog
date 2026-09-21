@@ -54,13 +54,13 @@ func TestValidName(t *testing.T) {
 
 func TestDirAndList(t *testing.T) {
 	builtin, installed := roots(t)
-	mkTheme(t, filepath.Join(builtin, "forest"), map[string]string{"home.html": "f"})
+	mkTheme(t, filepath.Join(builtin, "minimal"), map[string]string{"home.html": "f"})
 	mkTheme(t, filepath.Join(installed, "ocean"), map[string]string{"home.html": "o"})
-	mkTheme(t, filepath.Join(installed, "forest"), map[string]string{"home.html": "shadowed"})
+	mkTheme(t, filepath.Join(installed, "minimal"), map[string]string{"home.html": "shadowed"})
 	os.MkdirAll(filepath.Join(builtin, "notatheme"), 0o755)                // no templates/ → ignored
 	os.MkdirAll(filepath.Join(installed, "installed", "templates"), 0o755) // reserved name → ignored
 
-	if dir, ok := Dir("forest"); !ok || dir != filepath.Join(builtin, "forest") {
+	if dir, ok := Dir("minimal"); !ok || dir != filepath.Join(builtin, "minimal") {
 		t.Errorf("built-in wins: %q %v", dir, ok)
 	}
 	if dir, ok := Dir("ocean"); !ok || dir != filepath.Join(installed, "ocean") {
@@ -71,10 +71,10 @@ func TestDirAndList(t *testing.T) {
 			t.Errorf("Dir(%q) should not resolve", bad)
 		}
 	}
-	if !IsBuiltin("forest") || IsBuiltin("ocean") || IsBuiltin("nope") {
+	if !IsBuiltin("minimal") || IsBuiltin("ocean") || IsBuiltin("nope") {
 		t.Error("IsBuiltin wrong")
 	}
-	if got := List(); !reflect.DeepEqual(got, []string{"default", "forest", "ocean"}) {
+	if got := List(); !reflect.DeepEqual(got, []string{"default", "minimal", "ocean"}) {
 		t.Errorf("List = %v", got)
 	}
 }
