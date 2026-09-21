@@ -52,6 +52,8 @@ func TestParseThemeManifest(t *testing.T) {
 		`{"name":"Ocean"}`: "name must match",
 		strings.Replace(goodThemeManifest, `"ocean"`, `"default"`, 1):   "reserved",
 		strings.Replace(goodThemeManifest, `"ocean"`, `"installed"`, 1): "reserved",
+		strings.Replace(goodThemeManifest, `"ocean"`, `"submit"`, 1):    `name "submit" is reserved`, // /themes/submit is the form
+		strings.Replace(goodThemeManifest, `"ocean"`, `"index"`, 1):     `name "index" is reserved`,  // /themes/index.json is the index
 		strings.Replace(goodThemeManifest, `"MIT"`, `"WTFPL"`, 1):       "license",
 		strings.Replace(goodThemeManifest, `"0.5.0"`, `"v0.5.0"`, 1):    "min_goblog_version",
 		strings.Replace(goodThemeManifest, `"Blue and calm."`, `""`, 1): "description is required",
@@ -252,6 +254,18 @@ func TestValidateThemeEntry_Good(t *testing.T) {
 	want := ContentHash(map[string][]byte{"templates/home.html": []byte("home"), "static/css/ocean.css": []byte("css")})
 	if v.SHA256 != want {
 		t.Errorf("sha256 = %s, want %s", v.SHA256, want)
+	}
+}
+
+// TestBuildTheme_FetchesReadmeOnce mirrors TestBuildRepo_FetchesReadmeOnce
+// for the theme path.
+func TestBuildTheme_FetchesReadmeOnce(t *testing.T) {
+	src := oceanSource(t)
+	if _, err := BuildTheme(context.Background(), src, &FakeThemeValidator{}, "o/ocean", ""); err != nil {
+		t.Fatal(err)
+	}
+	if n := src.fetched["o/ocean@v1.0.0:README.md"]; n != 1 {
+		t.Errorf("README.md fetched %d times, want 1", n)
 	}
 }
 

@@ -305,6 +305,64 @@ func TestService_SubmitRateLimitAndBusy(t *testing.T) {
 	}
 }
 
+// TestService_SubmitQueueFull: the pending queue is bounded overall, not
+// only per address, so a slow week of reviewing cannot be turned into an
+// unbounded pile of built documents by rotating addresses. Admin adds are
+// listed at once and never queue, so they are unaffected; a decision on a
+// pending entry makes room again.
+func TestService_SubmitQueueFull(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	var first Repo
+	for i := 0; i < maxPending; i++ {
+		r := seed(t, f.db, KindPlugin, fmt.Sprintf("o/pending-%d", i), StatusPending, doc(fmt.Sprintf("pending-%d", i), "1.0.0", 0))
+		if i == 0 {
+			first = r
+		}
+	}
+	if _, err := f.svc.Submit(ctx, KindPlugin, "o/hello", "ip", ""); !errors.Is(err, ErrQueueFull) {
+		t.Errorf("submit with a full queue: %v", err)
+	}
+	if _, err := f.svc.Add(ctx, KindPlugin, "o/hello", ""); err != nil {
+		t.Errorf("admin add is not queued: %v", err)
+	}
+	if err := f.svc.Reject(first.ID, "no"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Submit(ctx, KindPlugin, "o/zeta", "ip", ""); err != nil {
+		t.Errorf("submit once a decision made room: %v", err)
+	}
+}
+
+// TestService_RegenerateReadsUnderLock: regenerate reads the approved
+// builds and installs the snapshot in one critical section, so a
+// regenerate that is waiting on the index lock cannot install what it read
+// before it got the lock. Hold the lock, start a regenerate, change the
+// database, release: the installed index must reflect the change. (Reading
+// first and locking only for the swap — two curation actions racing —
+// would install the stale read, healed only by the next refresh.)
+func TestService_RegenerateReadsUnderLock(t *testing.T) {
+	f := newFixture(t)
+	r, err := f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.mu.RLock()
+	done := make(chan error, 1)
+	go func() { done <- f.svc.regenerate() }()
+	time.Sleep(50 * time.Millisecond) // let it get as far as the lock allows
+	if err := f.db.Model(&Repo{}).Where("id = ?", r.ID).Update("status", StatusRejected).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.svc.mu.RUnlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if names := f.indexNames(t, KindPlugin); len(names) != 0 {
+		t.Errorf("index installed from a read made before the lock: %v", names)
+	}
+}
+
 func TestService_AddDelistNotFound(t *testing.T) {
 	f := newFixture(t)
 	r, err := f.svc.Add(context.Background(), KindPlugin, "https://github.com/o/hello", "")

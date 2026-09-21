@@ -24,6 +24,7 @@ type Validated struct {
 	Release  Release   // the latest published, non-prerelease release
 	Version  string    // Release.Tag without the leading v
 	Releases []Release // all published, non-prerelease releases, newest first
+	Readme   []byte    // README.md at Release.Tag, kept so the builder need not fetch it again
 	Asset    Asset     // the release asset named by Manifest.Entry
 	Entry    []byte    // the asset's bytes (the WebAssembly module)
 	SHA256   string    // hex sha256 of Entry
@@ -53,7 +54,8 @@ func ValidateEntry(ctx context.Context, src Source, val Validator, repo string) 
 	if err != nil {
 		return nil, fmt.Errorf("%s@%s: %w", repo, latest.Tag, err)
 	}
-	if _, err := src.File(ctx, owner, name, latest.Tag, "README.md"); err != nil {
+	readme, err := src.File(ctx, owner, name, latest.Tag, "README.md")
+	if err != nil {
 		return nil, fmt.Errorf("%s@%s: README.md: %w", repo, latest.Tag, err)
 	}
 	var asset *Asset
@@ -91,7 +93,7 @@ func ValidateEntry(ctx context.Context, src Source, val Validator, repo string) 
 	h := sha256.Sum256(entry)
 	return &Validated{
 		Repo: repo, Owner: owner, Name: name,
-		Manifest: manifest, Release: latest, Version: version, Releases: releases,
+		Manifest: manifest, Release: latest, Version: version, Releases: releases, Readme: readme,
 		Asset: *asset, Entry: entry, SHA256: hex.EncodeToString(h[:]),
 	}, nil
 }

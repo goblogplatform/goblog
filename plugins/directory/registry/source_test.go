@@ -74,6 +74,15 @@ func fakeGitHub(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/zip")
 		w.Write([]byte("PK\x03\x04zip"))
 	})
+	// The v2.0.0 archive is one byte over the limit; Zipball must refuse it
+	// rather than hand back a truncated zip.
+	mux.HandleFunc("GET /repos/o/r/zipball/v2.0.0", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/codeload/o/r/v2.0.0", http.StatusFound)
+	})
+	mux.HandleFunc("GET /codeload/o/r/v2.0.0", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		io.CopyN(w, zeroReader{}, MaxAssetBytes+1)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -144,6 +153,9 @@ func TestGitHubSource(t *testing.T) {
 	}
 	if _, err := src.Zipball(ctx, "o", "r", "v9.9.9"); err == nil {
 		t.Error("Zipball of an unknown ref should fail")
+	}
+	if _, err := src.Zipball(ctx, "o", "r", "v2.0.0"); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("an archive over MaxAssetBytes should be refused, got %v", err)
 	}
 	if got := src.FileURL("o", "r", "v1.1.0", "screenshot.png"); got != "https://raw.githubusercontent.com/o/r/v1.1.0/screenshot.png" {
 		t.Errorf("FileURL = %q", got)

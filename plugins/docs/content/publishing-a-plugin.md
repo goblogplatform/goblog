@@ -24,7 +24,7 @@ And attached to every release: the compiled module, named as `entry` in the mani
 
 The full field table is on the [Writing a plugin](/docs/writing-a-plugin#the-manifest) page. What the directory enforces when it parses `goblog-plugin.json`:
 
-- `name` must match `^[a-z0-9-]+$` and equal the `name` your `identity` export returns. It has to be unique among the directory's plugins: if a *different* repository already publishes an entry with that name, your submission is refused, even after it validates.
+- `name` must match `^[a-z0-9-]+$` and equal the `name` your `identity` export returns. It has to be unique among the directory's plugins: if a *different* repository already publishes an entry with that name, your submission is refused, even after it validates. `submit` and `index` are reserved — they are the directory's own pages (`/plugins/submit`, `/plugins/index.json`).
 - `display_name`, `description` and `author` must be non-blank. `display_name` is the label in the directory listing; it does not have to equal the `display_name` your `identity` export returns, which titles the plugin's settings page in the admin.
 - `license` must be one of exactly these SPDX identifiers: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `MPL-2.0`, `Unlicense`, `0BSD`, `GPL-2.0-only`, `GPL-2.0-or-later`, `GPL-3.0-only`, `GPL-3.0-or-later`, `LGPL-2.1-only`, `LGPL-2.1-or-later`, `LGPL-3.0-only`, `LGPL-3.0-or-later`, `AGPL-3.0-only`, `AGPL-3.0-or-later`. The list is short on purpose; open an issue on goblog to add another.
 - `runtime` must be `"wasm"`.
@@ -79,7 +79,8 @@ Before validation starts, the directory refuses:
 - text that is not a GitHub repository (`enter a GitHub repository URL like https://github.com/owner/repo, or just owner/repo`);
 - a repository that is already listed (`this repository is already listed in the directory`, with a link to its page) or already waiting (`this repository is already under review`). A rejected repository may be submitted again;
 - more than **5 submissions per hour from one address** (`too many submissions from your address; try again in an hour`, HTTP 429). Refused attempts are not counted, so retrying does not push you further out;
-- a submission while another one is being checked (`another submission is being checked; try again in a minute`, HTTP 429). Public validations run one at a time.
+- a submission while another one is being checked (`another submission is being checked; try again in a minute`, HTTP 429). Public validations run one at a time;
+- a submission while 100 are already waiting for review (`the review queue is full; try again in a few days`). The queue is bounded as a whole, not only per address.
 
 Validation then runs synchronously, with a 90 second budget end to end, in this order:
 
@@ -89,7 +90,7 @@ Validation then runs synchronously, with a 90 second budget end to end, in this 
 4. **Asset.** The release must carry an asset named by `entry`, 16 MiB or smaller. It is downloaded.
 5. **Load.** The module is instantiated in goblog's own sandbox — no store, no allowed hosts, the runtime's 64 MB memory cap and call timeouts, and nothing cached afterwards — and its `identity`, `settings`, `pages` and `jobs` exports are read. This is the same check as `validate-plugin`. The identity must have a non-empty name and version.
 6. **Match.** The identity's `name` must equal the manifest's `name`; its `version` must equal the tag without `v`.
-7. **Docs.** `README.md`, `CHANGELOG.md` (if present) and every release body are rendered through GitHub's markdown API; the README and changelog HTML must each be 1 MiB or smaller. The repository's star count is fetched too — best effort, `0` if GitHub cannot be reached for it.
+7. **Docs.** `README.md`, `CHANGELOG.md` (if present) and every release body are rendered through GitHub's markdown API; the README, the changelog and each release's notes must each render to 1 MiB or smaller. The repository's star count is fetched too — best effort, `0` if GitHub cannot be reached for it.
 8. **Name.** The plugin's `name` must not already be published by a different repository.
 
 A failure is shown above the form with the reason — the texts are in [Common validation errors](#common-validation-errors). A pass shows **Queued for review as a plugin** and stores the built entry under **Pending review**. A maintainer sees the card in **Admin → Plugins → Directory**: the kind, display name, `name` and version, author, license and `min_goblog_version`, the `allowed_hosts` list as "Talks to: …" (or "No network access", with `*`, other globs and local-network addresses flagged), a link to the repository, and a **Show README** button that expands the rendered README. They approve or reject from there; approval usually takes a few days. An approved entry is in the index within minutes.
@@ -121,6 +122,7 @@ Messages are prefixed with the repository (`owner/name: …`) and, once a releas
 | `name must match ^[a-z0-9-]+$` | Lower-case letters, digits and hyphens only. |
 | `display_name is required` / `description is required` / `author is required` | Fill in the field; whitespace alone does not count. |
 | `license "…" is not a known SPDX identifier` | Use one of the identifiers listed above, spelled exactly. |
+| `name "submit" is reserved` (or `index`) | Those are the directory's own pages. Pick another name. |
 | `runtime must be "wasm": the directory only lists WebAssembly plugins; see /docs/publishing-a-plugin` | Set `"runtime": "wasm"`. Yaegi `.go` plugins are not listed. |
 | ``entry must be a .wasm release asset name (letters, digits, `_`, `.`, `-`)`` | `entry` is an asset file name ending in `.wasm`, with no directory part. |
 | `allowed_hosts entries must be hostnames, IPs or globs without scheme or path` | Write `api.example.com`, not `https://api.example.com/v1`. |
@@ -134,6 +136,7 @@ Messages are prefixed with the repository (`owner/name: …`) and, once a releas
 | `Name() is "…" but the manifest says "…"` | The `name` in `identity` and the `name` in `goblog-plugin.json` must be the same string. |
 | `Version() is "…" but the release tag says "…"` | Bump the version in `identity` to match the tag (without `v`) — or tag a release that matches the code. |
 | `rendered README.md is … bytes; the limit is 1048576 (1 MiB)` (or `CHANGELOG.md`) | Shrink the file — usually an embedded base64 image. Link images instead. |
+| `rendered release notes for v1.2.0 are … bytes; the limit is 1048576 (1 MiB)` | The same cap on one release's body. Edit the release on GitHub. |
 | `a different repository already publishes an entry with this name` | Another listed repository already owns that `name`. Pick another, or, if it is yours, ask a maintainer to delist the old one. |
 
 If the message is `Something went wrong on our side; please try again later.`, the failure was on the directory (GitHub unreachable, a database error) and is logged there — not something in your repository. Try again later.

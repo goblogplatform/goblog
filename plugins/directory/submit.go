@@ -140,11 +140,11 @@ func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base, kind string) (stri
 		c.Writer.WriteHeaderNow()
 		return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error()})
 	default:
-		// ErrBadRepo, ErrUnderReview, ErrNameTaken, *ValidationError: all
-		// carry a message meant for the submitter. Anything else is an
-		// operator problem and is logged, not shown.
+		// ErrBadRepo, ErrUnderReview, ErrNameTaken, ErrQueueFull,
+		// *ValidationError: all carry a message meant for the submitter.
+		// Anything else is an operator problem and is logged, not shown.
 		var ve *ValidationError
-		if errors.As(err, &ve) || errors.Is(err, ErrBadRepo) || errors.Is(err, ErrUnderReview) || errors.Is(err, ErrNameTaken) {
+		if errors.As(err, &ve) || errors.Is(err, ErrBadRepo) || errors.Is(err, ErrUnderReview) || errors.Is(err, ErrNameTaken) || errors.Is(err, ErrQueueFull) {
 			return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error()})
 		}
 		log.Printf("Directory plugin: submit %q: %v", repo, err)

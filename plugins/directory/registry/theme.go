@@ -54,9 +54,9 @@ type ThemeManifest struct {
 
 // reservedThemeNames are directory names the loader treats specially or
 // the base themes every goblog ships; a directory theme may not claim
-// them. forest is not here on purpose: it is compiled in today and is also
-// published to the directory, and the installer refuses to install over a
-// built-in anyway.
+// them (nor the route names in reservedNames, which apply to both kinds).
+// forest is not here on purpose: it is published to the directory and no
+// longer ships with goblog, so it is an ordinary directory theme.
 var reservedThemeNames = map[string]bool{"default": true, "minimal": true, "installed": true, "shared": true}
 
 // ParseThemeManifest decodes and validates a theme manifest.
@@ -68,7 +68,7 @@ func ParseThemeManifest(b []byte) (ThemeManifest, error) {
 	var problems []string
 	if !NamePattern.MatchString(m.Name) {
 		problems = append(problems, "name must match ^[a-z0-9-]+$")
-	} else if reservedThemeNames[m.Name] {
+	} else if reservedThemeNames[m.Name] || reservedNames[m.Name] {
 		problems = append(problems, fmt.Sprintf("name %q is reserved", m.Name))
 	}
 	for _, f := range []struct{ field, v string }{{"display_name", m.DisplayName}, {"description", m.Description}, {"author", m.Author}} {
@@ -240,6 +240,7 @@ type ValidatedTheme struct {
 	Release           Release
 	Version           string
 	Releases          []Release
+	Readme            []byte            // README.md at Release.Tag, kept so BuildTheme need not fetch it again
 	Files             map[string][]byte // templates/** and static/**
 	SHA256            string            // ContentHash(Files)
 	ScreenshotURL     string
@@ -268,7 +269,8 @@ func ValidateThemeEntry(ctx context.Context, src Source, tv ThemeValidator, repo
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", at, err)
 	}
-	if _, err := src.File(ctx, owner, name, latest.Tag, "README.md"); err != nil {
+	readme, err := src.File(ctx, owner, name, latest.Tag, "README.md")
+	if err != nil {
 		return nil, fmt.Errorf("%s: README.md: %w", at, err)
 	}
 	shot := ""
@@ -302,7 +304,7 @@ func ValidateThemeEntry(ctx context.Context, src Source, tv ThemeValidator, repo
 	}
 	return &ValidatedTheme{
 		Repo: repo, Owner: owner, Name: name, Manifest: manifest, Release: latest, Version: version, Releases: releases,
-		Files: files, SHA256: ContentHash(files), ScreenshotURL: src.FileURL(owner, name, latest.Tag, shot),
+		Readme: readme, Files: files, SHA256: ContentHash(files), ScreenshotURL: src.FileURL(owner, name, latest.Tag, shot),
 	}, nil
 }
 
@@ -337,7 +339,7 @@ func BuildTheme(ctx context.Context, src Source, tv ThemeValidator, repo, baseUR
 	} else {
 		entry.Stars = stars
 	}
-	readme, changelog, releases, err := renderDocs(ctx, src, v.Owner, v.Name, v.Release.Tag, v.Releases)
+	readme, changelog, releases, err := renderDocs(ctx, src, v.Owner, v.Name, v.Release.Tag, v.Readme, v.Releases)
 	if err != nil {
 		return DetailDoc{}, err
 	}
