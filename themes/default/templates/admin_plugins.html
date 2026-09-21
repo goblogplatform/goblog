@@ -145,7 +145,7 @@
       if (p.dynamic) {
         actions += '<button type="button" class="btn btn-sm btn-outline-danger me-1" data-action="uninstall" data-name="' + esc(p.name) + '">Uninstall</button>';
       }
-      actions += '<a class="btn btn-sm btn-link" href="/admin/settings#plugin-body-' + esc(p.name) + '">Settings</a>';
+      if (safeName(p.name)) { actions += '<a class="btn btn-sm btn-link" href="/admin/plugins/' + esc(safeName(p.name)) + '">Settings</a>'; }
       return '<tr id="installed-' + esc(p.name) + '">' +
         '<td><strong>' + esc(p.display_name) + '</strong><br><small class="text-muted">' + esc(p.name) + '</small></td>' +
         '<td>v' + esc(p.version) + '</td>' +

@@ -48,11 +48,12 @@ func New(db *gorm.DB, auth auth.IAuth, b *blog.Blog, version string) Admin {
 // ListThemes returns every theme goblog can activate: built-in and installed.
 func ListThemes() []string { return theme.List() }
 
-// getPluginSettings retrieves plugin settings groups from the registry on the Gin context.
-func (a *Admin) getPluginSettings(c *gin.Context) interface{} {
+// pluginRegistry returns the plugin registry the plugin middleware put on
+// the Gin context, or nil when none is wired.
+func pluginRegistry(c *gin.Context) *gplugin.Registry {
 	if reg, exists := c.Get("plugin_registry"); exists {
 		if r, ok := reg.(*gplugin.Registry); ok {
-			return r.GetAllSettings()
+			return r
 		}
 	}
 	return nil
@@ -672,17 +673,18 @@ func (a *Admin) AdminSettings(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, "Not Authorized")
 		return
 	}
+	settings := a.b.GetSettings()
 	c.HTML(http.StatusOK, "admin_settings.html", gin.H{
-		"posts":           a.b.GetPosts(true),
-		"logged_in":       a.auth.IsLoggedIn(c),
-		"is_admin":        a.auth.IsAdmin(c),
-		"version":         a.version,
-		"recent":          a.b.GetLatest(),
-		"admin_page":      true,
-		"settings":        a.b.GetSettings(),
-		"nav_pages":       a.b.GetNavPages(),
-		"themes":          ListThemes(),
-		"plugin_settings": a.getPluginSettings(c),
+		"posts":          a.b.GetPosts(true),
+		"logged_in":      a.auth.IsLoggedIn(c),
+		"is_admin":       a.auth.IsAdmin(c),
+		"version":        a.version,
+		"recent":         a.b.GetLatest(),
+		"admin_page":     true,
+		"settings":       settings,
+		"setting_groups": GroupSettings(settings),
+		"nav_pages":      a.b.GetNavPages(),
+		"themes":         ListThemes(),
 	})
 }
 

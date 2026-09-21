@@ -522,6 +522,7 @@ func (g *goblog) addRoutesInner() {
 	g.router.GET("/admin/comments", g._admin.AdminComments)
 	g.router.GET("/admin/users", g._admin.AdminUsers)
 	g.router.GET("/admin/plugins", g._admin.AdminPlugins)
+	g.router.GET("/admin/plugins/:name", g._admin.AdminPluginSettings)
 	g.router.GET("/admin/themes", g._admin.AdminThemes)
 	g.router.GET("/admin/pages/:id", g._admin.AdminEditPage)
 	g.router.GET("/admin/post-types", g._admin.AdminPostTypes)

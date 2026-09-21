@@ -2,20 +2,35 @@
 <script src="/js/admin-script.js"></script>
 <div class="container">
     {{ template "admin_nav.html" . }}
+    <div class="admin-panel">
 
     <h1>Site Settings</h1>
+    <p class="text-muted">Plugin settings live on each plugin's own page under <a href="/admin/plugins">Plugins</a>.</p>
     <div id="ajax-error" class="alert alert-danger" role="alert" style="display: none;"></div>
 
-    <div class="card mb-4">
-        <div class="card-header"><strong>General</strong></div>
-        <div class="card-body">
-            <form id="settings-form" enctype="multipart/form-data">
-                {{ $themes := .themes }}
-                {{ range .settings }}
+    {{ $themes := .themes }}
+    {{ $groups := .setting_groups }}
+    <!-- One form spans every tab so Save Settings sends every field, not just the visible pane. -->
+    <form id="settings-form" enctype="multipart/form-data">
+        <ul class="nav nav-tabs mb-3" id="settings-tabs" role="tablist">
+            {{ range $i, $g := $groups }}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link{{ if eq $i 0 }} active{{ end }}" id="tab-{{ $g.ID }}" data-bs-toggle="tab" data-bs-target="#pane-{{ $g.ID }}" type="button" role="tab" aria-controls="pane-{{ $g.ID }}">{{ $g.Title }}</button>
+            </li>
+            {{ end }}
+        </ul>
+        <div class="tab-content">
+            {{ range $i, $g := $groups }}
+            <div class="tab-pane fade{{ if eq $i 0 }} show active{{ end }}" id="pane-{{ $g.ID }}" role="tabpanel" aria-labelledby="tab-{{ $g.ID }}">
+                {{ if eq $g.ID "advanced" }}
+                <p class="text-muted">Settings without a place in the tabs above, shown by their raw key.</p>
+                {{ end }}
+                {{ range $g.Fields }}
                 <div class="mb-3">
-                    <label for="{{ .Key }}" class="form-label">{{ .Key }}</label>
+                    <label for="{{ .Key }}" class="form-label">{{ .Label }}</label>
                     {{ if eq .Type "file" }}
                     <input type="{{ .Type }}" id="{{ .Key }}" name="{{ .Key }}" class="form-control" oninput="uploadFile(this)" required>
+                    {{ if .Value }}<div class="form-text">Current: <code>{{ .Value }}</code> — choose a file to replace it.</div>{{ end }}
                     {{ else if eq .Type "textarea" }}
                     <textarea id="{{ .Key }}" name="{{ .Key }}" class="form-control" rows="5">{{ .Value }}</textarea>
                     {{ else if eq .Type "checkbox" }}
@@ -23,64 +38,46 @@
                         <input type="checkbox" id="{{ .Key }}" name="{{ .Key }}" class="form-check-input" {{ if eq .Value "true" }}checked{{ end }}>
                     </div>
                     {{ else if eq .Key "theme" }}
-                    <select id="{{ .Key }}" name="{{ .Key }}" class="form-control">
+                    <select id="{{ .Key }}" name="{{ .Key }}" class="form-select">
                         {{ $current := .Value }}
                         {{ range $themes }}
                         <option value="{{ . }}" {{ if eq . $current }}selected{{ end }}>{{ . }}</option>
                         {{ end }}
                     </select>
+                    <div class="form-text">Install and preview themes on the <a href="/admin/themes">Themes</a> page.</div>
                     {{ else }}
                     <input type="{{ .Type }}" id="{{ .Key }}" name="{{ .Key }}" value="{{ .Value }}" class="form-control" required>
                     {{ end }}
+                    {{ if .Help }}<div class="form-text">{{ .Help }}</div>{{ end }}
                 </div>
                 {{ end }}
-                <button type="button" class="btn btn-primary" onclick="updateSettings();">
-                    Save Settings
-                </button>
-            </form>
-        </div>
-    </div>
-
-    {{ range .plugin_settings }}
-    {{ $pluginName := .PluginName }}
-    {{ $values := .CurrentValues }}
-    {{ $enabled := index $values "enabled" }}
-    <div class="card mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center" style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#plugin-body-{{ $pluginName }}">
-            <span><strong>Plugin: {{ .DisplayName }}</strong> <span class="text-muted">({{ .PluginName }})</span></span>
-            <div class="form-check form-switch mb-0" onclick="event.stopPropagation();">
-                <input class="form-check-input plugin-enable-toggle" type="checkbox" id="{{ $pluginName }}.enabled" name="{{ $pluginName }}.enabled" data-plugin="{{ $pluginName }}" {{ if eq $enabled "true" }}checked{{ end }}
-                    onchange="togglePluginEnabled(this);">
-                <label class="form-check-label" for="{{ $pluginName }}.enabled">Enabled</label>
             </div>
+            {{ end }}
         </div>
-        <div class="collapse" id="plugin-body-{{ $pluginName }}">
-            <div class="card-body">
-                <form class="plugin-settings-form" data-plugin="{{ $pluginName }}">
-                    {{ range .Settings }}
-                    {{ if ne .Key "enabled" }}
-                    <div class="mb-3">
-                        <label for="{{ $pluginName }}.{{ .Key }}" class="form-label">{{ .Label }}</label>
-                        {{ if .Description }}<small class="text-muted d-block mb-1">{{ .Description }}</small>{{ end }}
-                        {{ if eq .Type "textarea" }}
-                        <textarea id="{{ $pluginName }}.{{ .Key }}" name="{{ $pluginName }}.{{ .Key }}" class="form-control" rows="3">{{ index $values .Key }}</textarea>
-                        {{ else if eq .Type "password" }}
-                        <input type="password" id="{{ $pluginName }}.{{ .Key }}" name="{{ $pluginName }}.{{ .Key }}" value="" class="form-control" autocomplete="new-password" placeholder="{{ if index $values .Key }}(set — leave blank to keep){{ else }}(not set){{ end }}">
-                        {{ else }}
-                        <input type="text" id="{{ $pluginName }}.{{ .Key }}" name="{{ $pluginName }}.{{ .Key }}" value="{{ index $values .Key }}" class="form-control">
-                        {{ end }}
-                    </div>
-                    {{ end }}
-                    {{ end }}
-                    <button type="button" class="btn btn-primary" onclick="updatePluginSettings(this);">
-                        Save {{ .DisplayName }} Settings
-                    </button>
-                </form>
-            </div>
-        </div>
-    </div>
-    {{ end }}
+        <button type="button" class="btn btn-primary" onclick="updateSettings();">
+            Save Settings
+        </button>
+    </form>
 
+    </div> <!-- / admin-panel -->
 </div> <!-- / container -->
+
+<script>
+// Keep the open tab in location.hash (#appearance) so a save that reloads
+// the page, or a link from elsewhere, lands on the same tab.
+(function () {
+    var tabs = document.querySelectorAll('#settings-tabs [data-bs-toggle="tab"]');
+    var wanted = location.hash.replace(/^#/, '');
+    tabs.forEach(function (btn) {
+        var id = btn.getAttribute('data-bs-target').replace(/^#pane-/, '');
+        if (wanted && id === wanted) {
+            bootstrap.Tab.getOrCreateInstance(btn).show();
+        }
+        btn.addEventListener('shown.bs.tab', function () {
+            history.replaceState(null, '', '#' + id);
+        });
+    });
+})();
+</script>
 
 {{ template "footer.html" .}}

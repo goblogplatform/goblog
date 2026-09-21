@@ -482,6 +482,26 @@ func (r *Registry) GetAllSettings() []PluginSettingsGroup {
 	return groups
 }
 
+// PluginSettings returns one plugin's setting definitions and current
+// values, and whether a plugin by that name is registered. Unlike
+// GetAllSettings it includes a plugin that declares no settings, since the
+// enabled switch applies to every plugin.
+func (r *Registry) PluginSettings(pluginName string) (PluginSettingsGroup, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e := r.findLocked(pluginName)
+	if e == nil {
+		return PluginSettingsGroup{}, false
+	}
+	p := e.plugin
+	return PluginSettingsGroup{
+		PluginName:    p.Name(),
+		DisplayName:   p.DisplayName(),
+		Settings:      p.Settings(),
+		CurrentValues: r.getPluginSettings(p.Name()),
+	}, true
+}
+
 // IsPluginEnabled checks if a plugin is enabled via its settings.
 func (r *Registry) IsPluginEnabled(pluginName string) bool {
 	settings := r.getPluginSettings(pluginName)

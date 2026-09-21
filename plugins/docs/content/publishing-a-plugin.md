@@ -25,7 +25,7 @@ And attached to every release: the compiled module, named as `entry` in the mani
 The full field table is on the [Writing a plugin](/docs/writing-a-plugin#the-manifest) page. What the directory enforces when it parses `goblog-plugin.json`:
 
 - `name` must match `^[a-z0-9-]+$` and equal the `name` your `identity` export returns. It has to be unique among the directory's plugins: if a *different* repository already publishes an entry with that name, your submission is refused, even after it validates.
-- `display_name`, `description` and `author` must be non-blank. `display_name` is the label in the directory listing; it does not have to equal the `display_name` your `identity` export returns, which labels the plugin's settings group in the admin.
+- `display_name`, `description` and `author` must be non-blank. `display_name` is the label in the directory listing; it does not have to equal the `display_name` your `identity` export returns, which titles the plugin's settings page in the admin.
 - `license` must be one of exactly these SPDX identifiers: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `MPL-2.0`, `Unlicense`, `0BSD`, `GPL-2.0-only`, `GPL-2.0-or-later`, `GPL-3.0-only`, `GPL-3.0-or-later`, `LGPL-2.1-only`, `LGPL-2.1-or-later`, `LGPL-3.0-only`, `LGPL-3.0-or-later`, `AGPL-3.0-only`, `AGPL-3.0-or-later`. The list is short on purpose; open an issue on goblog to add another.
 - `runtime` must be `"wasm"`.
 - `entry` defaults to `plugin.wasm`; otherwise letters, digits, `_`, `.` and `-` only, ending in `.wasm`, with no path.
@@ -102,7 +102,7 @@ The index entry for your plugin is built from the manifest, the latest release a
 
 The directory's `refresh-directory` job re-checks every approved repository once the last refresh is older than the site's `refresh_minutes` setting (default 360, minimum 15). If the latest `vX.Y.Z` release is the one already listed, only the star count is refreshed. If there is a newer release, the whole validation above runs again against it and the listing is replaced. **A failed rebuild keeps the old listing**: the error is recorded on the entry and shown to the maintainer as "failed" next to "serving vX.Y.Z", but a broken release never takes a plugin off the directory. Fix the release (or publish a new one) and the next refresh picks it up; a maintainer can also press **Rebuild** to re-check at once.
 
-Any goblog can host a directory (turn it on under **Admin → Settings → Plugin Directory**), so submitting to one instance does not list you on another; goblog.live is the one most installs read from.
+Any goblog can host a directory (turn it on under **Admin → Plugins → Plugin Directory → Settings**), so submitting to one instance does not list you on another; goblog.live is the one most installs read from.
 
 Plugins run inside the goblog process of whoever installs them, [sandboxed](/docs#trust-model) but trusted with the hosts they declare and the settings they are given. Keep them small and readable; the directory is curated and maintainers may decline or delist entries.
 

@@ -860,6 +860,122 @@ func TestAdminSettings_RendersCheckboxSetting(t *testing.T) {
 	}
 }
 
+// newSettingsPage seeds the given settings, renders /admin/settings with the
+// default theme and returns the status and body.
+func newSettingsPage(t *testing.T, isAdmin bool, rows ...blog.Setting) (int, string) {
+	t.Helper()
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Setting{}, &blog.Page{})
+	for _, s := range rows {
+		db.Create(&s)
+	}
+	a := &Auth{}
+	b := blog.New(db, a, "test")
+	ad := admin.New(db, a, &b, "test")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(sessions.Sessions("s", cookie.NewStore([]byte("test"))))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/admin/settings", ad.AdminSettings)
+
+	a.On("IsAdmin", mock.Anything).Return(isAdmin)
+	a.On("IsLoggedIn", mock.Anything).Return(isAdmin)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/admin/settings", nil)
+	router.ServeHTTP(w, req)
+	return w.Code, w.Body.String()
+}
+
+// TestAdminSettings_NonAdmin_Unauthorized checks the Settings page is gated
+// like every other admin page.
+func TestAdminSettings_NonAdmin_Unauthorized(t *testing.T) {
+	if code, _ := newSettingsPage(t, false); code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", code)
+	}
+}
+
+// TestAdminSettings_GroupsEverySeededKey checks the Settings page draws one
+// tab per group, puts every seeded key's input inside one form under a
+// human label (so Save Settings, which walks #settings-form, sends them
+// all), keeps the theme <select> with its Themes hint, and has no plugin
+// cards any more.
+func TestAdminSettings_GroupsEverySeededKey(t *testing.T) {
+	var rows []blog.Setting
+	for k, typ := range seededSettings {
+		value := "v-" + k
+		if k == "theme" {
+			value = "default" // must be a real theme to be the selected <option>
+		}
+		rows = append(rows, blog.Setting{Key: k, Type: typ, Value: value})
+	}
+	code, body := newSettingsPage(t, true, rows...)
+	if code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", code)
+	}
+	// Past the header (which has the search form) the page is the settings.
+	if i := strings.Index(body, `class="admin-panel"`); i < 0 {
+		t.Fatalf("page missing the .admin-panel wrapper")
+	} else {
+		body = body[i:]
+	}
+	for _, id := range []string{"site", "appearance", "comments", "directories"} {
+		if !strings.Contains(body, `id="tab-`+id+`"`) || !strings.Contains(body, `id="pane-`+id+`"`) {
+			t.Errorf("page missing tab %s", id)
+		}
+	}
+	if strings.Contains(body, `id="tab-advanced"`) {
+		t.Errorf("page has an Advanced tab with nothing to put in it")
+	}
+	if n := strings.Count(body, "<form"); n != 1 {
+		t.Errorf("expected one form spanning the tabs, found %d", n)
+	}
+	for key := range seededSettings {
+		if !strings.Contains(body, `name="`+key+`"`) {
+			t.Errorf("page missing an input for %s", key)
+		}
+		if strings.Contains(body, `class="form-label">`+key+`<`) {
+			t.Errorf("%s is labelled by its raw key", key)
+		}
+	}
+	for _, want := range []string{`<select id="theme" name="theme"`, `<option value="default" selected>`, `href="/admin/themes"`, `Plugin settings live on each plugin`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	for _, gone := range []string{"plugin-body-", "plugin-settings-form", "updatePluginSettings"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("page still has plugin settings markup %q", gone)
+		}
+	}
+	if m := regexp.MustCompile(`class="h[1-6]"`).FindString(body); m != "" {
+		t.Errorf("page uses Tachyons-clashing %s", m)
+	}
+}
+
+// TestAdminSettings_UnknownKeyInAdvanced checks a setting the layout does
+// not know still gets an input, under an Advanced tab labelled by its key.
+func TestAdminSettings_UnknownKeyInAdvanced(t *testing.T) {
+	code, body := newSettingsPage(t, true,
+		blog.Setting{Key: "site_title", Type: "text", Value: "T"},
+		blog.Setting{Key: "some_new_thing", Type: "text", Value: "x"},
+	)
+	if code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", code)
+	}
+	if !strings.Contains(body, `id="tab-advanced"`) {
+		t.Fatalf("page missing the Advanced tab")
+	}
+	adv := body[strings.Index(body, `id="pane-advanced"`):]
+	if !strings.Contains(adv, `for="some_new_thing" class="form-label">some_new_thing<`) || !strings.Contains(adv, `name="some_new_thing" value="x"`) {
+		t.Errorf("Advanced pane missing the unknown key's input: %.600s", adv)
+	}
+}
+
 // newUsersHarness wires an Admin with a real auth.Auth for user management
 // and the given theme's templates, returning the router, the mock auth and
 // the DB.

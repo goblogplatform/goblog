@@ -10,7 +10,7 @@
     {{ if index $disabledPlugins .page.PageType }}
     <div class="alert alert-warning" role="alert">
         <strong>Plugin disabled.</strong> This page's type (<code>{{ .page.PageType }}</code>) is provided by a plugin that is currently disabled.
-        The page will not be visible to visitors until the plugin is enabled in <a href="/admin/settings">Settings</a>.
+        The page will not be visible to visitors until the plugin is enabled under <a href="/admin/plugins">Plugins</a>.
     </div>
     {{ end }}
 
