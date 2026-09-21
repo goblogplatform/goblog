@@ -128,7 +128,7 @@ func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base, kind string) (stri
 			}
 		}
 		return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error()})
-	case errors.Is(err, ErrRateLimited), errors.Is(err, ErrBusy):
+	case errors.Is(err, ErrRateLimited), errors.Is(err, ErrBusy), errors.Is(err, ErrQueueFull):
 		// gin buffers a status set with c.Status and blog's later
 		// Render(c, 200, …) would replace it; writing the header now makes
 		// the 429 stick (gin logs a one-line warning when blog then tries
@@ -141,8 +141,8 @@ func (p *Plugin) renderSubmit(ctx *gplugin.HookContext, base, kind string) (stri
 		return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error()})
 	default:
 		// ErrBadRepo, ErrUnderReview, ErrNameTaken, *ValidationError: all
-		// carry a message meant for the submitter. Anything else is an
-		// operator problem and is logged, not shown.
+		// carry a message meant for the submitter.
+		// Anything else is an operator problem and is logged, not shown.
 		var ve *ValidationError
 		if errors.As(err, &ve) || errors.Is(err, ErrBadRepo) || errors.Is(err, ErrUnderReview) || errors.Is(err, ErrNameTaken) {
 			return page(submitView{Base: base, Kind: kind, Repo: repo, Error: err.Error()})

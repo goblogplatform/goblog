@@ -29,6 +29,12 @@ type Manifest struct {
 // NamePattern is the rule for plugin names; the directory routes on it.
 var NamePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// reservedNames are entry names the directory's own routes occupy, for
+// plugins and themes alike: /plugins/submit is the submission form and
+// /plugins/index.json the index (likewise under /themes), so an entry
+// called submit or index could never be reached at /plugins/<name>.
+var reservedNames = map[string]bool{"submit": true, "index": true}
+
 // entryPattern is the rule for the manifest's entry: the name of a .wasm
 // asset attached to each release, with no path separators or odd characters.
 var entryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+\.wasm$`)
@@ -86,6 +92,8 @@ func ParseManifest(b []byte) (Manifest, error) {
 	var problems []string
 	if !NamePattern.MatchString(m.Name) {
 		problems = append(problems, "name must match ^[a-z0-9-]+$")
+	} else if reservedNames[m.Name] {
+		problems = append(problems, fmt.Sprintf("name %q is reserved", m.Name))
 	}
 	for field, v := range map[string]string{"display_name": m.DisplayName, "description": m.Description, "author": m.Author} {
 		if strings.TrimSpace(v) == "" {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/template/parse"
 
 	"github.com/gin-gonic/gin"
 )
@@ -75,8 +76,9 @@ func Load(name string, funcMap template.FuncMap) (*template.Template, string, er
 
 // ValidateFiles checks a theme's files as the installer and the directory
 // see them (paths relative to the theme root, e.g. "templates/home.html"):
-// there must be at least one template, and each templates/*.html must parse
-// on top of the shared and default sets. Files in subdirectories of
+// there must be at least one template, each templates/*.html must parse
+// on top of the shared and default sets, and every {{ template }} they
+// reference must exist somewhere in that set. Files in subdirectories of
 // templates/ are not loaded by Load and are ignored here too.
 func ValidateFiles(files map[string][]byte) error {
 	tmpl, err := base(FuncMap())
@@ -101,7 +103,79 @@ func ValidateFiles(files map[string][]byte) error {
 			return fmt.Errorf("%s: %w", p, err)
 		}
 	}
+	return checkTemplateRefs(tmpl, names)
+}
+
+// checkTemplateRefs walks the parsed trees of the theme's own templates
+// (paths as given to ValidateFiles) and reports the first {{ template }}
+// that names something existing neither in the theme nor in the shared and
+// default sets. Parsing alone does not catch it — text/template resolves
+// names at execution — so the page would 500 instead. A name the theme
+// does not ship is fine when default's copy is there to fall back on.
+func checkTemplateRefs(tmpl *template.Template, paths []string) error {
+	defined := map[string]bool{}
+	for _, t := range tmpl.Templates() {
+		if t.Tree != nil {
+			defined[t.Name()] = true
+		}
+	}
+	// A {{ define }} block inside a theme file is its own template in the
+	// set; its Tree.ParseName is the file it was parsed from, which is how
+	// the error names the right file.
+	byFile := make(map[string]string, len(paths)) // template name → theme path
+	for _, p := range paths {
+		byFile[path.Base(p)] = p
+	}
+	all := tmpl.Templates()
+	sort.Slice(all, func(i, j int) bool { return all[i].Name() < all[j].Name() }) // deterministic first error
+	for _, t := range all {
+		if t.Tree == nil {
+			continue
+		}
+		p, ours := byFile[t.Tree.ParseName]
+		if !ours {
+			continue
+		}
+		if ref := undefinedRef(t.Tree.Root, defined); ref != "" {
+			return fmt.Errorf("%s: template %q references template %q, which neither the theme nor goblog's shared and default templates define", p, t.Name(), ref)
+		}
+	}
 	return nil
+}
+
+// undefinedRef returns the name of the first {{ template }} under n that is
+// not in defined, or "". Only lists, branches and template nodes can hold
+// a reference; everything else is a leaf here.
+func undefinedRef(n parse.Node, defined map[string]bool) string {
+	switch n := n.(type) {
+	case *parse.ListNode:
+		if n == nil { // an absent {{ else }}
+			return ""
+		}
+		for _, c := range n.Nodes {
+			if ref := undefinedRef(c, defined); ref != "" {
+				return ref
+			}
+		}
+	case *parse.IfNode:
+		return undefinedBranchRef(&n.BranchNode, defined)
+	case *parse.RangeNode:
+		return undefinedBranchRef(&n.BranchNode, defined)
+	case *parse.WithNode:
+		return undefinedBranchRef(&n.BranchNode, defined)
+	case *parse.TemplateNode:
+		if !defined[n.Name] {
+			return n.Name
+		}
+	}
+	return ""
+}
+
+func undefinedBranchRef(b *parse.BranchNode, defined map[string]bool) string {
+	if ref := undefinedRef(b.List, defined); ref != "" {
+		return ref
+	}
+	return undefinedRef(b.ElseList, defined)
 }
 
 // StaticHandler serves /theme/* from the active theme's static/ directory,
