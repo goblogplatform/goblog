@@ -53,7 +53,7 @@ var settingGroups = []settingGroupDef{
 		{Key: "robots_tag", Label: "Robots tag", Help: "Value of the robots meta tag, for example \"index, follow\"."},
 	}},
 	{ID: "appearance", Title: "Appearance", Settings: []settingMeta{
-		{Key: "theme", Label: "Theme", Help: "Browse, install and preview themes under Themes."},
+		{Key: "theme", Label: "Theme"}, // help is the template's linked hint to the Themes page
 		{Key: "landing_page_image", Label: "Landing page image", Help: "Picture shown on the landing page."},
 		{Key: "favicon", Label: "Favicon", Help: "Icon shown in the browser tab."},
 		{Key: "custom_header_code", Label: "Custom header code", Help: "HTML added to the <head> of every page."},

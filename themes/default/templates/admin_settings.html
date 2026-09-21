@@ -29,7 +29,7 @@
                 <div class="mb-3">
                     <label for="{{ .Key }}" class="form-label">{{ .Label }}</label>
                     {{ if eq .Type "file" }}
-                    <input type="{{ .Type }}" id="{{ .Key }}" name="{{ .Key }}" class="form-control" oninput="uploadFile(this)" required>
+                    <input type="{{ .Type }}" id="{{ .Key }}" name="{{ .Key }}" class="form-control" oninput="uploadFile(this)">
                     {{ if .Value }}<div class="form-text">Current: <code>{{ .Value }}</code> — choose a file to replace it.</div>{{ end }}
                     {{ else if eq .Type "textarea" }}
                     <textarea id="{{ .Key }}" name="{{ .Key }}" class="form-control" rows="5">{{ .Value }}</textarea>

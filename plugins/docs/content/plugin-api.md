@@ -54,7 +54,7 @@ func identity() int32 {
 The key `enabled` is special: it is the on/off switch on the plugin's settings page (**Admin → Plugins → Settings**, also in the Installed list there), stored as `true` or `false`. Its effect:
 
 - **Template hooks and jobs:** when you declare `enabled`, goblog skips `template_head`, `template_footer`, `template_data` and `run_job` unless the stored value is `true`. Without an `enabled` setting they always run.
-- **Pages:** a page is served, and listed in the nav, only while the owning plugin's stored `enabled` is `true` — with or without a declaration. A plugin that exports `pages` should therefore declare `enabled` (with `default` `true` if it should work out of the box) — a plugin with no settings at all has no card, so no switch — or its pages answer *Page Not Available*.
+- **Pages:** a page is served, and listed in the nav, only while the owning plugin's stored `enabled` is `true` — with or without a declaration. A plugin that exports `pages` should therefore declare `enabled` (with `default` `true` if it should work out of the box) or its pages answer *Page Not Available* until an admin flips the switch — every installed plugin has one on its Admin → Plugins settings page, declared settings or not.
 
 ```go
 //go:wasmexport settings
