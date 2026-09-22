@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"goblog/blog"
 	gplugin "goblog/plugin"
@@ -275,5 +276,26 @@ func TestSnippet(t *testing.T) {
 	}
 	if s := snippet("héllo wörld needle", "needle"); !strings.HasSuffix(s, "needle") || strings.HasPrefix(s, "…") {
 		t.Errorf("utf-8 text = %q", s)
+	}
+}
+
+// TestSnippet_UTF8: cuts never split a rune — a UTF-8 continuation byte
+// such as the 0xA0 of a no-break space must not pass for whitespace — and
+// a lower-casing that changes byte length (İ → i̇) must not index past
+// the text.
+func TestSnippet_UTF8(t *testing.T) {
+	nbsp := strings.Repeat("a ", 40) // 120 bytes: every other byte is 0xA0
+	text := nbsp + " needle " + nbsp
+	s := snippet(text, "needle")
+	if !utf8.ValidString(s) || !strings.Contains(s, "needle") {
+		t.Errorf("snippet split a rune: %q", s)
+	}
+	dotted := strings.Repeat("İ", 100) + " needle" // lower-cased, 100 bytes longer
+	s = snippet(dotted, "needle")
+	if !utf8.ValidString(s) || !strings.Contains(s, "needle") {
+		t.Errorf("length-changing lower-case: %q", s)
+	}
+	if s = snippet(strings.Repeat("İ", 200), "İ"); !utf8.ValidString(s) {
+		t.Errorf("invalid utf-8: %q", s)
 	}
 }

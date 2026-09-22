@@ -3,7 +3,6 @@ package docs
 import (
 	"regexp"
 	"strings"
-	"unicode"
 
 	gplugin "goblog/plugin"
 )
@@ -31,24 +30,23 @@ func searchText(src []byte) string {
 // ellipses where text was left out. With no occurrence it is the start of
 // the text.
 func snippet(text, q string) string {
+	// Lower-casing can change byte length (İ is 2 bytes, i̇ is 3), so the
+	// index is approximate for such text and clamped; the boundary walk
+	// below lands on a real word boundary either way.
 	at := strings.Index(strings.ToLower(text), strings.ToLower(q))
 	if at < 0 {
 		at = 0
 	}
-	start := at - snippetLen/3
-	if start < 0 {
-		start = 0
-	}
-	end := start + snippetLen
-	if end > len(text) {
-		end = len(text)
-	}
-	// Move to word boundaries so the snippet never starts or ends mid-word
-	// (or mid-rune).
-	for start > 0 && !unicode.IsSpace(rune(text[start-1])) {
+	at = min(at, len(text))
+	start := max(at-snippetLen/3, 0)
+	end := min(start+snippetLen, len(text))
+	// Move to word boundaries so the snippet never starts or ends mid-word.
+	// Only ASCII whitespace counts: it is never a UTF-8 continuation byte,
+	// so the cut cannot split a rune.
+	for start > 0 && !asciiSpace(text[start-1]) {
 		start--
 	}
-	for end < len(text) && !unicode.IsSpace(rune(text[end])) {
+	for end < len(text) && !asciiSpace(text[end]) {
 		end++
 	}
 	out := text[start:end]
@@ -60,6 +58,8 @@ func snippet(text, q string) string {
 	}
 	return out
 }
+
+func asciiSpace(b byte) bool { return b == ' ' || b == '\n' || b == '\t' || b == '\r' }
 
 // Search answers the site search (plugin.Searcher) with every page whose
 // title or text contains the query — title matches first, then text
