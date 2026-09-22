@@ -1923,6 +1923,29 @@ func TestPostHTML(t *testing.T) {
 	}
 }
 
+// divContents returns the text between the first tag in body that starts
+// with openTag and that tag's next closing </div>, so a test can assert
+// against the content of a specific element rather than the whole page.
+// The post body under test never nests a <div> inside itself, so the first
+// </div> after the opening tag is the matching close.
+func divContents(t *testing.T, body, openTag string) string {
+	t.Helper()
+	start := strings.Index(body, openTag)
+	if start < 0 {
+		t.Fatalf("did not find %q in page", openTag)
+	}
+	contentStart := strings.Index(body[start:], ">")
+	if contentStart < 0 {
+		t.Fatalf("unterminated tag %q", openTag)
+	}
+	contentStart += start + 1
+	end := strings.Index(body[contentStart:], "</div>")
+	if end < 0 {
+		t.Fatalf("no closing </div> for %q", openTag)
+	}
+	return body[contentStart : contentStart+end]
+}
+
 // TestPostPage_ServerRendered: the post body and its comments are HTML in
 // the response, so a crawler or link-preview bot that runs no JavaScript
 // sees the content; showdown and DOMPurify are gone from the page (#617).
@@ -1956,10 +1979,18 @@ func TestPostPage_ServerRendered(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d", w.Code)
 	}
-	for _, want := range []string{"<strong>bold</strong>", `<iframe src="https://www.youtube.com/embed/x">`, "<strong>post</strong>"} {
+	for _, want := range []string{"<strong>bold</strong>", "<strong>post</strong>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}
+	}
+	// The iframe must be inside the post body itself, not merely somewhere
+	// on the page: footer.html also renders an HTMLPreview of this same
+	// post, which would contain the same raw iframe even if the body were
+	// never rendered on the server.
+	postBody := divContents(t, body, `<div id="html"`)
+	if !strings.Contains(postBody, `<iframe src="https://www.youtube.com/embed/x">`) {
+		t.Errorf("post body missing iframe: %q", postBody)
 	}
 	for _, gone := range []string{"showdown", "purify", "DOMPurify", "<noscript>"} {
 		if strings.Contains(body, gone) {

@@ -20,6 +20,7 @@ require (
 require (
 	github.com/extism/go-sdk v1.7.1
 	github.com/gobwas/glob v1.0.0
+	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/traefik/yaegi v0.16.1
 	github.com/yuin/goldmark v1.8.6
@@ -60,7 +61,6 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.23 // indirect
 	github.com/mattn/go-sqlite3 v1.14.24 // indirect
-	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect

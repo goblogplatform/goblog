@@ -19,7 +19,7 @@ func (a *Admin) Preview(c *gin.Context) {
 	var body struct {
 		Content string `json:"content"`
 	}
-	if err := c.BindJSON(&body); err != nil {
+	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, "Malformed request")
 		return
 	}

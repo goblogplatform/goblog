@@ -334,6 +334,11 @@ function setupEditorTabs(textareaID) {
         preview.style.display = previewing ? '' : 'none';
         writeTab.classList.toggle('active', !previewing);
         previewTab.classList.toggle('active', previewing);
+        // CodeMirror (which simplemde wraps) can render blank or mis-sized
+        // after being un-hidden; refresh it when switching back to Write.
+        if (!previewing && typeof simplemde !== 'undefined' && simplemde && simplemde.codemirror) {
+            simplemde.codemirror.refresh();
+        }
     }
 
     writeTab.addEventListener('click', function (e) { e.preventDefault(); show('write'); });
