@@ -86,8 +86,9 @@ type Installed struct {
 	Active          bool   `json:"active"`
 	UpdateAvailable bool   `json:"update_available"`
 	LatestVersion   string `json:"latest_version,omitempty"`
-	// ScreenshotURL is the directory's screenshot for the theme, when the
-	// index lists it; built-in and hand-installed themes have none.
+	// ScreenshotURL previews the theme: the admin route serving its own
+	// screenshot.png when it has one on disk (built-ins ship one), else
+	// the directory's screenshot when the index lists it, else empty.
 	ScreenshotURL string `json:"screenshot_url,omitempty"`
 }
 
@@ -197,6 +198,10 @@ func installedVersion(dir string) (installedManifest, bool) {
 	return m, true
 }
 
+// ScreenshotPath is the admin route that serves an on-disk theme's own
+// screenshot (see theme.Screenshot); the name is a validated slug.
+func ScreenshotPath(name string) string { return "/admin/themes/" + name + "/screenshot" }
+
 // Status lists every theme on disk (with update info for installed ones)
 // and the directory themes that are not installed.
 func (i *Installer) Status() Status {
@@ -234,6 +239,9 @@ func (i *Installer) Status() Status {
 			row.LatestVersion = e.Version
 			row.UpdateAvailable = row.Version != "" && pinstaller.Newer(e.Version, row.Version)
 			row.ScreenshotURL = e.ScreenshotURL
+		}
+		if _, ok := theme.Screenshot(name); ok {
+			row.ScreenshotURL = ScreenshotPath(name)
 		}
 		st.Installed = append(st.Installed, row)
 	}

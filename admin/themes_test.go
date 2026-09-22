@@ -133,6 +133,7 @@ func newThemesHarness(t *testing.T) *themesHarness {
 	router.POST("/api/v1/themes/activate", adp.ActivateTheme)
 	router.DELETE("/api/v1/themes/:name", adp.UninstallTheme)
 	router.POST("/api/v1/themes/refresh", adp.RefreshThemeDirectory)
+	router.GET("/admin/themes/:name/screenshot", adp.ThemeScreenshot)
 
 	h.router, h.auth, h.ad, h.db = router, a, adp, db
 	return h
@@ -153,10 +154,38 @@ func TestThemeAPI_NonAdmin(t *testing.T) {
 		{"GET", "/api/v1/themes/status"}, {"GET", "/api/v1/themes/directory"},
 		{"POST", "/api/v1/themes/install"}, {"POST", "/api/v1/themes/update"},
 		{"POST", "/api/v1/themes/activate"}, {"DELETE", "/api/v1/themes/ocean"},
-		{"POST", "/api/v1/themes/refresh"},
+		{"POST", "/api/v1/themes/refresh"}, {"GET", "/admin/themes/default/screenshot"},
 	} {
 		if w := h.do(c.m, c.p, `{"name":"ocean"}`); w.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s: expected 401, got %d", c.m, c.p, w.Code)
+		}
+	}
+}
+
+// TestThemeScreenshot: the admin route serves a theme's own screenshot
+// file with an image content type, and answers 404 for a theme without
+// one, an unknown theme, and a name that is not a theme slug (so the
+// path can never reach the filesystem).
+func TestThemeScreenshot(t *testing.T) {
+	h := newThemesHarness(t)
+	h.auth.On("IsAdmin", mock.Anything).Return(true)
+	png := []byte("\x89PNG\r\n\x1a\n fake")
+	os.WriteFile(filepath.Join(theme.BuiltinRoot, "default", "screenshot.png"), png, 0o644)
+	os.WriteFile(filepath.Join(theme.BuiltinRoot, "screenshot.png"), []byte("root"), 0o644)
+
+	w := h.do("GET", "/admin/themes/default/screenshot", "")
+	if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), png) {
+		t.Fatalf("default: %d %q", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc == "" {
+		t.Error("a screenshot should be cacheable by the admin's browser")
+	}
+	for _, name := range []string{"minimal", "nope", "..", "%2e%2e", "Default"} {
+		if w := h.do("GET", "/admin/themes/"+name+"/screenshot", ""); w.Code != http.StatusNotFound {
+			t.Errorf("%s: expected 404, got %d", name, w.Code)
 		}
 	}
 }
