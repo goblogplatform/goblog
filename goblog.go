@@ -430,7 +430,7 @@ func main() {
 	router.Use(revalidateStatic())
 
 	// Theme static files: the active theme's static/, falling back to default's
-	router.GET("/theme/*filepath", theme.StaticHandler(currentTheme))
+	getAndHead(router, "/theme/*filepath", theme.StaticHandler(currentTheme))
 
 	getAndHead(router, "/", goblog.rootHandler)
 	getAndHead(router, "/login", goblog.loginHandler)

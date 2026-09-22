@@ -202,4 +202,12 @@ func TestStaticHandler_FallsBackToDefault(t *testing.T) {
 	if code, _ := get("/theme/../../secret.txt"); code == 200 {
 		t.Error("traversal must not escape the static dir")
 	}
+	// Registered for HEAD as well, the handler answers it: a monitor or a
+	// proxy checking an asset must not get a 404.
+	r.HEAD("/theme/*filepath", StaticHandler(func() string { return "ocean" }))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodHead, "/theme/css/theme.css", nil))
+	if w.Code != 200 || w.Body.Len() != 0 {
+		t.Errorf("HEAD: %d %q", w.Code, w.Body.String())
+	}
 }
