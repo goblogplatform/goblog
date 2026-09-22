@@ -27,7 +27,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 ### Theming
 - WordPress-style theme system (`themes/{name}/`)
 - Switch themes from admin settings without restart (hot-reload)
-- Two built-in themes: `default` (monospace, gray) and `minimal` (sans-serif, blue accent)
+- One built-in theme, `default` (monospace, gray); [Minimal](https://github.com/goblogplatform/goblog-theme-minimal) and [Forest](https://github.com/goblogplatform/goblog-theme-forest) install from the theme directory
 - Theme-specific CSS served at `/theme/`
 - Custom header/footer code injection via settings (for analytics, etc.)
 
@@ -140,6 +140,8 @@ To create a custom theme:
 Full guide: [goblog.live/docs/writing-a-theme](https://www.goblog.live/docs/writing-a-theme).
 
 **Admin → Themes** browses the [theme directory](https://www.goblog.live/themes), installs a theme into `themes/installed/` (bind-mount it in Docker, set with `THEMES_INSTALLED_DIR`, or installs vanish on restart), activates it, updates it when the directory has a newer release, and removes it. The directory URL is the `theme_directory_url` setting; see [Publishing a theme](https://www.goblog.live/docs/publishing-a-theme) to publish one.
+
+**Upgrading to 0.7.0:** the `minimal` theme is no longer built in; it is [Minimal](https://github.com/goblogplatform/goblog-theme-minimal) in the theme directory. A site whose `theme` setting is `minimal` renders `default` after the upgrade until you install Minimal from **Admin → Themes** — the setting is left alone, so the site switches back the moment the theme is installed.
 
 A theme is code: once activated its templates render every page, including the admin, with the same template functions and data goblog's own templates get. The directory's validation checks that a theme is well-formed, not that it is benign, and a listing on goblog.live is a maintainer's approval, not a code audit — install only themes you trust, as with plugins.
 

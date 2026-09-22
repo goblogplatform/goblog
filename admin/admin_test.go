@@ -825,7 +825,7 @@ func TestAdminComments(t *testing.T) {
 // (comments_require_login, issue #524) renders as a checkbox reflecting its
 // value in every theme, rather than a required text input.
 func TestAdminSettings_RendersCheckboxSetting(t *testing.T) {
-	for _, theme := range []string{"default", "minimal"} {
+	for _, theme := range []string{"default", overlayTheme} {
 		for _, value := range []string{"true", "false"} {
 			t.Run(theme+"/"+value, func(t *testing.T) {
 				db, _ := gorm.Open(sqlite.Open(":memory:"))
@@ -1049,7 +1049,7 @@ func TestAdminUsers_NonAdmin_Unauthorized(t *testing.T) {
 // admin status and the right control: promote for GitHub non-admins, demote
 // for admins, and nothing for email users (#565) or the last admin.
 func TestAdminUsers_RendersUsers(t *testing.T) {
-	for _, theme := range []string{"default", "minimal"} {
+	for _, theme := range []string{"default", overlayTheme} {
 		t.Run(theme, func(t *testing.T) {
 			router, a, db := newUsersHarness(t, theme)
 			boss := seedUser(t, db, auth.ProviderGitHub, "1", "boss", true)
@@ -1235,9 +1235,14 @@ func TestDemoteAdminAPI(t *testing.T) {
 	}
 }
 
+// overlayTheme is the second theme the admin tests render under: like a
+// directory theme it ships only public templates (here just home.html), so
+// every admin page must come from default's copies.
+const overlayTheme = "overlay"
+
 // themeTemplates parses the templates the way theme.Load layers them: the
 // shared set, then default, then the named theme on top — so a theme that
-// ships no admin templates (minimal) renders default's.
+// ships no admin templates renders default's.
 func themeTemplates(t *testing.T, theme string) *template.Template {
 	t.Helper()
 	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
@@ -1245,7 +1250,11 @@ func themeTemplates(t *testing.T, theme string) *template.Template {
 	}).ParseGlob("../templates/shared/*.html"))
 	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
 	if theme != "default" {
-		template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "home.html"), []byte("<p>overlay home</p>"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		template.Must(tmpl.ParseGlob(filepath.Join(dir, "*.html")))
 	}
 	return tmpl
 }
@@ -1310,7 +1319,7 @@ func TestAdminDashboard(t *testing.T) {
 	db.Create(&blog.Comment{PostID: 1, Name: "Commenter", Content: "Nice post"})
 	seedUser(t, db, auth.ProviderGitHub, "1", "boss", true)
 	seedUser(t, db, auth.ProviderGitHub, "2", "plain", false)
-	db.Create(&blog.Setting{Key: "theme", Value: "minimal"})
+	db.Create(&blog.Setting{Key: "theme", Value: overlayTheme})
 
 	body := getHTML(t, router, "/admin/dashboard")
 
@@ -1356,7 +1365,7 @@ func TestAdminDashboard(t *testing.T) {
 	}
 
 	// Site panel.
-	if !strings.Contains(body, `href="/admin/themes"`) || !strings.Contains(body, ">minimal<") {
+	if !strings.Contains(body, `href="/admin/themes"`) || !strings.Contains(body, ">"+overlayTheme+"<") {
 		t.Errorf("site panel must name the active theme and link to /admin/themes")
 	}
 	if !strings.Contains(body, `href="/admin/plugins"`) || !strings.Contains(body, "No plugins enabled") {
@@ -1390,7 +1399,7 @@ func TestAdminDashboard_ActiveThemeFromInstaller(t *testing.T) {
 // TestAdminEmptyStates: every list page says so when it has nothing to list,
 // with a call to action where one exists (#596).
 func TestAdminEmptyStates(t *testing.T) {
-	for _, theme := range []string{"default", "minimal"} {
+	for _, theme := range []string{"default", overlayTheme} {
 		t.Run(theme, func(t *testing.T) {
 			router, a, _, _ := newAdminHarness(t, theme)
 			a.On("IsAdmin", mock.Anything).Return(true)
@@ -1417,9 +1426,9 @@ func TestAdminEmptyStates(t *testing.T) {
 
 // TestAdminPages_RenderInPanel: every admin page wraps its content in the
 // opaque panel below the nav, in default and in a theme that ships no admin
-// templates of its own (minimal falls back to default's).
+// templates of its own (the overlay falls back to default's).
 func TestAdminPages_RenderInPanel(t *testing.T) {
-	for _, theme := range []string{"default", "minimal"} {
+	for _, theme := range []string{"default", overlayTheme} {
 		t.Run(theme, func(t *testing.T) {
 			router, a, db, _ := newAdminHarness(t, theme)
 			a.On("IsAdmin", mock.Anything).Return(true)
