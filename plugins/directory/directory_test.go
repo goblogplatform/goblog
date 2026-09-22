@@ -537,3 +537,29 @@ func TestRenderPage_DetailDescribesItself(t *testing.T) {
 		t.Errorf("the listing keeps the site description: %v", data["meta_description"])
 	}
 }
+
+// TestRenderPage_DetailOneH1: the page heading is the plugin's name; the
+// README's own headings are demoted one level so the page has one <h1>.
+func TestRenderPage_DetailOneH1(t *testing.T) {
+	f := newPluginFixture(t)
+	seed(t, f.db, KindPlugin, "o/hello", StatusApproved, func() registry.DetailDoc {
+		d := doc("hello", "1.0.0", 0)
+		d.ReadmeHTML = `<h1 dir="auto">goblog-plugin-hello</h1><p>x</p><h2>Usage</h2><h6>tiny</h6>`
+		d.ChangelogHTML = `<h1>Changelog</h1><h3>1.0.0</h3>`
+		return d
+	}())
+	ctx, _ := newRenderCtx(t, http.MethodGet, "/plugins/hello", "hello", nil)
+	_, data := f.p.RenderPage(ctx, PageType)
+	if data["page_title"] != "hello" {
+		t.Errorf("page_title = %v", data["page_title"])
+	}
+	html := content(t, data)
+	if strings.Contains(html, "<h1") {
+		t.Errorf("no <h1> inside the page body:\n%s", html)
+	}
+	for _, want := range []string{`<h2 dir="auto">goblog-plugin-hello</h2>`, "<h3>Usage</h3>", "<h6>tiny</h6>", "<h2>Changelog</h2>", "<h4>1.0.0</h4>"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("missing %q in:\n%s", want, html)
+		}
+	}
+}

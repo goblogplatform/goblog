@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"regexp"
@@ -729,6 +730,14 @@ func (b *Blog) DynamicPage(c *gin.Context, page *Page, subPath string) {
 				for k, v := range pluginData {
 					data[k] = v
 				}
+				// A plugin sub-page (a plugin's own page in the directory, one
+				// doc) names itself: the theme's page heading shows it instead
+				// of the page row's title. The row is untouched.
+				if title, ok := pluginData["page_title"].(string); ok && title != "" {
+					named := *page
+					named.Title = title
+					data["page"] = &named
+				}
 				b.Render(c, http.StatusOK, tmpl, data)
 				return
 			}
@@ -1273,6 +1282,80 @@ func (b *Blog) Sitemap(c *gin.Context) {
 	}
 
 	c.Data(http.StatusOK, "application/xml; charset=utf-8", sm.XMLContent())
+}
+
+// feedItems is how many posts the RSS feed carries.
+const feedItems = 20
+
+type rssFeed struct {
+	XMLName xml.Name `xml:"rss"`
+	Version string   `xml:"version,attr"`
+	Atom    string   `xml:"xmlns:atom,attr"`
+	Channel rssChannel
+}
+
+type rssChannel struct {
+	XMLName     xml.Name `xml:"channel"`
+	Title       string   `xml:"title"`
+	Link        string   `xml:"link"`
+	Description string   `xml:"description"`
+	Self        rssSelf  `xml:"atom:link"`
+	Items       []rssItem
+}
+
+type rssSelf struct {
+	Href string `xml:"href,attr"`
+	Rel  string `xml:"rel,attr"`
+	Type string `xml:"type,attr"`
+}
+
+type rssItem struct {
+	XMLName     xml.Name `xml:"item"`
+	Title       string   `xml:"title"`
+	Link        string   `xml:"link"`
+	GUID        rssGUID  `xml:"guid"`
+	PubDate     string   `xml:"pubDate"`
+	Description string   `xml:"description"` // the post as HTML; the encoder escapes it
+	Categories  []string `xml:"category"`
+}
+
+type rssGUID struct {
+	IsPermaLink bool   `xml:"isPermaLink,attr"`
+	Value       string `xml:",chardata"`
+}
+
+// RSS serves /rss.xml: an RSS 2.0 feed of the newest published posts, with
+// absolute links under SiteURL and each post rendered to HTML on the server.
+func (b *Blog) RSS(c *gin.Context) {
+	site := b.SiteURL(c)
+	feed := rssFeed{Version: "2.0", Atom: "http://www.w3.org/2005/Atom", Channel: rssChannel{
+		Title:       b.SettingValue("site_title", ""),
+		Link:        site + "/",
+		Description: b.SettingValue("site_description", ""),
+		Self:        rssSelf{Href: site + "/rss.xml", Rel: "self", Type: "application/rss+xml"},
+	}}
+	for i, post := range b.GetPosts(false) {
+		if i == feedItems {
+			break
+		}
+		item := rssItem{
+			Title:       post.Title,
+			Link:        site + post.Permalink(),
+			GUID:        rssGUID{IsPermaLink: true, Value: site + post.Permalink()},
+			PubDate:     post.CreatedAt.UTC().Format(time.RFC1123Z),
+			Description: string(post.HTML()),
+		}
+		for _, t := range post.Tags {
+			item.Categories = append(item.Categories, t.Name)
+		}
+		feed.Channel.Items = append(feed.Channel.Items, item)
+	}
+	out, err := xml.MarshalIndent(feed, "", "  ")
+	if err != nil {
+		c.String(http.StatusInternalServerError, "feed: %v", err)
+		return
+	}
+	c.Data(http.StatusOK, "application/rss+xml; charset=utf-8", append([]byte(xml.Header), out...))
 }
 
 // RobotsTxt serves /robots.txt: crawlers may index everything but the

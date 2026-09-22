@@ -529,6 +529,7 @@ func (g *goblog) addRoutesInner() {
 	getAndHead(g.router, "/search", g._blog.Search)
 	getAndHead(g.router, "/sitemap.xml", g._blog.Sitemap)
 	getAndHead(g.router, "/robots.txt", g._blog.RobotsTxt)
+	getAndHead(g.router, "/rss.xml", g._blog.RSS)
 	// lets old WordPress stuff stored at wp-content/uploads work
 	g.router.Use(static.Serve("/wp-content", static.LocalFile("www", false)))
 

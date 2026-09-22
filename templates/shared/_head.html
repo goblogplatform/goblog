@@ -83,6 +83,8 @@
   </script>
   {{ end }}
   {{ end }}
+  {{ if $site }}<link rel="alternate" type="application/rss+xml" title="{{ .settings.site_title.Value }}" href="{{ $site }}/rss.xml">{{ end }}
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
   <link rel="icon" type="image/png" href="{{ .settings.favicon.Value }}">
   <link rel="manifest" href="/site.webmanifest">
   {{ if .admin_page }}

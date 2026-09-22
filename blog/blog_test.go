@@ -1788,3 +1788,126 @@ func TestHeadMetadata(t *testing.T) {
 	check(t, "/", `<meta property="og:image" content="https://www.example.test/img/card.png">`)
 	check(t, "/posts/2026/08/15/hello", `"https://www.example.test/img/card.png"`)
 }
+
+// titlingPlugin owns "dir" and names its sub-page.
+type titlingPlugin struct{ subPathPlugin }
+
+func (p *titlingPlugin) RenderPage(ctx *plugin.HookContext, pageType string) (string, gin.H) {
+	switch ctx.SubPath {
+	case "":
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": "<p>list</p>"}
+	case "hello":
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": "<p>hi</p>", "title": "Hello plugin", "page_title": "Hello plugin"}
+	}
+	return "", nil
+}
+
+// TestPluginPageTitle: a plugin page's page_title becomes the page heading
+// the theme renders, without the theme knowing; the page row is untouched.
+func TestPluginPageTitle(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Page{Title: "Dir", Slug: "dir", PageType: "dir", ShowInNav: true, Enabled: true})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+	reg := plugin.NewRegistry(db)
+	reg.Register(&titlingPlugin{})
+	reg.Init()
+	b.PageFilter = blog.PluginPageFilter(reg)
+	router := gin.New()
+	router.Use(plugin.Middleware(reg))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.NoRoute(b.NoRoute)
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		router.ServeHTTP(w, req)
+		return w.Body.String()
+	}
+	if body := get("/dir/hello"); !strings.Contains(body, "<h1>Hello plugin</h1>") || strings.Contains(body, "<h1>Dir</h1>") {
+		t.Errorf("sub-page heading:\n%s", body)
+	}
+	if body := get("/dir"); !strings.Contains(body, "<h1>Dir</h1>") {
+		t.Errorf("the page itself keeps its title:\n%s", body)
+	}
+	var page blog.Page
+	db.Where("slug = ?", "dir").First(&page)
+	if page.Title != "Dir" {
+		t.Error("the page row must not change")
+	}
+}
+
+// TestRSS: /rss.xml is an RSS 2.0 feed of the newest published posts with
+// absolute links and server-rendered HTML bodies; drafts are left out; the
+// <head> advertises it.
+func TestRSS(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Setting{Key: "site_title", Value: "GoBlog"})
+	db.Create(&blog.Setting{Key: "site_url", Value: "https://www.example.test"})
+	db.Create(&blog.Setting{Key: "site_description", Value: "A blog & more"})
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	when := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	db.Create(&blog.Post{Title: "Hello & welcome", Slug: "hello", Content: "Some **bold** text.", PostTypeID: pt.ID, CreatedAt: when, UpdatedAt: when})
+	db.Create(&blog.Post{Title: "Secret", Slug: "secret", Content: "draft", PostTypeID: pt.ID, Draft: true})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	a.On("IsWizardMode", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+	router := gin.New()
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/rss.xml", b.RSS)
+	router.GET("/", b.Home)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/rss.xml", nil)
+	router.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/rss+xml") {
+		t.Fatalf("code=%d type=%q", w.Code, w.Header().Get("Content-Type"))
+	}
+	for _, want := range []string{
+		`<rss version="2.0"`, "<title>GoBlog</title>", "<link>https://www.example.test/</link>", "<description>A blog &amp; more</description>",
+		"<title>Hello &amp; welcome</title>", "<link>https://www.example.test/posts/2026/08/15/hello</link>",
+		`<guid isPermaLink="true">https://www.example.test/posts/2026/08/15/hello</guid>`,
+		"<pubDate>Sat, 15 Aug 2026 12:00:00 +0000</pubDate>", "&lt;strong&gt;bold&lt;/strong&gt;",
+		`<atom:link href="https://www.example.test/rss.xml" rel="self" type="application/rss+xml"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("feed missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Secret") {
+		t.Error("drafts must not be in the feed")
+	}
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/", nil)
+	router.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), `<link rel="alternate" type="application/rss+xml" title="GoBlog" href="https://www.example.test/rss.xml">`) {
+		t.Errorf("head must advertise the feed:\n%s", w.Body.String()[:800])
+	}
+}
+
+// TestPostHTML: a post's markdown rendered on the server, with unsafe HTML
+// kept (authors are admins) so embeds keep working.
+func TestPostHTML(t *testing.T) {
+	p := blog.Post{Content: "# Title\n\nSome **bold** and a [link](/x).\n\n<iframe src=\"https://v.test\"></iframe>"}
+	html := string(p.HTML())
+	for _, want := range []string{"<h1", "<strong>bold</strong>", `<a href="/x">link</a>`, `<iframe src="https://v.test">`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("missing %q in %q", want, html)
+		}
+	}
+}

@@ -64,8 +64,14 @@ func TestPagesManifest(t *testing.T) {
 		if !ok {
 			t.Fatalf("page %q not rendered", pg.Slug)
 		}
-		if !strings.Contains(string(r.HTML), `<h1 id="`) || !strings.Contains(string(r.HTML), ">"+pg.Title+"</h1>") {
-			t.Errorf("page %q must start with an H1 equal to its title; got:\n%.200s", pg.Slug, r.HTML)
+		// Each file opens with "# <title>" — the theme shows that title as
+		// the page heading, so the rendered article carries no H1 of its own.
+		src, _ := contentFS.ReadFile("content/" + pg.File)
+		if !strings.HasPrefix(string(src), "# "+pg.Title+"\n") {
+			t.Errorf("page %q must start with an H1 equal to its title; got:\n%.80s", pg.Slug, src)
+		}
+		if strings.Contains(string(r.HTML), "<h1") {
+			t.Errorf("page %q: the article must not repeat the title as an <h1>:\n%.200s", pg.Slug, r.HTML)
 		}
 	}
 }
@@ -122,7 +128,7 @@ func TestRenderPage(t *testing.T) {
 	if tmpl != "page_content.html" || data["has_plugin_content"] != true || data["title"] != "Overview" {
 		t.Fatalf("index: %q %v", tmpl, data)
 	}
-	for _, want := range []string{`<h1 id="overview">Overview</h1>`, `href="/docs/plugin-api"`, `href="/docs/directory-formats"`, `aria-current="page"`} {
+	for _, want := range []string{`href="/docs/plugin-api"`, `href="/docs/directory-formats"`, `aria-current="page"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index missing %q", want)
 		}
@@ -130,8 +136,8 @@ func TestRenderPage(t *testing.T) {
 	ctx, _ = renderCtx(t, "/docs/plugin-api", "plugin-api")
 	_, data = p.RenderPage(ctx, PageType)
 	html, _ = data["plugin_content"].(string)
-	if data["title"] != "Plugin API reference" || !strings.Contains(html, `<h1 id="plugin-api-reference">`) {
-		t.Errorf("plugin-api page: title=%v", data["title"])
+	if data["title"] != "Plugin API reference" || data["page_title"] != "Plugin API reference" || !strings.Contains(html, `<h2 id="exports">`) {
+		t.Errorf("plugin-api page: title=%v page_title=%v", data["title"], data["page_title"])
 	}
 	// Sidebar and in-article links follow the page slug, and the sidebar
 	// marks the current page. publishing-a-plugin.md links /docs#the-directory;
@@ -346,5 +352,23 @@ func TestRenderPage_DescribesItself(t *testing.T) {
 	_, data := p.RenderPage(ctx, PageType)
 	if d := data["meta_description"].(string); !strings.HasPrefix(d, "A goblog plugin is") && !strings.HasPrefix(d, "This page") {
 		t.Errorf("description should be the page's opening words, got %q", d)
+	}
+}
+
+// TestRenderPage_OneH1: the theme's page heading is the doc's title, so the
+// article body does not repeat it as a second <h1>; sections stay <h2>.
+func TestRenderPage_OneH1(t *testing.T) {
+	p := New()
+	ctx, _ := renderCtx(t, "/docs/writing-a-plugin", "writing-a-plugin")
+	_, data := p.RenderPage(ctx, PageType)
+	if data["page_title"] != "Writing a plugin" {
+		t.Errorf("page_title = %v", data["page_title"])
+	}
+	html := data["plugin_content"].(string)
+	if strings.Contains(html, "<h1") {
+		t.Errorf("article must not carry its own <h1>:\n%s", html[:400])
+	}
+	if !strings.Contains(html, `<h2 id=`) {
+		t.Error("sections stay <h2>")
 	}
 }
