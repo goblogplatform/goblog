@@ -6,46 +6,85 @@
   <meta name="keywords" content="{{ .settings.site_title.Value }}{{range .post.Tags}}, {{.Name}}{{end}}">
   <meta name="author" content="{{ .settings.site_title.Value }}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{- /* Search result pages and the like ask not to be indexed; otherwise the robots_tag setting. */}}
+  {{ if .noindex }}
+  <meta name="robots" content="noindex, follow" />
+  {{ else }}
   <meta name="robots" content="{{ with index .settings "robots_tag" }}{{ if .Value }}{{ .Value }}{{ else }}index, follow{{ end }}{{ else }}index, follow{{ end }}" />
+  {{ end }}
+  {{- /* Description: the page's own (a plugin page's meta_description, a post's first words), else the site_description setting. */}}
+  {{ $description := "" }}
+  {{ if .meta_description }}{{ $description = .meta_description }}
+  {{ else if .post }}{{ $description = .post.PlainTextPreview 155 }}
+  {{ else }}{{ with index .settings "site_description" }}{{ $description = .Value }}{{ end }}{{ end }}
+  {{ $title := "" }}
+  {{ if .post }}{{ $title = printf "%s: %s" .settings.site_title.Value .post.Title }}{{ else }}{{ $title = printf "%s: %s" .settings.site_title.Value .title }}{{ end }}
+  {{- /* site_url is set by blog.Render; pages rendered without it (admin) get "" and no absolute URLs. */}}
+  {{ $site := "" }}{{ with .site_url }}{{ $site = . }}{{ end }}
+  {{ $image := "" }}
+  {{ with index .settings "site_image" }}{{ if .Value }}{{ $image = printf "%s%s" $site .Value }}{{ end }}{{ end }}
+  <title>{{ $title }}</title>
+  {{ if $description }}<meta name="description" content="{{ $description }}">{{ end }}
+  {{ if .canonical_url }}<link rel="canonical" href="{{ .canonical_url }}">{{ end }}
   <meta property="og:site_name" content="{{ .settings.site_title.Value }}">
-  {{ if .post }}
-  <meta name="description" content="{{ .post.PlainTextPreview 155 }}">
-  <meta property="og:title" content="{{ .settings.site_title.Value }}: {{ .post.Title }}">
-  <meta property="og:type" content="article">
-  <meta property="og:url" content="{{ with index .settings "site_url" }}{{ .Value }}{{ end }}{{ .post.Permalink }}">
-  <meta property="og:updated_time" content="{{ .post.UpdatedAt }}">
+  <meta property="og:title" content="{{ $title }}">
+  {{ if $description }}<meta property="og:description" content="{{ $description }}">{{ end }}
+  {{ if .canonical_url }}<meta property="og:url" content="{{ .canonical_url }}">{{ end }}
   <meta property="og:locale" content="en_US">
-  <meta property="article:published_time" content="{{ .post.CreatedAt }}">
-  <meta property="article:modified_time" content="{{ .post.UpdatedAt }}">
+  {{ if .post }}
+  <meta property="og:type" content="article">
+  {{ $first := "" }}{{ range .post.ImageURLs $site }}{{ if not $first }}{{ $first = . }}{{ end }}{{ end }}
+  {{ if $first }}<meta property="og:image" content="{{ $first }}">{{ else if $image }}<meta property="og:image" content="{{ $image }}">{{ end }}
+  <meta property="og:updated_time" content="{{ .post.UpdatedAt.Format "2006-01-02T15:04:05Z07:00" }}">
+  <meta property="article:published_time" content="{{ .post.CreatedAt.Format "2006-01-02T15:04:05Z07:00" }}">
+  <meta property="article:modified_time" content="{{ .post.UpdatedAt.Format "2006-01-02T15:04:05Z07:00" }}">
   <meta property="article:author" content="{{ .settings.site_title.Value }}">
   {{ range .post.Tags }}
   <meta property="article:tag" content="{{ .Name }}">
   {{ end }}
-  <title>{{ .settings.site_title.Value }}: {{ .post.Title }}</title>
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "BlogPosting",
       "headline": "{{ .post.Title }}",
       "image": [
-        {{range .post.ExtractImages}}
-        "{{ with index $.settings "site_url" }}{{ .Value }}{{ end }}{{.}}",
-        {{end}}
-        "{{ with index .settings "site_url" }}{{ .Value }}{{ end }}/img/jason.jpg"
+        {{- range $i, $img := .post.ImageURLs $site }}{{ if $i }},{{ end }}
+        "{{ $img }}"
+        {{- else }}{{ if $image }}
+        "{{ $image }}"
+        {{- end }}{{ end }}
       ],
-      "datePublished": "{{ .post.CreatedAt }}",
-      "dateModified": "{{ .post.UpdatedAt }}",
+      "datePublished": "{{ .post.CreatedAt.Format "2006-01-02T15:04:05Z07:00" }}",
+      "dateModified": "{{ .post.UpdatedAt.Format "2006-01-02T15:04:05Z07:00" }}",
       "author": [{
         "@type": "Person",
         "name": "{{ .settings.site_title.Value }}",
-        "url": "{{ with index .settings "site_url" }}{{ .Value }}{{ end }}"
+        "url": "{{ $site }}"
       }]
     }
   </script>
   {{ else }}
-  <meta name="description" content="{{ .settings.site_title.Value }}'s blog, code, projects and publications">
-  <title>{{ .settings.site_title.Value }}: {{ .title }}</title>
+  <meta property="og:type" content="website">
+  {{ if $image }}<meta property="og:image" content="{{ $image }}">{{ end }}
+  {{ if .is_home }}
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "{{ .settings.site_title.Value }}",
+      "url": "{{ $site }}/",
+      {{ if $description }}"description": "{{ $description }}",{{ end }}
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": "{{ $site }}/search?q={search_term_string}",
+        "query-input": "required name=search_term_string"
+      }
+    }
+  </script>
   {{ end }}
+  {{ end }}
+  {{ if $site }}<link rel="alternate" type="application/rss+xml" title="{{ .settings.site_title.Value }}" href="{{ $site }}/rss.xml">{{ end }}
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
   <link rel="icon" type="image/png" href="{{ .settings.favicon.Value }}">
   <link rel="manifest" href="/site.webmanifest">
   {{ if .admin_page }}

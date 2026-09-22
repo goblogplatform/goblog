@@ -115,6 +115,7 @@ func knownIdentifiers() map[string]bool {
 		"post_type", "post_types", "comment_error", "comment_token", "comment_user",
 		"outbound_links", "external_backlinks", "client_id", "email_login_enabled",
 		"setting_groups", "result_count", "plugin_results",
+		"canonical_url", "meta_description", "is_home", "page_title",
 
 		// Template data keys added by plugin/registry.go and plugin/wasm/wasm.go
 		// for plugin-owned pages (plugin-api.md "render_page").
@@ -130,7 +131,7 @@ func knownIdentifiers() map[string]bool {
 		// Setting keys seeded in tools/migrate.go and read via
 		// blog.SettingValue / ctx.Settings elsewhere.
 		"plugin_directory_url", "theme_directory_url", "refresh_minutes", "github_token",
-		"site_url", "custom_header_code", "custom_footer_code",
+		"site_url", "site_description", "site_image", "custom_header_code", "custom_footer_code",
 
 		// comments_require_login is both a template data key (blog/blog.go
 		// post.html render calls) and the setting blog.CommentsRequireLogin

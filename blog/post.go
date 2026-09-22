@@ -6,6 +6,10 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/renderer/html"
 )
 
 // Post defines blog posts
@@ -183,10 +187,46 @@ func (t Tag) Permalink() string {
 
 func (p Post) ExtractImages() []string {
 	var result []string
-	pattern := regexp.MustCompile(`\[file\]\((.+)\)`)
-	substrings := pattern.FindAllStringSubmatch(p.Content, -1)
-	for _, r := range substrings {
+	for _, r := range reImageRefs.FindAllStringSubmatch(p.Content, -1) {
 		result = append(result, r[1])
 	}
 	return result
 }
+
+// postMarkdown renders a post's markdown the way the editor previews it:
+// GitHub-flavoured, raw HTML kept (only admins write posts, and embeds
+// depend on it).
+var postMarkdown = goldmark.New(
+	goldmark.WithExtensions(extension.GFM),
+	goldmark.WithRendererOptions(html.WithUnsafe()),
+)
+
+// HTML is the post's content rendered to HTML on the server (the feed,
+// and any theme that prefers server-side rendering to showdown).
+func (p Post) HTML() template.HTML {
+	var buf bytes.Buffer
+	if err := postMarkdown.Convert([]byte(p.Content), &buf); err != nil {
+		return template.HTML(template.HTMLEscapeString(p.Content))
+	}
+	return template.HTML(buf.String())
+}
+
+// ImageURLs is ExtractImages with every relative URL made absolute under
+// site (the resolved site_url), for Open Graph and structured data.
+func (p Post) ImageURLs(site string) []string {
+	imgs := p.ExtractImages()
+	if site == "" {
+		return imgs
+	}
+	for i, u := range imgs {
+		if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+			continue
+		}
+		imgs[i] = site + "/" + strings.TrimPrefix(u, "/")
+	}
+	return imgs
+}
+
+// reImageRefs matches the upload widget's [file](url) and a standard
+// markdown image ![alt](url); the URL stops at the first ")" or space.
+var reImageRefs = regexp.MustCompile(`(?:!\[[^\]]*\]|\[file\])\(([^)\s]+)\)`)

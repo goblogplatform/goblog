@@ -147,7 +147,7 @@ func templateData() int32 {
 | Shape | What goblog does |
 |---|---|
 | `{"html": "…"}` | Renders the theme's page-content template with the page's title as heading and your HTML, unescaped, as the body. |
-| `{"template": "x.html", "data": {…}}` | Renders `x.html` from the active theme with goblog's usual page data plus your `data` merged in (your keys win). |
+| `{"template": "x.html", "data": {…}}` | Renders `x.html` from the active theme with goblog's usual page data plus your `data` merged in (your keys win). Three keys name a sub-page: `title` (the browser tab and Open Graph title), `page_title` (the heading the theme renders in place of the page's own title — keep the body to headings below `<h1>`) and `meta_description` (its `<meta name="description">` and Open Graph description, plain text). Set them on a page you want found — a page without its own description gets the site's. |
 | `{"raw": {"status": 200, "content_type": "…", "body": "…"}}` | Writes the response as is. `status` defaults to 200 and must be 100–599; `content_type` defaults to `text/plain; charset=utf-8`. Use it for JSON, feeds and anything that is not a themed page (there is no way to set headers, so no redirects). |
 
 An empty object, nothing at all, an error, or a `raw` status out of range declines the request and goblog answers 404. If more than one shape is present, `raw` wins over `template`, which wins over `html`. `render_page` waits for the instance without a time bound, unlike the template hooks.

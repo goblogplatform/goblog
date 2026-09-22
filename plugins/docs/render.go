@@ -34,6 +34,11 @@ var md = goldmark.New(
 // Render converts one page to HTML and lists its H2/H3 headings in order.
 func Render(src []byte) (template.HTML, []Heading, error) {
 	doc := md.Parser().Parse(text.NewReader(src))
+	// The page's H1 is its title, which the theme renders as the page
+	// heading; keep the article to one H1 by leaving it out here.
+	if h, ok := doc.FirstChild().(*ast.Heading); ok && h.Level == 1 {
+		doc.RemoveChild(doc, h)
+	}
 	var heads []Heading
 	err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		h, ok := n.(*ast.Heading)

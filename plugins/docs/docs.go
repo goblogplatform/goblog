@@ -136,7 +136,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 		return "", nil
 	}
 	base := basePath(ctx.GinContext)
-	return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": sidebarAndArticle(base, ctx.SubPath, r), "title": r.Title}
+	return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": sidebarAndArticle(base, ctx.SubPath, r), "title": r.Title, "page_title": r.Title, "meta_description": metaDescription(r)}
 }
 
 // basePath is the page's URL prefix ("/docs"), from the request so links

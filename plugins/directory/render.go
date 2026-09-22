@@ -98,9 +98,30 @@ func renderDetailFor(kind, base string, d Detail) (string, error) {
 	if kind == KindTheme {
 		name = "themes-detail.html"
 	}
+	// The page heading is the entry's name; a README's own headings sit
+	// under it.
+	d.ReadmeHTML = demoteHeadings(d.ReadmeHTML)
+	d.ChangelogHTML = demoteHeadings(d.ChangelogHTML)
+	for i := range d.Releases {
+		d.Releases[i].NotesHTML = demoteHeadings(d.Releases[i].NotesHTML)
+	}
 	var buf bytes.Buffer
 	err := templates.ExecuteTemplate(&buf, name, map[string]any{"Base": base, "Entry": d.IndexEntry, "Detail": &d, "Notice": ""})
 	return buf.String(), err
+}
+
+// reHeadingTag matches an opening or closing h1–h5 tag in the sanitized
+// HTML GitHub's markdown API returns.
+var reHeadingTag = regexp.MustCompile(`<(/?)h([1-5])([\s>])`)
+
+// demoteHeadings moves every heading in html down one level (h1 → h2, …,
+// h5 → h6; h6 stays), so a README rendered under the page's own H1 keeps
+// a sensible outline.
+func demoteHeadings(html template.HTML) template.HTML {
+	return template.HTML(reHeadingTag.ReplaceAllStringFunc(string(html), func(tag string) string {
+		m := reHeadingTag.FindStringSubmatch(tag)
+		return "<" + m[1] + "h" + string(m[2][0]+1) + m[3]
+	}))
 }
 
 func renderSubmitPage(v submitView) (string, error) {

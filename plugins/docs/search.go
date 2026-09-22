@@ -3,6 +3,7 @@ package docs
 import (
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	gplugin "goblog/plugin"
 )
@@ -12,7 +13,8 @@ import (
 const snippetLen = 160
 
 var (
-	reMarkdownNoise = regexp.MustCompile("(?m)^#+ |[`*>]|\\[([^\\]]*)\\]\\([^)]*\\)")
+	reMarkdownLink  = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+	reMarkdownNoise = regexp.MustCompile("(?m)^#+ |[`*>]")
 	reSpace         = regexp.MustCompile(`\s+`)
 )
 
@@ -21,7 +23,8 @@ var (
 // Underscores stay: they are identifiers (allowed_hosts) far more often
 // than emphasis in these pages.
 func searchText(src []byte) string {
-	s := reMarkdownNoise.ReplaceAllString(string(src), "$1")
+	s := reMarkdownLink.ReplaceAllString(string(src), "$1") // links first: their text may hold code spans
+	s = reMarkdownNoise.ReplaceAllString(s, "")
 	return strings.TrimSpace(reSpace.ReplaceAllString(s, " "))
 }
 
@@ -102,4 +105,24 @@ func (p *Plugin) Sitemap(ctx *gplugin.HookContext) []gplugin.SitemapURL {
 		}
 	}
 	return urls
+}
+
+// metaDescriptionLen is the most a page's <meta name="description"> shows.
+const metaDescriptionLen = 155
+
+// metaDescription is a page's opening words — its text after the title,
+// cut at a word boundary to fit a search snippet — for the <head>.
+func metaDescription(r renderedPage) string {
+	text := strings.TrimSpace(strings.TrimPrefix(r.Text, r.Title))
+	if utf8.RuneCountInString(text) <= metaDescriptionLen {
+		return text
+	}
+	// Leave room for the ellipsis, then back up to a word boundary. The
+	// pages are ASCII apart from the odd dash, so a byte offset is close
+	// enough to a character count to start from.
+	end := metaDescriptionLen - 1
+	for end > 0 && !asciiSpace(text[end]) {
+		end--
+	}
+	return strings.TrimRight(text[:end], " ,;:") + "…"
 }

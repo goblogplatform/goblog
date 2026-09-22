@@ -1658,3 +1658,256 @@ func TestRobotsTxt(t *testing.T) {
 		}
 	}
 }
+
+// describingPlugin owns "dir" and describes its page for the <head>.
+type describingPlugin struct{ subPathPlugin }
+
+func (p *describingPlugin) RenderPage(ctx *plugin.HookContext, pageType string) (string, gin.H) {
+	if ctx.SubPath != "hello" {
+		return "", nil
+	}
+	return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": "<p>hi</p>", "title": "Hello plugin", "meta_description": "Hello says hi to <everyone>."}
+}
+
+// TestHeadMetadata: the shared _head gives every page a description,
+// canonical link and Open Graph tags from the site settings and the page's
+// own data, and structured data that does not name any particular site.
+func TestHeadMetadata(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Setting{Key: "site_title", Value: "GoBlog"})
+	db.Create(&blog.Setting{Key: "site_subtitle", Value: "Simple blogging"})
+	db.Create(&blog.Setting{Key: "site_url", Value: "https://www.example.test"})
+	db.Create(&blog.Setting{Key: "site_description", Value: "A blogging platform with a plugin directory."})
+	db.Create(&blog.Setting{Key: "favicon", Value: "/img/favicon.ico"})
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	when := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	db.Create(&blog.Post{Title: "Hello & welcome", Slug: "hello", Content: "First paragraph of the post.", PostTypeID: pt.ID, CreatedAt: when, UpdatedAt: when})
+	db.Create(&blog.Page{Title: "Dir", Slug: "dir", PageType: "dir", ShowInNav: true, Enabled: true})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	a.On("IsWizardMode", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+	reg := plugin.NewRegistry(db)
+	reg.Register(&describingPlugin{})
+	reg.Init()
+	b.PageFilter = blog.PluginPageFilter(reg)
+
+	router := gin.New()
+	router.Use(plugin.Middleware(reg))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/", b.Home)
+	router.GET("/posts/:yyyy/:mm/:dd/:slug", b.Post)
+	router.GET("/:yyyy/:mm/:dd/:slug", b.Post)
+	router.GET("/search", b.Search)
+	router.NoRoute(b.NoRoute)
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+	head := func(body string) string { return body[:strings.Index(body, "</head>")] }
+	check := func(t *testing.T, page string, wants ...string) {
+		t.Helper()
+		h := head(get(page))
+		for _, want := range wants {
+			if !strings.Contains(h, want) {
+				t.Errorf("%s head missing %q in:\n%s", page, want, h)
+			}
+		}
+	}
+
+	check(t, "/",
+		`<meta name="description" content="A blogging platform with a plugin directory.">`,
+		`<link rel="canonical" href="https://www.example.test/">`,
+		`<meta property="og:title" content="GoBlog: Simple blogging">`,
+		`<meta property="og:description" content="A blogging platform with a plugin directory.">`,
+		`<meta property="og:url" content="https://www.example.test/">`,
+		`<meta property="og:type" content="website">`,
+		`"@type": "WebSite"`, `"SearchAction"`, `"target": "https:\/\/www.example.test/search?q={search_term_string}"`)
+	if h := head(get("/")); strings.Contains(h, "og:image") || strings.Contains(h, "jason.jpg") {
+		t.Errorf("no site_image: no og:image and nothing site-specific:\n%s", h)
+	}
+
+	// The post is canonical at its permalink whichever URL it was read at.
+	for _, u := range []string{"/posts/2026/08/15/hello", "/2026/08/15/hello"} {
+		check(t, u,
+			`<meta name="description" content="First paragraph of the post.">`,
+			`<link rel="canonical" href="https://www.example.test/posts/2026/08/15/hello">`,
+			`<meta property="og:type" content="article">`,
+			`<meta property="og:url" content="https://www.example.test/posts/2026/08/15/hello">`,
+			`<meta property="og:title" content="GoBlog: Hello &amp; welcome">`,
+			`"@type": "BlogPosting"`)
+	}
+	if h := head(get("/posts/2026/08/15/hello")); strings.Contains(h, "jason.jpg") {
+		t.Errorf("structured data must not name a site-specific image:\n%s", h)
+	}
+	// Dates are ISO 8601 and the structured data is valid JSON, images or not.
+	db.Create(&blog.Post{Title: "Pictures", Slug: "pics", Content: "![a](/img/a.png) and ![b](/img/b.png)", PostTypeID: pt.ID, CreatedAt: when, UpdatedAt: when})
+	for _, u := range []string{"/posts/2026/08/15/hello", "/posts/2026/08/15/pics"} {
+		h := head(get(u))
+		if !strings.Contains(h, `<meta property="article:published_time" content="2026-08-15T12:00:00Z">`) {
+			t.Errorf("%s: dates must be ISO 8601:\n%s", u, h)
+		}
+		ld := h[strings.Index(h, `<script type="application/ld+json">`)+len(`<script type="application/ld+json">`):]
+		ld = ld[:strings.Index(ld, "</script>")]
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(ld), &parsed); err != nil {
+			t.Errorf("%s: structured data is not JSON (%v):\n%s", u, err, ld)
+		} else if u == "/posts/2026/08/15/pics" {
+			if imgs, _ := parsed["image"].([]any); len(imgs) != 2 || imgs[0] != "https://www.example.test/img/a.png" {
+				t.Errorf("images = %v", parsed["image"])
+			}
+		} else if parsed["datePublished"] != "2026-08-15T12:00:00Z" {
+			t.Errorf("datePublished = %v", parsed["datePublished"])
+		}
+	}
+
+	// A plugin page describes itself.
+	check(t, "/dir/hello",
+		`<meta name="description" content="Hello says hi to &lt;everyone&gt;.">`,
+		`<link rel="canonical" href="https://www.example.test/dir/hello">`,
+		`<meta property="og:title" content="GoBlog: Hello plugin">`)
+
+	// Search results are not for indexing.
+	check(t, "/search?q=x", `<meta name="robots" content="noindex, follow"`, `<link rel="canonical" href="https://www.example.test/search">`)
+
+	// With a site image, it is the Open Graph image and the fallback
+	// structured-data image.
+	db.Create(&blog.Setting{Key: "site_image", Value: "/img/card.png"})
+	check(t, "/", `<meta property="og:image" content="https://www.example.test/img/card.png">`)
+	check(t, "/posts/2026/08/15/hello", `"https://www.example.test/img/card.png"`)
+}
+
+// titlingPlugin owns "dir" and names its sub-page.
+type titlingPlugin struct{ subPathPlugin }
+
+func (p *titlingPlugin) RenderPage(ctx *plugin.HookContext, pageType string) (string, gin.H) {
+	switch ctx.SubPath {
+	case "":
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": "<p>list</p>"}
+	case "hello":
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": "<p>hi</p>", "title": "Hello plugin", "page_title": "Hello plugin"}
+	}
+	return "", nil
+}
+
+// TestPluginPageTitle: a plugin page's page_title becomes the page heading
+// the theme renders, without the theme knowing; the page row is untouched.
+func TestPluginPageTitle(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Page{Title: "Dir", Slug: "dir", PageType: "dir", ShowInNav: true, Enabled: true})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+	reg := plugin.NewRegistry(db)
+	reg.Register(&titlingPlugin{})
+	reg.Init()
+	b.PageFilter = blog.PluginPageFilter(reg)
+	router := gin.New()
+	router.Use(plugin.Middleware(reg))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.NoRoute(b.NoRoute)
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		router.ServeHTTP(w, req)
+		return w.Body.String()
+	}
+	if body := get("/dir/hello"); !strings.Contains(body, "<h1>Hello plugin</h1>") || strings.Contains(body, "<h1>Dir</h1>") {
+		t.Errorf("sub-page heading:\n%s", body)
+	}
+	if body := get("/dir"); !strings.Contains(body, "<h1>Dir</h1>") {
+		t.Errorf("the page itself keeps its title:\n%s", body)
+	}
+	var page blog.Page
+	db.Where("slug = ?", "dir").First(&page)
+	if page.Title != "Dir" {
+		t.Error("the page row must not change")
+	}
+}
+
+// TestRSS: /rss.xml is an RSS 2.0 feed of the newest published posts with
+// absolute links and server-rendered HTML bodies; drafts are left out; the
+// <head> advertises it.
+func TestRSS(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Setting{Key: "site_title", Value: "GoBlog"})
+	db.Create(&blog.Setting{Key: "site_url", Value: "https://www.example.test"})
+	db.Create(&blog.Setting{Key: "site_description", Value: "A blog & more"})
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	when := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	db.Create(&blog.Post{Title: "Hello & welcome", Slug: "hello", Content: "Some **bold** text.", PostTypeID: pt.ID, CreatedAt: when, UpdatedAt: when})
+	db.Create(&blog.Post{Title: "Secret", Slug: "secret", Content: "draft", PostTypeID: pt.ID, Draft: true})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	a.On("IsWizardMode", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+	router := gin.New()
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/rss.xml", b.RSS)
+	router.GET("/", b.Home)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/rss.xml", nil)
+	router.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/rss+xml") {
+		t.Fatalf("code=%d type=%q", w.Code, w.Header().Get("Content-Type"))
+	}
+	for _, want := range []string{
+		`<rss version="2.0"`, "<channel>", "<item>", "</item>", "</channel>", "<title>GoBlog</title>", "<link>https://www.example.test/</link>", "<description>A blog &amp; more</description>",
+		"<title>Hello &amp; welcome</title>", "<link>https://www.example.test/posts/2026/08/15/hello</link>",
+		`<guid isPermaLink="true">https://www.example.test/posts/2026/08/15/hello</guid>`,
+		"<pubDate>Sat, 15 Aug 2026 12:00:00 +0000</pubDate>", "&lt;strong&gt;bold&lt;/strong&gt;",
+		`<atom:link href="https://www.example.test/rss.xml" rel="self" type="application/rss+xml"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("feed missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Secret") {
+		t.Error("drafts must not be in the feed")
+	}
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/", nil)
+	router.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), `<link rel="alternate" type="application/rss+xml" title="GoBlog" href="https://www.example.test/rss.xml">`) {
+		t.Errorf("head must advertise the feed:\n%s", w.Body.String()[:800])
+	}
+}
+
+// TestPostHTML: a post's markdown rendered on the server, with unsafe HTML
+// kept (authors are admins) so embeds keep working.
+func TestPostHTML(t *testing.T) {
+	p := blog.Post{Content: "# Title\n\nSome **bold** and a [link](/x).\n\n<iframe src=\"https://v.test\"></iframe>"}
+	html := string(p.HTML())
+	for _, want := range []string{"<h1", "<strong>bold</strong>", `<a href="/x">link</a>`, `<iframe src="https://v.test">`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("missing %q in %q", want, html)
+		}
+	}
+}

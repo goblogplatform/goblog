@@ -69,6 +69,8 @@ Every template is executed with a map, so keys are reached as `.settings`, `.pos
 | `recent` | The newest published post, for the "most recent" block in default's footer. |
 | `admin_page` | True on admin renders; default's head loads the editor scripts and, after your `goblog.css`, goblog's own `/css/admin.css`, which puts the admin nav and content on an opaque `.admin-panel` surface — so admin pages read on a photo or dark backdrop without the theme doing anything. |
 | `plugin_head_html`, `plugin_footer_html`, `plugins` | The HTML installed plugins inject and their per-template data, keyed by plugin name. Added to every **public** render; admin pages are rendered without them. |
+| `site_url`, `canonical_url` | The site's public origin (the `site_url` setting, or the request's scheme and host) and this page's canonical URL — a post's permalink whichever URL it was read at. `_head` emits them as the canonical link and Open Graph URL, so a theme normally never touches them. |
+| `meta_description`, `noindex`, `is_home` | Hints `_head` reads: a page's own description (plugin pages set it; posts use their first words; otherwise the `site_description` setting), whether to ask crawlers not to index the page (search results), and whether this is the home page (which carries the site's structured data). |
 
 Beyond those, each template gets its own data. This is the contract of the running version, read off the render calls in `blog/blog.go` and `admin/`; a release can add keys, and removals are noted in the changelog.
 

@@ -12,7 +12,10 @@ func TestRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := string(html)
-	for _, want := range []string{`<h1 id="title">Title</h1>`, `<h2 id="exports">Exports</h2>`, `<h3 id="identity-export">Identity export</h3>`, `<table>`, `<td>raw</td>`, `<code>code</code>`, `href="/docs/plugin-api#exports"`} {
+	if strings.Contains(out, "<h1") {
+		t.Errorf("the leading H1 is the page title and is left to the theme:\n%s", out)
+	}
+	for _, want := range []string{`<h2 id="exports">Exports</h2>`, `<h3 id="identity-export">Identity export</h3>`, `<table>`, `<td>raw</td>`, `<code>code</code>`, `href="/docs/plugin-api#exports"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
