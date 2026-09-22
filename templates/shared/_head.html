@@ -17,8 +17,10 @@
   {{ if .meta_description }}{{ $description = .meta_description }}
   {{ else if .post }}{{ $description = .post.PlainTextPreview 155 }}
   {{ else }}{{ with index .settings "site_description" }}{{ $description = .Value }}{{ end }}{{ end }}
-  {{ $title := "" }}
-  {{ if .post }}{{ $title = printf "%s: %s" .settings.site_title.Value .post.Title }}{{ else }}{{ $title = printf "%s: %s" .settings.site_title.Value .title }}{{ end }}
+  {{- /* Title: "<site>: <page>" — a page that sets no title (the admin pages) gets the site title alone; a missing value must never print as %!s(<nil>). */}}
+  {{ $siteTitle := "" }}{{ with .settings }}{{ with .site_title }}{{ $siteTitle = .Value }}{{ end }}{{ end }}
+  {{ $pageTitle := "" }}{{ if .post }}{{ $pageTitle = .post.Title }}{{ else }}{{ with .title }}{{ $pageTitle = . }}{{ end }}{{ end }}
+  {{ $title := $siteTitle }}{{ if $pageTitle }}{{ $title = printf "%s: %s" $siteTitle $pageTitle }}{{ end }}
   {{- /* site_url is set by blog.Render; pages rendered without it (admin) get "" and no absolute URLs. */}}
   {{ $site := "" }}{{ with .site_url }}{{ $site = . }}{{ end }}
   {{ $image := "" }}
