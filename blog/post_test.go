@@ -1,8 +1,8 @@
 package blog_test
 
 import (
-	"strings"
 	. "goblog/blog"
+	"strings"
 	"testing"
 	"time"
 
