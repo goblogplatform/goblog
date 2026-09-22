@@ -41,7 +41,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 
 ### Plugins
 - Plugin system for injecting template data / HTML, scheduled jobs, settings, and whole pages
-- Built-in plugins: `directory` (the plugin and theme directory that runs [goblog.live/plugins](https://goblog.live/plugins); off by default) and `docs` (the builder docs at [goblog.live/docs](https://goblog.live/docs); off by default). Google Analytics, Social Icons and Scholar Publications are directory plugins.
+- Built-in plugins: `directory` (the plugin and theme directory that runs [goblog.live/plugins](https://goblog.live/plugins) and [goblog.live/themes](https://goblog.live/themes); off by default) and `docs` (the builder docs at [goblog.live/docs](https://goblog.live/docs); off by default). Google Analytics, Social Icons and Scholar Publications are directory plugins.
 - Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
 - WebAssembly plugins (sandboxed, any language/dependencies) installable from the directory
 - Install plugins from the [directory](https://www.goblog.live/plugins) with one click under **Admin → Plugins**
