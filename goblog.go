@@ -424,6 +424,11 @@ func main() {
 		loadTheme(name)
 	}
 
+	// Assets goblog replaces in place (its own js/css, the theme's static
+	// files) must be revalidated, or a browser keeps the previous release's
+	// copy after a deploy.
+	router.Use(revalidateStatic())
+
 	// Theme static files: the active theme's static/, falling back to default's
 	router.GET("/theme/*filepath", theme.StaticHandler(currentTheme))
 
