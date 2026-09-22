@@ -88,3 +88,33 @@ func TestListWithoutRoots(t *testing.T) {
 		t.Errorf("List with no roots = %v", got)
 	}
 }
+
+// TestScreenshot: a theme's screenshot is screenshot.png (or .jpg) beside
+// its templates/, in either root; a theme without one, or a name that is
+// not a theme, has none.
+func TestScreenshot(t *testing.T) {
+	builtin, installed := t.TempDir(), t.TempDir()
+	old := BuiltinRoot
+	BuiltinRoot = builtin
+	t.Cleanup(func() { BuiltinRoot = old })
+	t.Setenv("THEMES_INSTALLED_DIR", installed)
+	for _, name := range []string{"default", "bare"} {
+		os.MkdirAll(filepath.Join(builtin, name, "templates"), 0o755)
+	}
+	os.WriteFile(filepath.Join(builtin, "default", "screenshot.png"), []byte("png"), 0o644)
+	os.MkdirAll(filepath.Join(installed, "ocean", "templates"), 0o755)
+	os.WriteFile(filepath.Join(installed, "ocean", "screenshot.jpg"), []byte("jpg"), 0o644)
+	os.WriteFile(filepath.Join(builtin, "screenshot.png"), []byte("not a theme"), 0o644)
+
+	if p, ok := Screenshot("default"); !ok || p != filepath.Join(builtin, "default", "screenshot.png") {
+		t.Errorf("default: %q %v", p, ok)
+	}
+	if p, ok := Screenshot("ocean"); !ok || p != filepath.Join(installed, "ocean", "screenshot.jpg") {
+		t.Errorf("ocean: %q %v", p, ok)
+	}
+	for _, name := range []string{"bare", "missing", "../default", ""} {
+		if p, ok := Screenshot(name); ok {
+			t.Errorf("%q: unexpected screenshot %q", name, p)
+		}
+	}
+}

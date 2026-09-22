@@ -73,6 +73,12 @@
   function httpURL(u) {
     return /^https?:\/\//i.test(u || "") ? u : null;
   }
+  // imageURL is httpURL plus this site's own screenshot route (a single
+  // leading slash — "//host" would be scheme-relative and is refused),
+  // which is where Status() points a theme that has a screenshot on disk.
+  function imageURL(u) {
+    return /^\/[^\/]/.test(u || "") ? u : httpURL(u);
+  }
   // safeName matches the same [a-z0-9-]+ rule the server enforces on theme
   // names, so a directory page link is only ever built from a name we know
   // is a plain slug.
@@ -85,12 +91,13 @@
   }
 
   // Installed themes render as the same card grid as Browse. The screenshot
-  // comes from the directory entry (Status() copies it onto the installed
-  // row); built-in and hand-installed themes have none and get a neutral
-  // tile carrying the display name instead.
+  // is the theme's own file served by goblog when it has one (built-ins
+  // ship one), else the directory's (Status() copies it onto the installed
+  // row); a theme with neither gets a neutral tile carrying the display
+  // name instead.
   function renderInstalled(st) {
     var cards = st.installed.map(function (t) {
-      var shot = httpURL(t.screenshot_url);
+      var shot = imageURL(t.screenshot_url);
       var media = shot
         ? '<img src="' + esc(shot) + '" class="card-img-top" alt="Screenshot of ' + esc(t.display_name) + '" loading="lazy">'
         : '<div class="theme-placeholder" aria-hidden="true">' + esc(t.display_name) + '</div>';

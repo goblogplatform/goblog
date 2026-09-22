@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"goblog/theme"
 	tinstaller "goblog/theme/installer"
 
 	"github.com/gin-gonic/gin"
@@ -184,6 +185,27 @@ func (a *Admin) RefreshThemeDirectory(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Directory refreshed"})
+}
+
+// ThemeScreenshot serves an on-disk theme's own screenshot for the Themes
+// page cards: GET /admin/themes/:name/screenshot. theme.Screenshot only
+// resolves a name theme.ValidName accepts (letters, digits, "_", "-") that
+// is a theme on disk with a screenshot, so nothing else in the URL ever
+// reaches the filesystem as a path. Admin-only like the rest of the page;
+// the file is static, so the browser may cache it for the session.
+func (a *Admin) ThemeScreenshot(c *gin.Context) {
+	if !a.auth.IsAdmin(c) {
+		c.JSON(http.StatusUnauthorized, "Not Authorized")
+		return
+	}
+	name := c.Param("name")
+	path, ok := theme.Screenshot(name)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"message": "no screenshot for theme " + name})
+		return
+	}
+	c.Header("Cache-Control", "private, max-age=3600")
+	c.File(path)
 }
 
 // AdminThemes renders the Themes admin page; the data is loaded by the page over the API.
