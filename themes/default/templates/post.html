@@ -24,7 +24,7 @@
         </p>
         {{ end }}
         <div class="spacer">&nbsp;</div>
-        <div id="html" class="text-left"></div>
+        <div id="html" class="text-left">{{ .post.HTML }}</div>
       </div>
     </div>
 
@@ -111,22 +111,6 @@
 
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js" integrity="sha512-LhccdVNGe2QMEfI3x4DVV3ckMRe36TfydKss6mJpdHjNFiV07dFpS2xzeZedptKZrwxfICJpez09iNioiSZ3hA==" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js" integrity="sha512-78KH17QLT5e55GJqP76vutp1D2iAoy06WcYBXB6iBCsmO6wWzx0Qdg8EDpm8mKXv68BcvHOyeeP4wxAL0twJGQ==" crossorigin="anonymous"></script>
-  <script type="text/javascript">
-    var converter = new showdown.Converter({tables: true});
-    var md = "{{ .post.Content }}";
-    var html = DOMPurify.sanitize(converter.makeHtml(md));
-    $("#html").html(html)
-  </script>
-  <noscript>
-    <div class="container">
-      <p style="text-align: left;">
-        {{ .post.Content }}
-      </p>
-    </div>
-  </noscript>
-
   <!-- Comments Section -->
   <div class="container">
     <div class="row">
@@ -155,26 +139,9 @@
             <a href="javascript:void(0)" onclick="deleteComment({{ .ID }})" class="text-danger" style="margin-left: 10px;">[delete]</a>
             {{ end }}
           </div>
-          <div class="comment-content" id="comment-content-{{ .ID }}"></div>
-          <noscript>
-            <div class="comment-content">{{ .Content }}</div>
-          </noscript>
+          <div class="comment-content">{{ .HTML }}</div>
         </div>
         {{ end }}
-
-        <script type="text/javascript">
-          {{ range .comments }}
-          (function() {
-            var raw = {{ .Content }};
-            var el = document.getElementById("comment-content-{{ .ID }}");
-            if (el && typeof converter !== 'undefined') {
-              el.innerHTML = DOMPurify.sanitize(converter.makeHtml(raw));
-            } else if (el) {
-              el.textContent = raw;
-            }
-          })();
-          {{ end }}
-        </script>
 
         <hr>
         <h4 class="text-left">Leave a Comment</h4>
@@ -227,11 +194,7 @@
           function previewComment() {
             var content = document.getElementById("comment-content").value;
             var preview = document.getElementById("comment-preview");
-            if (typeof converter !== 'undefined') {
-              preview.innerHTML = DOMPurify.sanitize(converter.makeHtml(content));
-            } else {
-              preview.textContent = content;
-            }
+            preview.textContent = content;
             preview.style.display = "block";
           }
 

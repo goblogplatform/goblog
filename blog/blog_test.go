@@ -1922,3 +1922,51 @@ func TestPostHTML(t *testing.T) {
 		}
 	}
 }
+
+// TestPostPage_ServerRendered: the post body and its comments are HTML in
+// the response, so a crawler or link-preview bot that runs no JavaScript
+// sees the content; showdown and DOMPurify are gone from the page (#617).
+func TestPostPage_ServerRendered(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	when := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	post := blog.Post{Title: "Rendered", Slug: "rendered", PostTypeID: pt.ID, CreatedAt: when, UpdatedAt: when,
+		Content: "Some **bold** text.\n\n<iframe src=\"https://www.youtube.com/embed/x\"></iframe>\n"}
+	db.Create(&post)
+	db.Create(&blog.Comment{PostID: post.ID, Name: "Visitor", Content: "Nice **post**!\n\n<script>alert(1)</script>"})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+
+	router := gin.New()
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/posts/:yyyy/:mm/:dd/:slug", b.Post)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/posts/2026/08/15/rendered", nil)
+	router.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d", w.Code)
+	}
+	for _, want := range []string{"<strong>bold</strong>", `<iframe src="https://www.youtube.com/embed/x">`, "<strong>post</strong>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	for _, gone := range []string{"showdown", "purify", "DOMPurify", "<noscript>"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("page still references %q", gone)
+		}
+	}
+	if strings.Contains(body, "alert(1)") {
+		t.Error("a comment's script must not reach the page")
+	}
+}
