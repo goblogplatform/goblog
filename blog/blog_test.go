@@ -1410,3 +1410,58 @@ func TestUnownedPluginPageIsHidden(t *testing.T) {
 		t.Error("an owned plugin page must be in the nav")
 	}
 }
+
+// searchingPlugin contributes one site-search result for any query.
+type searchingPlugin struct{ subPathPlugin }
+
+func (p *searchingPlugin) Search(_ *plugin.HookContext, q string) []plugin.SearchResult {
+	return []plugin.SearchResult{{Title: "Hello plugin", URL: "/dir/hello", Summary: "matched " + q, Kind: "Plugin"}}
+}
+
+// TestSearchIncludesPluginResults: /search lists results from plugins that
+// implement plugin.Searcher after the matching posts, and counts them.
+func TestSearchIncludesPluginResults(t *testing.T) {
+	for _, theme := range []string{"default", "minimal"} {
+		t.Run(theme, func(t *testing.T) {
+			db, _ := gorm.Open(sqlite.Open(":memory:"))
+			db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+			a := &Auth{}
+			a.On("IsAdmin", mock.Anything).Return(false)
+			a.On("IsLoggedIn", mock.Anything).Return(false)
+			b := blog.New(db, a, "test")
+			reg := plugin.NewRegistry(db)
+			reg.Register(&searchingPlugin{})
+			reg.Init()
+
+			router := gin.New()
+			router.Use(plugin.Middleware(reg))
+			tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+				"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+			}).ParseGlob("../templates/shared/*.html"))
+			template.Must(tmpl.ParseGlob("../themes/" + theme + "/templates/*.html"))
+			router.SetHTMLTemplate(tmpl)
+			router.GET("/search", b.Search)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", "/search?q=hello", nil)
+			router.ServeHTTP(w, req)
+			body := w.Body.String()
+			for _, want := range []string{`href="/dir/hello"`, "Hello plugin", "matched hello", "Plugin", "1 result found"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("search page missing %q in:\n%s", want, body)
+				}
+			}
+			if strings.Contains(body, "No results found") {
+				t.Error("a plugin hit is a result; the no-results message must not show")
+			}
+
+			// Without a query nothing is searched.
+			w = httptest.NewRecorder()
+			req, _ = http.NewRequest("GET", "/search", nil)
+			router.ServeHTTP(w, req)
+			if strings.Contains(w.Body.String(), "Hello plugin") {
+				t.Error("an empty query must not list plugin results")
+			}
+		})
+	}
+}

@@ -62,6 +62,16 @@ type pluginRegistry interface {
 	RenderPluginPage(c *gin.Context, pageType, subPath string) (string, gin.H, bool)
 	HasPageType(pageType string) bool
 	IsPageTypeEnabled(pageType string) bool
+	Search(c *gin.Context, query string) []SearchResult
+}
+
+// SearchResult is one hit a plugin contributes to the search page (see
+// plugin.Searcher; plugin.SearchResult is an alias of this type).
+type SearchResult struct {
+	Title   string
+	URL     string
+	Summary string
+	Kind    string // short label shown next to the result, e.g. "Plugin"
 }
 
 func pluginRegistryFrom(c *gin.Context) pluginRegistry {
@@ -1001,24 +1011,32 @@ func (b *Blog) Post(c *gin.Context) {
 	}
 }
 
-// Search handles the search page
+// Search handles the search page: matching posts first, then whatever
+// results enabled plugins contribute (plugin.Searcher). result_count is
+// the total of both so templates need no arithmetic.
 func (b *Blog) Search(c *gin.Context) {
 	query := strings.TrimSpace(c.Query("q"))
 	var posts []Post
+	var pluginResults []SearchResult
 	if query != "" {
 		posts = b.SearchPosts(query)
+		if r := pluginRegistryFrom(c); r != nil {
+			pluginResults = r.Search(c, query)
+		}
 	}
 	b.Render(c, http.StatusOK, "search.html", gin.H{
-		"logged_in":  b.auth.IsLoggedIn(c),
-		"is_admin":   b.auth.IsAdmin(c),
-		"posts":      posts,
-		"query":      query,
-		"version":    b.Version,
-		"title":      "Search",
-		"recent":     b.GetLatest(),
-		"admin_page": false,
-		"settings":   b.GetSettings(),
-		"nav_pages":  b.GetNavPages(),
+		"logged_in":      b.auth.IsLoggedIn(c),
+		"is_admin":       b.auth.IsAdmin(c),
+		"posts":          posts,
+		"plugin_results": pluginResults,
+		"result_count":   len(posts) + len(pluginResults),
+		"query":          query,
+		"version":        b.Version,
+		"title":          "Search",
+		"recent":         b.GetLatest(),
+		"admin_page":     false,
+		"settings":       b.GetSettings(),
+		"nav_pages":      b.GetNavPages(),
 	})
 }
 

@@ -4,7 +4,7 @@
 
     {{ if .query }}
     <h1 class="text-left">Search results for '{{ .query }}'</h1>
-    <p>{{ len .posts }} result{{ if ne (len .posts) 1 }}s{{ end }} found</p>
+    <p>{{ .result_count }} result{{ if ne .result_count 1 }}s{{ end }} found</p>
     {{ else }}
     <h1 class="text-left">Search</h1>
     {{ end }}
@@ -15,7 +15,7 @@
       <button type="submit" class="search-page-btn">Search</button>
     </form>
 
-    {{ if and .query (eq (len .posts) 0) }}
+    {{ if and .query (eq .result_count 0) }}
     <p>No results found for '{{ .query }}'. Try a different search term.</p>
     {{ end }}
 
@@ -33,6 +33,18 @@
           </p>
       </div>
     </div>
+    {{ end }}
+
+    {{ if .plugin_results }}
+    <h2 class="text-left">Plugins &amp; themes</h2>
+    {{ range .plugin_results }}
+    <div class="row">
+      <div class="container left">
+          <h3 class="text-left"><a href="{{ .URL }}" title="{{ .Title }}">{{ .Title }}</a> <small class="text-muted">{{ .Kind }}</small></h3>
+          <p class="text-justify">{{ .Summary }}</p>
+      </div>
+    </div>
+    {{ end }}
     {{ end }}
   </div>
 

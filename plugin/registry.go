@@ -463,6 +463,34 @@ func (r *Registry) InjectTemplateData(c *gin.Context, templateName string, data 
 	return data
 }
 
+// Search collects site-search results from every enabled plugin that
+// implements Searcher, in registration order. As in InjectTemplateData,
+// the plugin list is snapshotted and the lock released before any plugin
+// runs.
+func (r *Registry) Search(c *gin.Context, query string) []SearchResult {
+	r.mu.RLock()
+	plugins := r.plugins
+	db := r.db
+	r.mu.RUnlock()
+
+	if db == nil {
+		return nil
+	}
+	var results []SearchResult
+	for _, p := range plugins {
+		s, ok := p.(Searcher)
+		if !ok {
+			continue
+		}
+		settings := pluginSettings(db, p.Name())
+		if settings["enabled"] != "true" {
+			continue
+		}
+		results = append(results, s.Search(&HookContext{GinContext: c, DB: db, Settings: settings}, query)...)
+	}
+	return results
+}
+
 // GetAllSettings returns all plugin setting definitions grouped by plugin.
 func (r *Registry) GetAllSettings() []PluginSettingsGroup {
 	r.mu.RLock()
