@@ -10,6 +10,11 @@ function updateSettings(redirect) {
         var type = this.tagName === "TEXTAREA" ? "textarea" : (this.tagName === "SELECT" ? "text" : this.type);
         var value = this.value
 
+        // :input matches <button> too — the tab buttons and Save itself —
+        // and a nameless element would be sent as a setting with an empty
+        // key, which the server rejects.
+        if (this.tagName === "BUTTON" || !key) return;
+
         if (type === "file") {
             // just get the filename without the path
             if (this.url) {
@@ -61,8 +66,10 @@ function updateSettings(redirect) {
             }
         },
         error: function(jqXHR, textStatus, errorThrown) {
-            // show #ajax-error with the error message
-            $("#ajax-error").html("ERROR: " + textStatus + " " + errorThrown).show();
+            // Show the server's reason when it gave one; over HTTP/2 there is
+            // no status text, so textStatus + errorThrown is just "error ".
+            var reason = typeof jqXHR.responseJSON === "string" ? jqXHR.responseJSON : (textStatus + " " + errorThrown);
+            $("#ajax-error").text("ERROR: " + reason).show();
             $("#ajax-error").removeClass("alert-success").addClass("alert-danger");
         },
         data: JSON.stringify(settings)
