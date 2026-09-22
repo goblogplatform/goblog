@@ -183,10 +183,24 @@ func (t Tag) Permalink() string {
 
 func (p Post) ExtractImages() []string {
 	var result []string
-	pattern := regexp.MustCompile(`\[file\]\((.+)\)`)
-	substrings := pattern.FindAllStringSubmatch(p.Content, -1)
-	for _, r := range substrings {
+	for _, r := range reImageRefs.FindAllStringSubmatch(p.Content, -1) {
 		result = append(result, r[1])
 	}
 	return result
 }
+
+// ImageURLs is ExtractImages with every relative URL made absolute under
+// site (the resolved site_url), for Open Graph and structured data.
+func (p Post) ImageURLs(site string) []string {
+	imgs := p.ExtractImages()
+	for i, u := range imgs {
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+			imgs[i] = site + u
+		}
+	}
+	return imgs
+}
+
+// reImageRefs matches the upload widget's [file](url) and a standard
+// markdown image ![alt](url); the URL stops at the first ")" or space.
+var reImageRefs = regexp.MustCompile(`(?:!\[[^\]]*\]|\[file\])\(([^)\s]+)\)`)

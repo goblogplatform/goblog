@@ -159,7 +159,29 @@ func (b *Blog) IsDbNil() bool {
 // Render wraps c.HTML with plugin data injection. If a plugin registry
 // is available on the Gin context, it enriches the template data with
 // plugin_head_html, plugin_footer_html, and plugins data.
+// Render executes templateName with data, after adding what the shared
+// <head> needs on every page — site_url (resolved, see SiteURL) and
+// canonical_url (site_url plus canonical_path, a post's permalink, or the
+// request path without its query) — and the enabled plugins' template
+// data. A handler that has already set a key keeps it.
 func (b *Blog) Render(c *gin.Context, code int, templateName string, data gin.H) {
+	if data == nil {
+		data = gin.H{}
+	}
+	site := b.SiteURL(c)
+	if _, ok := data["site_url"]; !ok {
+		data["site_url"] = site
+	}
+	if _, ok := data["canonical_url"]; !ok {
+		path, _ := data["canonical_path"].(string)
+		if post, ok := data["post"].(*Post); ok && path == "" && post != nil {
+			path = post.Permalink() // a post answers at several URLs
+		}
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+		data["canonical_url"] = site + path
+	}
 	if reg, exists := c.Get("plugin_registry"); exists {
 		type injector interface {
 			InjectTemplateData(c *gin.Context, templateName string, data gin.H) gin.H
@@ -967,6 +989,7 @@ func (b *Blog) Home(c *gin.Context) {
 		"is_admin":     b.auth.IsAdmin(c),
 		"version":      b.Version,
 		"title":        title,
+		"is_home":      true,
 		"recent":       b.GetLatest(),
 		"recent_posts": b.GetPosts(false),
 		"tags":         b.getTopTags(20),
@@ -1065,6 +1088,7 @@ func (b *Blog) Search(c *gin.Context) {
 	b.Render(c, http.StatusOK, "search.html", gin.H{
 		"logged_in":      b.auth.IsLoggedIn(c),
 		"is_admin":       b.auth.IsAdmin(c),
+		"noindex":        true, // result pages are not for crawlers
 		"results":        searchResults(posts, hits),
 		"posts":          posts,
 		"plugin_results": hits,
@@ -1191,6 +1215,9 @@ func (b *Blog) Archives(c *gin.Context) {
 func (b *Blog) SiteURL(c *gin.Context) string {
 	if u := strings.TrimRight(b.SettingValue("site_url", ""), "/"); u != "" {
 		return u
+	}
+	if c == nil || c.Request == nil {
+		return ""
 	}
 	scheme := "http"
 	// Proxies may chain values ("https, http") and vary the case; the

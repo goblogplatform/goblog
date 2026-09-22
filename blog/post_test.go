@@ -1,6 +1,7 @@
 package blog_test
 
 import (
+	"strings"
 	. "goblog/blog"
 	"testing"
 	"time"
@@ -47,4 +48,15 @@ func TestPermalink(t *testing.T) {
 
 	// Adminlink with custom PostType
 	assert.Equal(t, "/admin/notes"+currentTime.Format("/2006/01/02/")+post2.Slug, post2.Adminlink())
+}
+
+// TestExtractImages: both the upload widget's [file](url) form and
+// standard markdown images count.
+func TestExtractImages(t *testing.T) {
+	p := Post{Content: "Intro [file](/img/a.png) then ![alt text](/img/b.png) and ![](https://x.test/c.jpg) but not [a link](/page)."}
+	got := p.ExtractImages()
+	want := []string{"/img/a.png", "/img/b.png", "https://x.test/c.jpg"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("got %v want %v", got, want)
+	}
 }

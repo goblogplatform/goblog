@@ -309,7 +309,7 @@ func (p *Plugin) RenderPage(ctx *gplugin.HookContext, pageType string) (string, 
 			log.Printf("Directory plugin: render %s: %v", d.Name, err)
 			return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": unavailableHTML, "title": d.DisplayName}
 		}
-		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html, "title": d.DisplayName}
+		return "page_content.html", gin.H{"has_plugin_content": true, "plugin_content": html, "title": d.DisplayName, "meta_description": d.Description}
 	}
 	return "", nil
 }

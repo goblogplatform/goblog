@@ -14,6 +14,7 @@ var seededSettings = map[string]string{
 	"landing_page_image": "file", "favicon": "file", "custom_header_code": "textarea", "custom_footer_code": "textarea",
 	"theme": "text", "robots_tag": "text", "site_url": "text", "comments_require_login": "checkbox",
 	"plugin_directory_url": "text", "theme_directory_url": "text",
+	"site_description": "textarea", "site_image": "file",
 }
 
 func seededSettingMap() map[string]blog.Setting {

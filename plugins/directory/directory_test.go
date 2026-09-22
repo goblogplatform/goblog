@@ -521,3 +521,19 @@ func TestSitemap(t *testing.T) {
 		t.Error("uninitialised plugin lists nothing")
 	}
 }
+
+// TestRenderPage_DetailDescribesItself: a plugin or theme page gives the
+// <head> its own description and title.
+func TestRenderPage_DetailDescribesItself(t *testing.T) {
+	f := newPluginFixture(t)
+	f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
+	ctx, _ := newRenderCtx(t, http.MethodGet, "/plugins/hello", "hello", nil)
+	_, data := f.p.RenderPage(ctx, PageType)
+	if data["meta_description"] != "Says hi." || data["title"] != "HELLO" {
+		t.Errorf("data = %v", data)
+	}
+	ctx, _ = newRenderCtx(t, http.MethodGet, "/plugins", "", nil)
+	if _, data = f.p.RenderPage(ctx, PageType); data["meta_description"] != nil {
+		t.Errorf("the listing keeps the site description: %v", data["meta_description"])
+	}
+}

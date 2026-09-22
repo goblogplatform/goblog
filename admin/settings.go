@@ -49,6 +49,8 @@ var settingGroups = []settingGroupDef{
 		{Key: "site_subtitle", Label: "Subtitle", Help: "Tagline shown under the title."},
 		{Key: "site_logo_letters", Label: "Logo letters", Help: "Short initials used as the logo."},
 		{Key: "site_tags", Label: "Site tags", Help: "Comma-separated keywords for the site's meta tags."},
+		{Key: "site_description", Label: "Site description", Help: "One or two sentences about the site, shown by search engines and link previews for pages without their own description."},
+		{Key: "site_image", Label: "Site image", Help: "Picture shown in link previews (Open Graph) for pages without their own, and as the fallback image in a post's structured data."},
 		{Key: "site_url", Label: "Site URL", Help: "Public address of this site, used for links in feeds, emails and the sitemap."},
 		{Key: "robots_tag", Label: "Robots tag", Help: "Value of the robots meta tag, for example \"index, follow\"."},
 	}},

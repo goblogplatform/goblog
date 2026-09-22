@@ -329,3 +329,22 @@ func TestSitemap(t *testing.T) {
 		t.Error("the index is the page row itself, which blog already lists")
 	}
 }
+
+// TestRenderPage_DescribesItself: each docs page gives the <head> a
+// description made of its first words, plain text, at most 160 characters.
+func TestRenderPage_DescribesItself(t *testing.T) {
+	p := New()
+	for _, pg := range pages {
+		ctx, _ := renderCtx(t, "/docs/"+pg.Slug, pg.Slug)
+		_, data := p.RenderPage(ctx, PageType)
+		d, _ := data["meta_description"].(string)
+		if d == "" || len(d) > 160 || strings.ContainsAny(d, "#`*\n") {
+			t.Errorf("%s: meta_description = %q", pg.Slug, d)
+		}
+	}
+	ctx, _ := renderCtx(t, "/docs/writing-a-plugin", "writing-a-plugin")
+	_, data := p.RenderPage(ctx, PageType)
+	if d := data["meta_description"].(string); !strings.HasPrefix(d, "A goblog plugin is") && !strings.HasPrefix(d, "This page") {
+		t.Errorf("description should be the page's opening words, got %q", d)
+	}
+}
