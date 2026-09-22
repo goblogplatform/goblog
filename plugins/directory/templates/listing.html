@@ -6,24 +6,17 @@ Install them from your own goblog under <strong>Admin → Plugins</strong>.</p>
 <p>The plugin directory is empty. Machine-readable index: <a href="{{ .Base }}/index.json">index.json</a>.</p>
 {{ end }}
 {{ if .Entries }}
-<div class="table-responsive">
-<table class="table align-middle">
-  <thead>
-    <tr><th>Plugin</th><th>Description</th><th>Author</th><th>License</th><th>Talks to</th><th>Stars</th></tr>
-  </thead>
-  <tbody>
-  {{ range .Entries }}
-    <tr>
-      <td class="text-nowrap"><a href="{{ $.Base }}/{{ .Name }}">{{ .DisplayName }}</a> <small class="text-muted">v{{ .Version }}</small><br><small><a href="{{ .SourceURL }}">source</a></small></td>
-      <td>{{ .Description }}</td>
-      <td class="text-nowrap">{{ .Author }}</td>
-      <td class="text-nowrap">{{ .License }}</td>
-      <td>{{ if .AllowedHosts }}{{ range $i, $h := .AllowedHosts }}{{ if $i }}, {{ end }}{{ $h }}{{ with hostNote $h }} <span class="badge text-bg-warning">{{ . }}</span>{{ end }}{{ end }}{{ else }}No network access{{ end }}</td>
-      <td class="text-nowrap">★ {{ .Stars }}</td>
-    </tr>
-  {{ end }}
-  </tbody>
-</table>
+<div class="list-group list-group-flush">
+{{ range .Entries }}
+  <div class="list-group-item px-0 py-3">
+    <div class="d-flex justify-content-between align-items-baseline">
+      <h2 class="fs-5 mb-1"><a href="{{ $.Base }}/{{ .Name }}">{{ .DisplayName }}</a> <small class="text-muted fw-normal">v{{ .Version }}</small></h2>
+      <span class="text-nowrap text-muted">★ {{ .Stars }}</span>
+    </div>
+    <p class="mb-1">{{ .Description }}</p>
+    <p class="small text-muted mb-0">by {{ .Author }} · {{ .License }} · {{ if .AllowedHosts }}Talks to {{ range $i, $h := .AllowedHosts }}{{ if $i }}, {{ end }}{{ $h }}{{ with hostNote $h }} <span class="badge text-bg-warning">{{ . }}</span>{{ end }}{{ end }}{{ else }}No network access{{ end }} · <a href="{{ .SourceURL }}">source</a></p>
+  </div>
+{{ end }}
 </div>
 {{ end }}
 
