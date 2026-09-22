@@ -70,3 +70,14 @@
   border-top-left-radius: var(--bs-card-inner-border-radius, .375rem);
   border-top-right-radius: var(--bs-card-inner-border-radius, .375rem);
 }
+
+/* The editor's Preview tab: a reading surface the same size as the editor. */
+.editor-preview-pane {
+    border: 1px solid #ced4da;
+    border-top: 0;
+    border-radius: 0 0 0.375rem 0.375rem;
+    padding: 12px;
+    min-height: 200px;
+    background: #fff;
+}
+.editor-tabs { margin-bottom: 0; }
