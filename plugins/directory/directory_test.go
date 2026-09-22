@@ -177,8 +177,9 @@ func newRenderCtx(t *testing.T, method, path, subPath string, form url.Values) (
 	// target HTTP/1.0" line; a literal space in path (as in the "Bad Name"
 	// case below) breaks that parsing, so percent-encode it first. This
 	// only affects how the request line is built — SubPath is passed
-	// separately and unaffected.
-	target := (&url.URL{Path: path}).String()
+	// separately and unaffected. A "?query" suffix is kept as the query.
+	path, rawQuery, _ := strings.Cut(path, "?")
+	target := (&url.URL{Path: path, RawQuery: rawQuery}).String()
 	if form != nil {
 		c.Request = httptest.NewRequest(method, target, strings.NewReader(form.Encode()))
 		c.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -397,5 +398,104 @@ func TestRenderPage_ThemesListingDetailAndIndex(t *testing.T) {
 	ctx, _ = newRenderCtx(t, http.MethodGet, "/themes", "", nil)
 	if tmpl, _ := f.p.RenderPage(ctx, "other"); tmpl != "" {
 		t.Error("unknown page types are declined")
+	}
+}
+
+func TestMatches(t *testing.T) {
+	e := Entry{Name: "hello-world", DisplayName: "Hello World", Description: "Says hi to visitors.", Author: "Jason"}
+	for _, q := range []string{"hello", "HELLO", "hello-w", "says HI", "jason", "  visitors "} {
+		if !matches(e, q) {
+			t.Errorf("%q should match", q)
+		}
+	}
+	for _, q := range []string{"goodbye", "MIT", "hello  world"} {
+		if matches(e, q) {
+			t.Errorf("%q should not match", q)
+		}
+	}
+	if !matches(e, "") {
+		t.Error("an empty query matches everything")
+	}
+}
+
+// TestRenderPage_ListingFilter: ?q= narrows the plugin and theme listings
+// (#608); the pages carry a search form either way.
+func TestRenderPage_ListingFilter(t *testing.T) {
+	f := newPluginFixture(t)
+	f.svc.Add(context.Background(), KindPlugin, "o/zeta", "")
+	f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
+	f.svc.Add(context.Background(), KindTheme, "o/ocean", "")
+
+	ctx, _ := newRenderCtx(t, http.MethodGet, "/plugins", "", nil)
+	html := content(t, must(f.p.RenderPage(ctx, PageType)))
+	if !strings.Contains(html, `<form`) || !strings.Contains(html, `name="q"`) || !strings.Contains(html, `action="/plugins"`) {
+		t.Errorf("listing needs a search form posting to the page:\n%s", html)
+	}
+
+	ctx, _ = newRenderCtx(t, http.MethodGet, "/plugins?q=HELLO", "", nil)
+	html = content(t, must(f.p.RenderPage(ctx, PageType)))
+	if !strings.Contains(html, `href="/plugins/hello"`) || strings.Contains(html, `href="/plugins/zeta"`) {
+		t.Errorf("filtered listing must list hello only:\n%s", html)
+	}
+	for _, want := range []string{"1 plugin matching", "HELLO", `value="HELLO"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("filtered listing missing %q in:\n%s", want, html)
+		}
+	}
+
+	ctx, _ = newRenderCtx(t, http.MethodGet, "/plugins?q=nothing-here", "", nil)
+	html = content(t, must(f.p.RenderPage(ctx, PageType)))
+	if !strings.Contains(html, "No plugins match") || strings.Contains(html, "directory is empty") || !strings.Contains(html, `href="/plugins"`) {
+		t.Errorf("no-match listing must say so and link back to the full list:\n%s", html)
+	}
+
+	ctx, _ = newRenderCtx(t, http.MethodGet, "/themes?q=ocean", "", nil)
+	html = content(t, must(f.p.RenderPage(ctx, ThemePageType)))
+	if !strings.Contains(html, `href="/themes/ocean"`) || !strings.Contains(html, "1 theme matching") || !strings.Contains(html, `action="/themes"`) {
+		t.Errorf("themes listing must filter too:\n%s", html)
+	}
+	ctx, _ = newRenderCtx(t, http.MethodGet, "/themes?q=zzz", "", nil)
+	if html = content(t, must(f.p.RenderPage(ctx, ThemePageType))); !strings.Contains(html, "No themes match") {
+		t.Errorf("themes no-match:\n%s", html)
+	}
+}
+
+func must(tmpl string, data gin.H) gin.H { return data }
+
+// TestSearch: the plugin answers the site search with matching plugins and
+// themes, linking to their pages under the slugs the admin gave them.
+func TestSearch(t *testing.T) {
+	f := newPluginFixture(t)
+	var _ gplugin.Searcher = f.p
+	f.svc.Add(context.Background(), KindPlugin, "o/zeta", "")
+	f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
+	f.svc.Add(context.Background(), KindTheme, "o/ocean", "")
+	f.db.Model(&blog.Page{}).Where("page_type = ?", ThemePageType).Update("slug", "skins")
+
+	// Every fake repo is by "Jason": plugins first (most-starred first),
+	// then themes.
+	ctx, _ := newRenderCtx(t, http.MethodGet, "/search?q=jason", "", nil)
+	ctx.DB = f.db
+	got := f.p.Search(ctx, "jason")
+	if len(got) != 3 {
+		t.Fatalf("results = %+v", got)
+	}
+	if got[0].Title != "HELLO" || got[0].URL != "/plugins/hello" || got[0].Kind != "Plugin" || got[0].Summary != "Says hi." {
+		t.Errorf("plugin result = %+v", got[0])
+	}
+	if got[1].URL != "/plugins/zeta" {
+		t.Errorf("second result = %+v", got[1])
+	}
+	if got[2].Title != "OCEAN" || got[2].URL != "/skins/ocean" || got[2].Kind != "Theme" {
+		t.Errorf("theme result = %+v", got[2])
+	}
+	if r := f.p.Search(ctx, "zeta"); len(r) != 1 || r[0].URL != "/plugins/zeta" {
+		t.Errorf("zeta = %+v", r)
+	}
+	if r := f.p.Search(ctx, "nothing-here"); len(r) != 0 {
+		t.Errorf("no match = %+v", r)
+	}
+	if r := New().Search(ctx, "jason"); r != nil {
+		t.Error("an uninitialised plugin has nothing to search")
 	}
 }

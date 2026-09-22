@@ -654,3 +654,69 @@ func TestDeletePages_KeepsClaimedTypes(t *testing.T) {
 		t.Errorf("expected the page to be deleted once unclaimed, got %d", count)
 	}
 }
+
+// searchPlugin answers site searches with one fixed result.
+type searchPlugin struct {
+	plugin.BasePlugin
+	gotQuery string
+}
+
+func (p *searchPlugin) Name() string        { return "searcher" }
+func (p *searchPlugin) DisplayName() string { return "Searcher" }
+func (p *searchPlugin) Version() string     { return "0.1.0" }
+func (p *searchPlugin) Settings() []plugin.SettingDefinition {
+	return []plugin.SettingDefinition{{Key: "enabled", Type: "text", DefaultValue: "false", Label: "Enabled"}}
+}
+func (p *searchPlugin) Search(ctx *plugin.HookContext, query string) []plugin.SearchResult {
+	p.gotQuery = query
+	if ctx.Settings["enabled"] != "true" {
+		panic("disabled plugins must not be searched")
+	}
+	return []plugin.SearchResult{{Title: "Hit", URL: "/x/hit", Summary: "found " + query, Kind: "Thing"}}
+}
+
+// TestRegistrySearch: Search asks every enabled plugin that implements
+// Searcher and concatenates their results; plugins that do not implement
+// it, or are disabled, contribute nothing.
+func TestRegistrySearch(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&plugin.PluginSetting{})
+	reg := plugin.NewRegistry(db)
+	sp := &searchPlugin{}
+	reg.Register(&testPlugin{}) // not a Searcher
+	reg.Register(sp)
+	reg.Init()
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/search?q=hi", nil)
+
+	if got := reg.Search(c, "hi"); len(got) != 0 {
+		t.Errorf("disabled searcher must contribute nothing, got %v", got)
+	}
+	reg.UpdateSetting("searcher", "enabled", "true")
+	got := reg.Search(c, "hi")
+	if len(got) != 1 || got[0].Title != "Hit" || got[0].URL != "/x/hit" || got[0].Summary != "found hi" || got[0].Kind != "Thing" {
+		t.Fatalf("results = %+v", got)
+	}
+	if sp.gotQuery != "hi" {
+		t.Errorf("query passed = %q", sp.gotQuery)
+	}
+}
+
+// TestPageSlug: the slug of a plugin page as the admin has it, or the
+// default when the page row is missing or there is no database.
+func TestPageSlug(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Page{})
+	if got := plugin.PageSlug(db, "dir", "plugins"); got != "plugins" {
+		t.Errorf("missing row: %q", got)
+	}
+	db.Create(&blog.Page{Title: "Dir", Slug: "extensions", PageType: "dir", Enabled: true})
+	if got := plugin.PageSlug(db, "dir", "plugins"); got != "extensions" {
+		t.Errorf("renamed: %q", got)
+	}
+	if got := plugin.PageSlug(nil, "dir", "plugins"); got != "plugins" {
+		t.Errorf("nil db: %q", got)
+	}
+}

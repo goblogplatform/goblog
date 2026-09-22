@@ -1,4 +1,14 @@
-{{ if .Entries }}
+<form action="{{ .Base }}" method="GET" class="row g-2 mb-4" role="search">
+  <div class="col-sm-8 col-md-6">
+    <label for="directory-q" class="visually-hidden">Search plugins</label>
+    <input type="search" id="directory-q" name="q" value="{{ .Query }}" placeholder="Search plugins by name, description or author" class="form-control">
+  </div>
+  <div class="col-auto"><button type="submit" class="btn btn-primary">Search</button></div>
+</form>
+{{ if .Query }}
+<p>{{ len .Entries }} plugin{{ if ne (len .Entries) 1 }}s{{ end }} matching &lsquo;{{ .Query }}&rsquo;, most-starred first.
+{{ if not .Entries }}No plugins match. {{ end }}<a href="{{ .Base }}">Show all plugins</a>.</p>
+{{ else if .Entries }}
 <p>{{ len .Entries }} plugin{{ if ne (len .Entries) 1 }}s{{ end }} in the directory, most-starred first.
 Machine-readable index: <a href="{{ .Base }}/index.json">index.json</a>.
 Install them from your own goblog under <strong>Admin → Plugins</strong>.</p>

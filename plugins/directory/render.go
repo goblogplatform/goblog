@@ -79,14 +79,15 @@ func basePath(c *gin.Context) string {
 }
 
 // renderListingFor renders the listing page for kind: listing.html for
-// plugins, themes-listing.html for themes.
-func renderListingFor(kind, base string, entries []Entry) (string, error) {
+// plugins, themes-listing.html for themes. query is the visitor's ?q=
+// filter ("" for the whole directory) and entries what matched it.
+func renderListingFor(kind, base, query string, entries []Entry) (string, error) {
 	name := "listing.html"
 	if kind == KindTheme {
 		name = "themes-listing.html"
 	}
 	var buf bytes.Buffer
-	err := templates.ExecuteTemplate(&buf, name, map[string]any{"Base": base, "Entries": entries})
+	err := templates.ExecuteTemplate(&buf, name, map[string]any{"Base": base, "Query": query, "Entries": entries})
 	return buf.String(), err
 }
 

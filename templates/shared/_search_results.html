@@ -1,0 +1,30 @@
+{{/*
+_search_results renders the search page's results: the count, the
+no-results message and one entry per result — posts first, then hits from
+plugins (with their kind label). A theme's search.html includes it with
+{{ template "_search_results" . }} below its heading and form; a theme
+that wants a different layout may define its own "_search_results".
+*/}}
+{{ define "_search_results" }}
+{{ if .query }}
+<p class="search-count">{{ .result_count }} result{{ if ne .result_count 1 }}s{{ end }} found</p>
+{{ if eq .result_count 0 }}
+<p class="search-empty">No results found for '{{ .query }}'. Try a different search term.</p>
+{{ end }}
+{{ end }}
+{{ range .results }}
+<div class="row search-result">
+  <div class="container left">
+      <h3 class="text-left"><a href="{{ .URL }}" title="{{ .Title }}">{{ .Title }}</a>{{ if .Kind }} <small class="text-muted search-kind">{{ .Kind }}</small>{{ end }}</h3>
+      {{ if not .Date.IsZero }}
+      <p class="blog-post-meta text-left">{{ .Date.Format "Jan 02, 2006 15:04:05 UTC" }}
+          {{ range .Tags }}
+            <a href="{{ .Permalink }}" title="{{ .Name }}">#{{ .Name }}</a>
+          {{ end }}
+      </p>
+      {{ end }}
+      <p class="text-justify">{{ .Summary }}</p>
+  </div>
+</div>
+{{ end }}
+{{ end }}

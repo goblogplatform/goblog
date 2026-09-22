@@ -9,6 +9,8 @@ package plugin
 import (
 	"time"
 
+	"goblog/blog"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -76,6 +78,18 @@ type Plugin interface {
 	// RenderPage is called when a plugin-owned page is visited.
 	// Returns the template name and data to render, or empty string to skip.
 	RenderPage(ctx *HookContext, pageType string) (templateName string, data gin.H)
+}
+
+// SearchResult is one hit a plugin contributes to the site search page:
+// plain-text title, summary and kind label plus the URL to link to. It is
+// blog's type so blog can render it without importing plugin.
+type SearchResult = blog.SearchHit
+
+// Searcher is an optional interface: a plugin that implements it is asked
+// for results when a visitor uses the site search, and they are listed
+// after the matching posts. Only enabled plugins are asked.
+type Searcher interface {
+	Search(ctx *HookContext, query string) []SearchResult
 }
 
 // BasePlugin provides no-op implementations of all Plugin methods.

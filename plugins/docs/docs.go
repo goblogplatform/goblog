@@ -35,6 +35,7 @@ type renderedPage struct {
 	page
 	HTML template.HTML
 	TOC  []Heading
+	Text string // the source as plain text, for search
 }
 
 // Plugin serves the builder documentation at /docs.
@@ -56,7 +57,7 @@ func New() *Plugin {
 		if err != nil {
 			panic(fmt.Sprintf("docs: render %s: %v", pg.File, err))
 		}
-		p.bySlug[pg.Slug] = renderedPage{page: pg, HTML: html, TOC: toc}
+		p.bySlug[pg.Slug] = renderedPage{page: pg, HTML: html, TOC: toc, Text: searchText(src)}
 	}
 	return p
 }
