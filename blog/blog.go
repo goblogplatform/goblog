@@ -1193,7 +1193,10 @@ func (b *Blog) SiteURL(c *gin.Context) string {
 		return u
 	}
 	scheme := "http"
-	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+	// Proxies may chain values ("https, http") and vary the case; the
+	// first is the one the client used.
+	forwarded, _, _ := strings.Cut(c.GetHeader("X-Forwarded-Proto"), ",")
+	if c.Request.TLS != nil || strings.EqualFold(strings.TrimSpace(forwarded), "https") {
 		scheme = "https"
 	}
 	return scheme + "://" + c.Request.Host

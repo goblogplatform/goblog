@@ -1617,6 +1617,26 @@ func TestSitemap(t *testing.T) {
 	}
 }
 
+// TestSiteURL_ForwardedProto: proxies chain X-Forwarded-Proto values and
+// vary the case; the first one, lower-cased, decides the scheme.
+func TestSiteURL_ForwardedProto(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Setting{})
+	b := blog.New(db, &Auth{}, "test")
+	gin.SetMode(gin.TestMode)
+	for header, want := range map[string]string{"https": "https", "HTTPS": "https", "https, http": "https", "http,https": "http", "": "http"} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/", nil)
+		c.Request.Host = "h.test"
+		if header != "" {
+			c.Request.Header.Set("X-Forwarded-Proto", header)
+		}
+		if got := b.SiteURL(c); got != want+"://h.test" {
+			t.Errorf("X-Forwarded-Proto %q: %q", header, got)
+		}
+	}
+}
+
 // TestRobotsTxt: crawlers are told what not to index and where the sitemap is.
 func TestRobotsTxt(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"))
