@@ -305,11 +305,33 @@ func pluginPageHarness(t *testing.T) *pluginsHarness {
 	return h
 }
 
+// TestAdminPluginSettingsPage_Anonymous: a visitor who is not signed in is
+// sent to the login page and back again (#620).
+func TestAdminPluginSettingsPage_Anonymous(t *testing.T) {
+	h := pluginPageHarness(t)
+	h.auth.On("IsAdmin", mock.Anything).Return(false)
+	h.auth.On("IsLoggedIn", mock.Anything).Return(false)
+	if w := h.do("GET", "/admin/plugins/hello-world", ""); w.Code != http.StatusFound || w.Header().Get("Location") != "/login?next=%2Fadmin%2Fplugins%2Fhello-world" {
+		t.Fatalf("anonymous: %d %q", w.Code, w.Header().Get("Location"))
+	}
+}
+
+// TestAdminPluginSettingsPage_NonAdmin: someone signed in without an admin
+// account is told why they cannot see the page, not redirected to a login
+// they have already completed (#620).
 func TestAdminPluginSettingsPage_NonAdmin(t *testing.T) {
 	h := pluginPageHarness(t)
 	h.auth.On("IsAdmin", mock.Anything).Return(false)
-	if w := h.do("GET", "/admin/plugins/hello-world", ""); w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
+	h.auth.On("IsLoggedIn", mock.Anything).Return(true)
+	w := h.do("GET", "/admin/plugins/hello-world", "")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("code = %d, want 403", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "admin") || !strings.Contains(body, `href="/logout"`) {
+		t.Errorf("page should explain and offer to sign out:\n%s", body)
+	}
+	if body := w.Body.String(); strings.Contains(body, "api_key") {
+		t.Error("the plugin's settings must not be rendered to a non-admin")
 	}
 }
 

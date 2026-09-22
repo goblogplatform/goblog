@@ -794,17 +794,7 @@ func (b *Blog) DynamicPage(c *gin.Context, page *Page, subPath string) {
 
 // renderAdminPost renders the admin edit view for a post, used by NoRoute for admin type-prefixed URLs
 func (b *Blog) renderAdminPost(c *gin.Context, post *Post) {
-	if !b.auth.IsAdmin(c) {
-		b.Render(c, http.StatusUnauthorized, "error.html", gin.H{
-			"error":       "Unauthorized",
-			"description": "You are not authorized to view this page",
-			"version":     b.Version,
-			"title":       "Unauthorized",
-			"recent":      b.GetLatest(),
-			"admin_page":  true,
-			"settings":    b.GetSettings(),
-			"nav_pages":   b.GetNavPages(),
-		})
+	if !b.RequireAdminPage(c) {
 		return
 	}
 	b.Render(c, http.StatusOK, "post-admin.html", gin.H{
@@ -1404,6 +1394,48 @@ func (b *Blog) Login(c *gin.Context) {
 }
 
 // Logout of the blog
+// RequireAdminPage guards an admin *page* — one a browser navigates to,
+// as opposed to the JSON API, which answers 401 so the admin scripts can
+// show the error. It reports whether the handler may continue; when it
+// does not, the response is already written:
+//
+//   - nobody signed in: a redirect to the login page, told where to return
+//     to (login carries "next" through the GitHub round trip and the email
+//     code form alike);
+//   - signed in but not an admin: 403 and a page saying so. Sending them to
+//     a login they have already completed would be a loop.
+func (b *Blog) RequireAdminPage(c *gin.Context) bool {
+	if b.auth.IsAdmin(c) {
+		return true
+	}
+	if !b.auth.IsLoggedIn(c) {
+		c.Redirect(http.StatusFound, "/login?next="+url.QueryEscape(c.Request.URL.RequestURI()))
+		c.Abort()
+		return false
+	}
+	// error.html renders .description as-is when it is template.HTML, so the
+	// links below work in every theme without the theme changing; the user's
+	// name is theirs to choose, so it is escaped.
+	who := "You are signed in with an account that is not an admin."
+	if u := b.auth.CurrentUser(c); u != nil && u.Name != "" {
+		who = "You are signed in as " + template.HTMLEscapeString(u.Name) + ", which is not an admin account."
+	}
+	b.Render(c, http.StatusForbidden, "error.html", gin.H{
+		"logged_in":   true,
+		"is_admin":    false,
+		"error":       "Admin access required",
+		"description": template.HTML(who + ` <a href="/">Go to the site</a>, or <a href="/logout">sign out</a> and sign in with an admin account.`),
+		"version":     b.Version,
+		"title":       "Admin access required",
+		"recent":      b.GetLatest(),
+		"admin_page":  false,
+		"settings":    b.GetSettings(),
+		"nav_pages":   b.GetNavPages(),
+	})
+	c.Abort()
+	return false
+}
+
 // SafeNext reduces a requested post-login destination to a same-site path:
 // it must start with a single "/" (so no "//host" or "/\host" scheme-relative
 // URLs and no absolute URLs). Anything else becomes "/".
