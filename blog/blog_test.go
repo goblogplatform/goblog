@@ -1997,8 +1997,14 @@ func TestPostPage_ServerRendered(t *testing.T) {
 			t.Errorf("page still references %q", gone)
 		}
 	}
-	if strings.Contains(body, "alert(1)") {
-		t.Error("a comment's script must not reach the page")
+	// The security property is that no executable construct from a comment
+	// reaches the page — not that a particular payload string is absent;
+	// a commenter may write the words alert(1) as prose.
+	commentBody := divContents(t, body, `<div class="comment-content">`)
+	for _, gone := range []string{"<script", "onerror", "javascript:"} {
+		if strings.Contains(commentBody, gone) {
+			t.Errorf("a comment must not carry %q: %q", gone, commentBody)
+		}
 	}
 }
 

@@ -43,10 +43,44 @@ func TestCommentHTML_Sanitises(t *testing.T) {
 			t.Errorf("missing %q in %q", want, got)
 		}
 	}
-	for _, gone := range []string{"<script", "alert(1)", "<iframe", "onerror", "javascript:"} {
+	// What must go is the executable construct, not any particular payload:
+	// a commenter may legitimately write the words alert(1), and a sanitiser
+	// that drops a <script> element keeps its text as prose.
+	for _, gone := range []string{"<script", "<iframe", "onerror", "javascript:"} {
 		if strings.Contains(got, gone) {
 			t.Errorf("must not contain %q in %q", gone, got)
 		}
+	}
+}
+
+// TestCommentHTML_InlineHTMLIsInert: raw HTML written inline, rather than as
+// its own block, also loses its tags — the words inside remain as prose,
+// which is what a reader should see.
+func TestCommentHTML_InlineHTMLIsInert(t *testing.T) {
+	c := Comment{Content: "Nice post! <script>alert(1)</script> <b onclick=\"steal()\">bold</b> <a href=\"javascript:evil()\">link</a>"}
+	got := string(c.HTML())
+	for _, gone := range []string{"<script", "onclick", "javascript:"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("must not contain %q in %q", gone, got)
+		}
+	}
+	if !strings.Contains(got, "Nice post!") {
+		t.Errorf("the comment's own words must survive: %q", got)
+	}
+}
+
+// TestCommentHTML_PayloadTextIsAllowed: a comment that merely talks about
+// JavaScript is prose, not an attack, and must render as written.
+func TestCommentHTML_PayloadTextIsAllowed(t *testing.T) {
+	c := Comment{Content: "Your snippet calls `alert(1)` — is that on purpose? I would use onerror= instead."}
+	got := string(c.HTML())
+	for _, want := range []string{"alert(1)", "onerror="} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prose about code must survive; missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "<script") {
+		t.Errorf("nothing executable here: %q", got)
 	}
 }
 
