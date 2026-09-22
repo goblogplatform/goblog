@@ -188,11 +188,11 @@ func (a *Admin) RefreshThemeDirectory(c *gin.Context) {
 }
 
 // ThemeScreenshot serves an on-disk theme's own screenshot for the Themes
-// page cards: GET /admin/themes/:name/screenshot. The name must be a
-// theme slug and the theme must have a screenshot (theme.Screenshot), so
-// nothing in the URL ever reaches the filesystem as a path. Admin-only
-// like the rest of the page; the file is static, so the browser may cache
-// it for the session.
+// page cards: GET /admin/themes/:name/screenshot. theme.Screenshot only
+// resolves a name theme.ValidName accepts (letters, digits, "_", "-") that
+// is a theme on disk with a screenshot, so nothing else in the URL ever
+// reaches the filesystem as a path. Admin-only like the rest of the page;
+// the file is static, so the browser may cache it for the session.
 func (a *Admin) ThemeScreenshot(c *gin.Context) {
 	if !a.auth.IsAdmin(c) {
 		c.JSON(http.StatusUnauthorized, "Not Authorized")

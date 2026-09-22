@@ -199,8 +199,12 @@ func installedVersion(dir string) (installedManifest, bool) {
 }
 
 // ScreenshotPath is the admin route that serves an on-disk theme's own
-// screenshot (see theme.Screenshot); the name is a validated slug.
-func ScreenshotPath(name string) string { return "/admin/themes/" + name + "/screenshot" }
+// screenshot (see theme.Screenshot). A theme name is letters, digits, "_"
+// and "-" (theme.ValidName), which the escape leaves untouched; it is
+// there so the helper stays a valid single path segment for any input.
+func ScreenshotPath(name string) string {
+	return "/admin/themes/" + url.PathEscape(name) + "/screenshot"
+}
 
 // Status lists every theme on disk (with update info for installed ones)
 // and the directory themes that are not installed.
