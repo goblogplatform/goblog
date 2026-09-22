@@ -217,17 +217,19 @@ func TestRenderPage_Listing(t *testing.T) {
 	_, data = f.p.RenderPage(ctx, PageType)
 	html := content(t, data)
 	for _, want := range []string{`href="/plugins/hello"`, `href="/plugins/zeta"`, "HELLO", "Says hi.", "v1.0.0", "Jason", "MIT",
-		`href="/plugins/index.json"`, `href="https://github.com/o/hello"`, `href="/plugins/submit"`, "★ 7", `class="table-responsive"`} {
+		`href="/plugins/index.json"`, `href="https://github.com/o/hello"`, `href="/plugins/submit"`, "★ 7", "No network access"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("listing missing %q in:\n%s", want, html)
 		}
 	}
-	// Type and runtime are always "wasm" now; they belong on the detail page,
-	// not in a table that already overflows the content column.
-	for _, gone := range []string{"<th>Type</th>", "<th>Runtime</th>", "<th>Version</th>"} {
-		if strings.Contains(html, gone) {
-			t.Errorf("listing should not have the %s column", gone)
-		}
+	// The listing is a stacked list, not a table: a six-column table
+	// squeezed the description into a narrow column and overflowed the
+	// content container (#607).
+	if strings.Contains(html, "<table") {
+		t.Error("listing must not be a table")
+	}
+	if !strings.Contains(html, `<p class="mb-1">Says hi.</p>`) {
+		t.Errorf("description must be a full-width paragraph in:\n%s", html)
 	}
 	if strings.Index(html, "/plugins/hello") > strings.Index(html, "/plugins/zeta") {
 		t.Error("listing must be sorted by stars, hello (7) before zeta (1)")
