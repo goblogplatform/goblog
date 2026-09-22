@@ -11,10 +11,8 @@ import (
 	gplugin "goblog/plugin"
 	"goblog/plugin/installer"
 	"goblog/plugin/wasm"
-	"goblog/plugins/analytics"
 	"goblog/plugins/directory"
 	"goblog/plugins/docs"
-	"goblog/plugins/socialicons"
 	"goblog/theme"
 	tinstaller "goblog/theme/installer"
 	"goblog/tools"
@@ -304,8 +302,6 @@ func main() {
 
 	// Initialize plugin system
 	registry := gplugin.NewRegistry(db)
-	registry.Register(analytics.New())
-	registry.Register(socialicons.New())
 	dir := directory.New()
 	dir.SetUserAgent("goblog-directory/" + Version)
 	registry.Register(dir)
