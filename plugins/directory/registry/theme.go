@@ -53,11 +53,12 @@ type ThemeManifest struct {
 }
 
 // reservedThemeNames are directory names the loader treats specially or
-// the base themes every goblog ships; a directory theme may not claim
+// the base theme every goblog ships; a directory theme may not claim
 // them (nor the route names in reservedNames, which apply to both kinds).
-// forest is not here on purpose: it is published to the directory and no
-// longer ships with goblog, so it is an ordinary directory theme.
-var reservedThemeNames = map[string]bool{"default": true, "minimal": true, "installed": true, "shared": true}
+// forest and minimal are not here on purpose: both are published to the
+// directory and no longer ship with goblog, so they are ordinary
+// directory themes.
+var reservedThemeNames = map[string]bool{"default": true, "installed": true, "shared": true}
 
 // ParseThemeManifest decodes and validates a theme manifest.
 func ParseThemeManifest(b []byte) (ThemeManifest, error) {

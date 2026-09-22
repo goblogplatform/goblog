@@ -38,7 +38,7 @@ The archive of the tag must be **16 MiB or smaller**, with **at most 2000 entrie
 
 | Field | Rule |
 |---|---|
-| `name` | `^[a-z0-9-]+$` and unique among the directory's themes. It becomes the directory name under `themes/installed/` and the value of the site's `theme` setting once installed, so keep it stable across versions. **Reserved:** `default`, `minimal`, `installed` and `shared` are refused, and so are `submit` and `index` — the directory's own pages (`/themes/submit`, `/themes/index.json`). A goblog also never installs a directory theme over a built-in of the same name, or over a theme an operator copied in by hand. |
+| `name` | `^[a-z0-9-]+$` and unique among the directory's themes. It becomes the directory name under `themes/installed/` and the value of the site's `theme` setting once installed, so keep it stable across versions. **Reserved:** `default`, `installed` and `shared` are refused, and so are `submit` and `index` — the directory's own pages (`/themes/submit`, `/themes/index.json`). A goblog also never installs a directory theme over a built-in of the same name, or over a theme an operator copied in by hand. |
 | `display_name` | The label in the directory listing. Required. |
 | `description` | One sentence for the listing. Required. |
 | `author` | Required. |
@@ -111,7 +111,7 @@ Messages are prefixed with the repository (`owner/name: …`) and, once a releas
 | `goblog-theme.json: not found` | The file is missing at the tag that was checked (the latest release), even if it exists on `main`. Tag a release that includes it. |
 | `goblog-theme.json: invalid character …` (or another JSON error) | The manifest is not valid JSON. |
 | `name must match ^[a-z0-9-]+$` | Lower-case letters, digits and hyphens only. |
-| `name "default" is reserved` (or `minimal`, `installed`, `shared`, `submit`, `index`) | Pick another name. |
+| `name "default" is reserved` (or `installed`, `shared`, `submit`, `index`) | Pick another name. |
 | `display_name is required` / `description is required` / `author is required` | Fill in the field; whitespace alone does not count. |
 | `license "…" is not a known SPDX identifier` | Use one of the identifiers listed above, spelled exactly. |
 | `min_goblog_version must be a plain semver like 0.5.0` | Three numbers, no `v`, no `-beta`. |
