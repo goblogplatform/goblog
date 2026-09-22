@@ -299,3 +299,33 @@ func TestSnippet_UTF8(t *testing.T) {
 		t.Errorf("invalid utf-8: %q", s)
 	}
 }
+
+// TestSitemap: every docs page is in the sitemap under the page's slug; the
+// index is the page itself, not "/docs/".
+func TestSitemap(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Page{}, &blog.PostType{})
+	p := New()
+	var _ gplugin.Sitemapper = p
+	if err := p.OnInit(db); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ := renderCtx(t, "/sitemap.xml", "")
+	ctx.DB = db
+	got := p.Sitemap(ctx)
+	if len(got) != len(pages)-1 {
+		t.Fatalf("%d urls for %d pages (index excluded): %+v", len(got), len(pages), got)
+	}
+	locs := map[string]bool{}
+	for _, u := range got {
+		locs[u.Loc] = true
+	}
+	for _, want := range []string{"/docs/writing-a-plugin", "/docs/directory-formats"} {
+		if !locs[want] {
+			t.Errorf("missing %s in %v", want, locs)
+		}
+	}
+	if locs["/docs"] || locs["/docs/"] {
+		t.Error("the index is the page row itself, which blog already lists")
+	}
+}

@@ -720,3 +720,33 @@ func TestPageSlug(t *testing.T) {
 		t.Errorf("nil db: %q", got)
 	}
 }
+
+type sitemapPlugin struct{ searchPlugin }
+
+func (p *sitemapPlugin) Sitemap(ctx *plugin.HookContext) []plugin.SitemapURL {
+	if ctx.Settings["enabled"] != "true" {
+		panic("disabled plugins must not be asked for sitemap URLs")
+	}
+	return []plugin.SitemapURL{{Loc: "/x/hit"}}
+}
+
+// TestRegistrySitemap: SitemapURLs asks every enabled plugin that
+// implements Sitemapper; the rest contribute nothing.
+func TestRegistrySitemap(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&plugin.PluginSetting{})
+	reg := plugin.NewRegistry(db)
+	reg.Register(&testPlugin{})
+	reg.Register(&sitemapPlugin{})
+	reg.Init()
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/sitemap.xml", nil)
+	if got := reg.SitemapURLs(c); len(got) != 0 {
+		t.Errorf("disabled: %v", got)
+	}
+	reg.UpdateSetting("searcher", "enabled", "true")
+	if got := reg.SitemapURLs(c); len(got) != 1 || got[0].Loc != "/x/hit" {
+		t.Errorf("enabled: %v", got)
+	}
+}

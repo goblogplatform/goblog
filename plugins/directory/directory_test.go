@@ -499,3 +499,25 @@ func TestSearch(t *testing.T) {
 		t.Error("an uninitialised plugin has nothing to search")
 	}
 }
+
+// TestSitemap: every approved plugin and theme page is in the sitemap, under
+// the slug the admin gave each page, with its release date as lastmod.
+func TestSitemap(t *testing.T) {
+	f := newPluginFixture(t)
+	var _ gplugin.Sitemapper = f.p
+	f.svc.Add(context.Background(), KindPlugin, "o/hello", "")
+	f.svc.Add(context.Background(), KindTheme, "o/ocean", "")
+	f.db.Model(&blog.Page{}).Where("page_type = ?", ThemePageType).Update("slug", "skins")
+	ctx, _ := newRenderCtx(t, http.MethodGet, "/sitemap.xml", "", nil)
+	ctx.DB = f.db
+	got := f.p.Sitemap(ctx)
+	if len(got) != 2 || got[0].Loc != "/plugins/hello" || got[1].Loc != "/skins/ocean" {
+		t.Fatalf("urls = %+v", got)
+	}
+	if got[0].LastMod.IsZero() || got[0].LastMod.Year() != 2026 {
+		t.Errorf("lastmod = %v", got[0].LastMod)
+	}
+	if New().Sitemap(ctx) != nil {
+		t.Error("uninitialised plugin lists nothing")
+	}
+}

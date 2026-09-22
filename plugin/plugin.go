@@ -92,6 +92,17 @@ type Searcher interface {
 	Search(ctx *HookContext, query string) []SearchResult
 }
 
+// SitemapURL is one URL a plugin lists in /sitemap.xml: a site-relative
+// path and, optionally, when it last changed. It is blog's type.
+type SitemapURL = blog.SitemapURL
+
+// Sitemapper is an optional interface: a plugin that implements it adds
+// its pages' URLs to the site's sitemap — the pages under its slugs that
+// blog cannot enumerate itself. Only enabled plugins are asked.
+type Sitemapper interface {
+	Sitemap(ctx *HookContext) []SitemapURL
+}
+
 // BasePlugin provides no-op implementations of all Plugin methods.
 type BasePlugin struct{}
 

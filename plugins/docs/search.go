@@ -89,3 +89,17 @@ func (p *Plugin) Search(ctx *gplugin.HookContext, query string) []gplugin.Search
 	}
 	return append(byTitle, byText...)
 }
+
+// Sitemap lists every docs page but the index (plugin.Sitemapper) under
+// the docs page's current slug; blog lists the page itself.
+func (p *Plugin) Sitemap(ctx *gplugin.HookContext) []gplugin.SitemapURL {
+	def := p.Pages()[0]
+	base := "/" + gplugin.PageSlug(ctx.DB, def.PageType, def.Slug)
+	var urls []gplugin.SitemapURL
+	for _, pg := range pages {
+		if pg.Slug != "" {
+			urls = append(urls, gplugin.SitemapURL{Loc: base + "/" + pg.Slug})
+		}
+	}
+	return urls
+}

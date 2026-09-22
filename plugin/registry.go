@@ -491,6 +491,33 @@ func (r *Registry) Search(c *gin.Context, query string) []SearchResult {
 	return results
 }
 
+// SitemapURLs collects sitemap entries from every enabled plugin that
+// implements Sitemapper, in registration order, the lock released while
+// plugins run.
+func (r *Registry) SitemapURLs(c *gin.Context) []SitemapURL {
+	r.mu.RLock()
+	plugins := r.plugins
+	db := r.db
+	r.mu.RUnlock()
+
+	if db == nil {
+		return nil
+	}
+	var urls []SitemapURL
+	for _, p := range plugins {
+		s, ok := p.(Sitemapper)
+		if !ok {
+			continue
+		}
+		settings := pluginSettings(db, p.Name())
+		if settings["enabled"] != "true" {
+			continue
+		}
+		urls = append(urls, s.Sitemap(&HookContext{GinContext: c, DB: db, Settings: settings})...)
+	}
+	return urls
+}
+
 // PageSlug is the slug of the page with pageType as the admin has it (a
 // plugin page can be renamed in Admin → Pages), or def when the row is
 // missing or db is nil. Plugins use it to link to their own pages from
