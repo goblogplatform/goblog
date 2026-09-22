@@ -1462,8 +1462,13 @@ func TestAdminPages_RenderInPanel(t *testing.T) {
 				// A page that sets no title gets the site title alone — never
 				// a formatting artefact such as "%!s(<nil>)".
 				title := regexp.MustCompile(`<title>([^<]*)</title>`).FindStringSubmatch(body)
-				if title == nil || strings.Contains(title[1], "nil") || strings.Contains(title[1], "%!") || strings.HasSuffix(strings.TrimSpace(title[1]), ":") {
-					t.Errorf("%s: <title> = %q", path, title)
+				if title == nil {
+					t.Errorf("%s: no <title>", path)
+				} else if got := strings.TrimSpace(title[1]); strings.Contains(got, "%!") || strings.HasSuffix(got, ":") || strings.HasPrefix(got, ":") {
+					// "%!" catches printf artefacts such as %!s(&lt;nil&gt;)
+					// (the title is HTML-escaped, so "<nil>" never appears
+					// literally); a dangling colon means one half was empty.
+					t.Errorf("%s: <title> = %q", path, got)
 				}
 			}
 		})
