@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"goblog/auth"
+	"html/template"
 	"log"
 	"net"
 	"net/http"
@@ -62,16 +63,42 @@ type pluginRegistry interface {
 	RenderPluginPage(c *gin.Context, pageType, subPath string) (string, gin.H, bool)
 	HasPageType(pageType string) bool
 	IsPageTypeEnabled(pageType string) bool
-	Search(c *gin.Context, query string) []SearchResult
+	Search(c *gin.Context, query string) []SearchHit
 }
 
-// SearchResult is one hit a plugin contributes to the search page (see
-// plugin.Searcher; plugin.SearchResult is an alias of this type).
-type SearchResult struct {
+// SearchHit is one hit a plugin contributes to the search page (see
+// plugin.Searcher; plugin.SearchResult is an alias of this type). Summary
+// is plain text; it is escaped when it becomes a SearchResult.
+type SearchHit struct {
 	Title   string
 	URL     string
 	Summary string
 	Kind    string // short label shown next to the result, e.g. "Plugin"
+}
+
+// SearchResult is one entry on the search page — a post or a plugin hit —
+// as the shared _search_results partial renders it. Date and Tags are set
+// for posts only; Kind is "" for posts.
+type SearchResult struct {
+	Title   string
+	URL     string
+	Summary template.HTML
+	Kind    string
+	Date    time.Time
+	Tags    []Tag
+}
+
+// searchResults merges matching posts (first) and plugin hits into one
+// list for the search page.
+func searchResults(posts []Post, hits []SearchHit) []SearchResult {
+	results := make([]SearchResult, 0, len(posts)+len(hits))
+	for _, p := range posts {
+		results = append(results, SearchResult{Title: p.Title, URL: p.Permalink(), Summary: p.HTMLPreview(200), Date: p.CreatedAt, Tags: p.Tags})
+	}
+	for _, h := range hits {
+		results = append(results, SearchResult{Title: h.Title, URL: h.URL, Summary: template.HTML(template.HTMLEscapeString(h.Summary)), Kind: h.Kind})
+	}
+	return results
 }
 
 func pluginRegistryFrom(c *gin.Context) pluginRegistry {
@@ -1011,25 +1038,28 @@ func (b *Blog) Post(c *gin.Context) {
 	}
 }
 
-// Search handles the search page: matching posts first, then whatever
-// results enabled plugins contribute (plugin.Searcher). result_count is
-// the total of both so templates need no arithmetic.
+// Search handles the search page. "results" is the one list a theme
+// renders (through the shared _search_results partial): matching posts
+// first, then whatever enabled plugins contribute (plugin.Searcher).
+// "posts", "plugin_results" and "result_count" remain for themes that
+// still render the list themselves.
 func (b *Blog) Search(c *gin.Context) {
 	query := strings.TrimSpace(c.Query("q"))
 	var posts []Post
-	var pluginResults []SearchResult
+	var hits []SearchHit
 	if query != "" {
 		posts = b.SearchPosts(query)
 		if r := pluginRegistryFrom(c); r != nil {
-			pluginResults = r.Search(c, query)
+			hits = r.Search(c, query)
 		}
 	}
 	b.Render(c, http.StatusOK, "search.html", gin.H{
 		"logged_in":      b.auth.IsLoggedIn(c),
 		"is_admin":       b.auth.IsAdmin(c),
+		"results":        searchResults(posts, hits),
 		"posts":          posts,
-		"plugin_results": pluginResults,
-		"result_count":   len(posts) + len(pluginResults),
+		"plugin_results": hits,
+		"result_count":   len(posts) + len(hits),
 		"query":          query,
 		"version":        b.Version,
 		"title":          "Search",

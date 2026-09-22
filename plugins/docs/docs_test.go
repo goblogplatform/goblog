@@ -203,3 +203,77 @@ func TestSidebarAndArticle_RewritesOnlyWholeDocsPrefixes(t *testing.T) {
 		}
 	}
 }
+
+// TestSearch: the plugin answers the site search with pages whose title or
+// text matches, a snippet around the match, under the page's current slug.
+func TestSearch(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Page{}, &blog.PostType{})
+	p := New()
+	var _ gplugin.Searcher = p
+	if err := p.OnInit(db); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ := renderCtx(t, "/search?q=x", "")
+	ctx.DB = db
+
+	got := p.Search(ctx, "Writing a theme")
+	if len(got) == 0 || got[0].Title != "Writing a theme" || got[0].URL != "/docs/writing-a-theme" || got[0].Kind != "Docs" {
+		t.Fatalf("title match = %+v", got)
+	}
+	if got[0].Summary == "" || strings.Contains(got[0].Summary, "#") || strings.Contains(got[0].Summary, "`") {
+		t.Errorf("summary must be a plain-text snippet, got %q", got[0].Summary)
+	}
+
+	// A body match, case-insensitively, with the snippet around the hit.
+	got = p.Search(ctx, "ALLOWED_HOSTS")
+	if len(got) == 0 {
+		t.Fatal("allowed_hosts is documented; expected a body match")
+	}
+	for _, r := range got {
+		if !strings.Contains(strings.ToLower(r.Summary), "allowed_hosts") {
+			t.Errorf("snippet for %s must contain the match: %q", r.Title, r.Summary)
+		}
+		if len(r.Summary) > 220 {
+			t.Errorf("snippet for %s too long (%d): %q", r.Title, len(r.Summary), r.Summary)
+		}
+	}
+
+	// The index page links to the page's base, not "/docs/".
+	got = p.Search(ctx, "Overview")
+	if len(got) == 0 || got[0].URL != "/docs" {
+		t.Errorf("index page = %+v", got)
+	}
+
+	// Links follow a renamed page slug.
+	db.Model(&blog.Page{}).Where("page_type = ?", PageType).Update("slug", "guide")
+	if got = p.Search(ctx, "Writing a theme"); len(got) == 0 || got[0].URL != "/guide/writing-a-theme" {
+		t.Errorf("renamed slug = %+v", got)
+	}
+
+	for _, q := range []string{"", "   ", "zzzz-no-such-word"} {
+		if got = p.Search(ctx, q); got != nil {
+			t.Errorf("%q → %+v", q, got)
+		}
+	}
+}
+
+func TestSnippet(t *testing.T) {
+	text := strings.Repeat("word ", 60) + "needle here " + strings.Repeat("tail ", 60)
+	s := snippet(text, "NEEDLE")
+	if !strings.HasPrefix(s, "…") || !strings.HasSuffix(s, "…") || !strings.Contains(s, "needle here") {
+		t.Errorf("snippet = %q", s)
+	}
+	if strings.HasPrefix(s, "…ord") || strings.HasSuffix(s, "tai…") {
+		t.Errorf("snippet must cut at word boundaries: %q", s)
+	}
+	if len(s) > snippetLen+20 {
+		t.Errorf("snippet too long: %d", len(s))
+	}
+	if s := snippet("short text", "zzz"); s != "short text" {
+		t.Errorf("no match / short text = %q", s)
+	}
+	if s := snippet("héllo wörld needle", "needle"); !strings.HasSuffix(s, "needle") || strings.HasPrefix(s, "…") {
+		t.Errorf("utf-8 text = %q", s)
+	}
+}

@@ -491,6 +491,21 @@ func (r *Registry) Search(c *gin.Context, query string) []SearchResult {
 	return results
 }
 
+// PageSlug is the slug of the page with pageType as the admin has it (a
+// plugin page can be renamed in Admin → Pages), or def when the row is
+// missing or db is nil. Plugins use it to link to their own pages from
+// somewhere other than the page itself, such as a search result.
+func PageSlug(db *gorm.DB, pageType, def string) string {
+	if db == nil {
+		return def
+	}
+	var page blog.Page
+	if db.Where("page_type = ?", pageType).First(&page).Error != nil || page.Slug == "" {
+		return def
+	}
+	return page.Slug
+}
+
 // GetAllSettings returns all plugin setting definitions grouped by plugin.
 func (r *Registry) GetAllSettings() []PluginSettingsGroup {
 	r.mu.RLock()

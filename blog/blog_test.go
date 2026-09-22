@@ -1411,20 +1411,28 @@ func TestUnownedPluginPageIsHidden(t *testing.T) {
 	}
 }
 
-// searchingPlugin contributes one site-search result for any query.
+// searchingPlugin contributes one site-search result for "hello".
 type searchingPlugin struct{ subPathPlugin }
 
 func (p *searchingPlugin) Search(_ *plugin.HookContext, q string) []plugin.SearchResult {
-	return []plugin.SearchResult{{Title: "Hello plugin", URL: "/dir/hello", Summary: "matched " + q, Kind: "Plugin"}}
+	if q != "hello" {
+		return nil
+	}
+	return []plugin.SearchResult{{Title: "Hello plugin", URL: "/dir/hello", Summary: "matched <b>" + q + "</b>", Kind: "Plugin"}}
 }
 
-// TestSearchIncludesPluginResults: /search lists results from plugins that
-// implement plugin.Searcher after the matching posts, and counts them.
+// TestSearchIncludesPluginResults: /search renders one results list —
+// matching posts first, then whatever enabled plugins that implement
+// plugin.Searcher contribute — through goblog's shared _search_results
+// partial, so a theme need not know what kinds of result exist.
 func TestSearchIncludesPluginResults(t *testing.T) {
 	for _, theme := range []string{"default", "minimal"} {
 		t.Run(theme, func(t *testing.T) {
 			db, _ := gorm.Open(sqlite.Open(":memory:"))
 			db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+			pt := blog.PostType{Name: "Post", Slug: "posts"}
+			db.Create(&pt)
+			db.Create(&blog.Post{Title: "Hello post", Slug: "hello-post", Content: "A post that says hello.", PostTypeID: pt.ID, Tags: []blog.Tag{{Name: "greetings"}}})
 			a := &Auth{}
 			a.On("IsAdmin", mock.Anything).Return(false)
 			a.On("IsLoggedIn", mock.Anything).Return(false)
@@ -1446,13 +1454,29 @@ func TestSearchIncludesPluginResults(t *testing.T) {
 			req, _ := http.NewRequest("GET", "/search?q=hello", nil)
 			router.ServeHTTP(w, req)
 			body := w.Body.String()
-			for _, want := range []string{`href="/dir/hello"`, "Hello plugin", "matched hello", "Plugin", "1 result found"} {
+			for _, want := range []string{"Hello post", "/hello-post", "#greetings", `href="/dir/hello"`, "Hello plugin", "matched &lt;b&gt;hello&lt;/b&gt;", "2 results found"} {
 				if !strings.Contains(body, want) {
 					t.Errorf("search page missing %q in:\n%s", want, body)
 				}
 			}
+			if strings.Contains(body, "<b>hello</b>") {
+				t.Error("plugin summaries are plain text and must be escaped")
+			}
+			if strings.Index(body, "Hello post") > strings.Index(body, "Hello plugin") {
+				t.Error("posts come before plugin results")
+			}
+			if !strings.Contains(body, ">Plugin<") || strings.Contains(body, ">Post<") {
+				t.Errorf("the kind label is shown for plugin results only:\n%s", body)
+			}
 			if strings.Contains(body, "No results found") {
-				t.Error("a plugin hit is a result; the no-results message must not show")
+				t.Error("the no-results message must not show")
+			}
+
+			w = httptest.NewRecorder()
+			req, _ = http.NewRequest("GET", "/search?q=zzz", nil)
+			router.ServeHTTP(w, req)
+			if body := w.Body.String(); !strings.Contains(body, "No results found") || !strings.Contains(body, "0 results found") {
+				t.Errorf("no-results page:\n%s", body)
 			}
 
 			// Without a query nothing is searched.
@@ -1463,5 +1487,56 @@ func TestSearchIncludesPluginResults(t *testing.T) {
 				t.Error("an empty query must not list plugin results")
 			}
 		})
+	}
+}
+
+// TestSearchResultsPartial: a theme's search.html only has to include
+// goblog's shared _search_results partial; what a result is (posts, plugin
+// hits, their count and the no-results message) is goblog's business.
+func TestSearchResultsPartial(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	db.Create(&blog.Post{Title: "Hello post", Slug: "hello-post", Content: "A post that says hello.", PostTypeID: pt.ID, Tags: []blog.Tag{{Name: "greetings"}}})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+	reg := plugin.NewRegistry(db)
+	reg.Register(&searchingPlugin{})
+	reg.Init()
+
+	router := gin.New()
+	router.Use(plugin.Middleware(reg))
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	// A theme that overrides search.html with the bare minimum.
+	template.Must(tmpl.New("search.html").Parse(`{{ template "header.html" . }}<main id="bare">{{ template "_search_results" . }}</main>{{ template "footer.html" . }}`))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/search", b.Search)
+
+	get := func(q string) string {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/search?q="+q, nil)
+		router.ServeHTTP(w, req)
+		return w.Body.String()
+	}
+	body := get("hello")
+	for _, want := range []string{`id="bare"`, "2 results found", "Hello post", "/hello-post", "#greetings", `href="/dir/hello"`, "Hello plugin", ">Plugin<", "matched &lt;b&gt;hello&lt;/b&gt;"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, ">Post<") {
+		t.Error("posts carry no kind label")
+	}
+	if body := get("zzz"); !strings.Contains(body, "No results found for 'zzz'") || !strings.Contains(body, "0 results found") {
+		t.Errorf("no-results:\n%s", body)
+	}
+	if body := get(""); strings.Contains(body, "results found") || strings.Contains(body, "No results") {
+		t.Errorf("no query, no count line:\n%s", body)
 	}
 }
