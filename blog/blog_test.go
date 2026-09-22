@@ -1879,7 +1879,7 @@ func TestRSS(t *testing.T) {
 		t.Fatalf("code=%d type=%q", w.Code, w.Header().Get("Content-Type"))
 	}
 	for _, want := range []string{
-		`<rss version="2.0"`, "<title>GoBlog</title>", "<link>https://www.example.test/</link>", "<description>A blog &amp; more</description>",
+		`<rss version="2.0"`, "<channel>", "<item>", "</item>", "</channel>", "<title>GoBlog</title>", "<link>https://www.example.test/</link>", "<description>A blog &amp; more</description>",
 		"<title>Hello &amp; welcome</title>", "<link>https://www.example.test/posts/2026/08/15/hello</link>",
 		`<guid isPermaLink="true">https://www.example.test/posts/2026/08/15/hello</guid>`,
 		"<pubDate>Sat, 15 Aug 2026 12:00:00 +0000</pubDate>", "&lt;strong&gt;bold&lt;/strong&gt;",
