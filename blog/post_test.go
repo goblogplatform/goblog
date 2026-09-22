@@ -60,3 +60,17 @@ func TestExtractImages(t *testing.T) {
 		t.Errorf("got %v want %v", got, want)
 	}
 }
+
+// TestImageURLs: relative URLs are made absolute under the site whether or
+// not they start with "/"; absolute ones and, with no site, all of them are
+// left alone.
+func TestImageURLs(t *testing.T) {
+	p := Post{Content: "![a](/img/a.png) ![b](img/b.png) ![c](https://x.test/c.jpg)"}
+	got := strings.Join(p.ImageURLs("https://s.test"), ",")
+	if want := "https://s.test/img/a.png,https://s.test/img/b.png,https://x.test/c.jpg"; got != want {
+		t.Errorf("got %s want %s", got, want)
+	}
+	if got := strings.Join(p.ImageURLs(""), ","); got != "/img/a.png,img/b.png,https://x.test/c.jpg" {
+		t.Errorf("no site: %s", got)
+	}
+}

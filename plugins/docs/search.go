@@ -3,6 +3,7 @@ package docs
 import (
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	gplugin "goblog/plugin"
 )
@@ -113,10 +114,13 @@ const metaDescriptionLen = 155
 // cut at a word boundary to fit a search snippet — for the <head>.
 func metaDescription(r renderedPage) string {
 	text := strings.TrimSpace(strings.TrimPrefix(r.Text, r.Title))
-	if len(text) <= metaDescriptionLen {
+	if utf8.RuneCountInString(text) <= metaDescriptionLen {
 		return text
 	}
-	end := metaDescriptionLen
+	// Leave room for the ellipsis, then back up to a word boundary. The
+	// pages are ASCII apart from the odd dash, so a byte offset is close
+	// enough to a character count to start from.
+	end := metaDescriptionLen - 1
 	for end > 0 && !asciiSpace(text[end]) {
 		end--
 	}

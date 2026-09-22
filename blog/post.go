@@ -193,10 +193,14 @@ func (p Post) ExtractImages() []string {
 // site (the resolved site_url), for Open Graph and structured data.
 func (p Post) ImageURLs(site string) []string {
 	imgs := p.ExtractImages()
+	if site == "" {
+		return imgs
+	}
 	for i, u := range imgs {
-		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
-			imgs[i] = site + u
+		if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+			continue
 		}
+		imgs[i] = site + "/" + strings.TrimPrefix(u, "/")
 	}
 	return imgs
 }

@@ -338,8 +338,8 @@ func TestRenderPage_DescribesItself(t *testing.T) {
 		ctx, _ := renderCtx(t, "/docs/"+pg.Slug, pg.Slug)
 		_, data := p.RenderPage(ctx, PageType)
 		d, _ := data["meta_description"].(string)
-		if d == "" || len(d) > 160 || strings.ContainsAny(d, "#`*\n") {
-			t.Errorf("%s: meta_description = %q", pg.Slug, d)
+		if d == "" || utf8.RuneCountInString(d) > metaDescriptionLen || strings.ContainsAny(d, "#`*\n") {
+			t.Errorf("%s: meta_description (%d chars) = %q", pg.Slug, utf8.RuneCountInString(d), d)
 		}
 	}
 	ctx, _ := renderCtx(t, "/docs/writing-a-plugin", "writing-a-plugin")
