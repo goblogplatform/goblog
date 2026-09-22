@@ -124,11 +124,17 @@ default's.
 
 ## Out of scope
 
-- Deferring the remaining CDN scripts. That needs the inline `$(…)` and
+Each is filed with the evidence behind the decision:
+
+- **#624 — defer the CDN scripts.** Needs the inline `$(…)` and
   `hljs.highlightAll()` calls in each theme moved into `DOMContentLoaded`
-  handlers; separate change.
-- Server-side syntax highlighting (`goldmark-highlighting`). highlight.js
-  keeps decorating `<pre><code>` that is now in the HTML already.
-- Rendering at write time into a cached column. Rendering on read is fast
-  enough at this size and keeps a single source of truth; revisit if profiles
-  say otherwise.
+  handlers first. This change already removes showdown and DOMPurify from the
+  post and page templates.
+- **#625 — server-side syntax highlighting.** Blocked on content: 277 code
+  fences across 36 posts, and exactly one names a language. chroma colours
+  what the fence declares, so switching today would grey out the archive.
+  highlight.js keeps decorating `<pre><code>`, which is now in the HTML
+  already.
+- **#626 — cache rendered HTML in a column.** Rendering costs 0.26 ms for an
+  average post and 2.4 ms for the largest, against page renders of 10–17 ms;
+  a cache would be a second source of truth for a fraction of a millisecond.
