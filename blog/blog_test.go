@@ -1970,3 +1970,37 @@ func TestPostPage_ServerRendered(t *testing.T) {
 		t.Error("a comment's script must not reach the page")
 	}
 }
+
+// TestCustomPage_ServerRendered: a custom page's markdown is rendered on the
+// server too; plugin pages, which pass their own HTML, are unaffected.
+func TestCustomPage_ServerRendered(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Page{Title: "About", Slug: "about", PageType: blog.PageTypeAbout, Enabled: true,
+		Content: "I write **software**.\n\n<iframe src=\"https://maps.example/embed\"></iframe>\n"})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+
+	router := gin.New()
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.NoRoute(b.NoRoute)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/about", nil)
+	router.ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "<strong>software</strong>") || !strings.Contains(body, "<iframe") {
+		t.Errorf("page body not rendered:\n%s", body)
+	}
+	for _, gone := range []string{"showdown", "purify"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("page still references %q", gone)
+		}
+	}
+}
