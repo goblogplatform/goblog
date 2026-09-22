@@ -98,7 +98,7 @@ Themes are looked up in two roots, built-in first: `themes/` in the working dire
 Then activate it, either way:
 
 - **Admin → Settings → Appearance → Theme** lists every theme in both roots; save the form.
-- **Admin → Themes** lists it under **Installed** with an *installed* badge — the display name comes from your `goblog-theme.json` — next to the built-ins. Press **Activate**.
+- **Admin → Themes** lists it under **Installed** with an *installed* badge — the display name comes from your `goblog-theme.json`, and the card shows your `screenshot.png` (or `.jpg`) if one sits beside `templates/` — next to the built-ins. Press **Activate**.
 
 Both write the `theme` setting and reload the template set at once, without a restart. Edits to your files are not watched: after changing a template, save the setting again (or activate another theme and back) to re-parse. Static files are read from disk on every request, so CSS changes show on reload.
 

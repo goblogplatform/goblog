@@ -1186,9 +1186,10 @@ func TestNoRoutePost_CommentFormFollowsLoginState(t *testing.T) {
 }
 
 // TestPostPage_CommentFormFollowsLoginState covers the comment section's three
-// states (issue #524) in every theme.
+// states (issue #524) in the built-in theme (directory themes ship their own
+// post.html and are checked in their own repositories).
 func TestPostPage_CommentFormFollowsLoginState(t *testing.T) {
-	for _, theme := range []string{"default", "minimal"} {
+	for _, theme := range []string{"default"} {
 		t.Run(theme+"/required and logged out", func(t *testing.T) {
 			body := renderPostPage(t, theme, nil, "true")
 			if strings.Contains(body, `action="/comments"`) {
@@ -1426,7 +1427,7 @@ func (p *searchingPlugin) Search(_ *plugin.HookContext, q string) []plugin.Searc
 // plugin.Searcher contribute — through goblog's shared _search_results
 // partial, so a theme need not know what kinds of result exist.
 func TestSearchIncludesPluginResults(t *testing.T) {
-	for _, theme := range []string{"default", "minimal"} {
+	for _, theme := range []string{"default"} {
 		t.Run(theme, func(t *testing.T) {
 			db, _ := gorm.Open(sqlite.Open(":memory:"))
 			db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})

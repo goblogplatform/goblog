@@ -48,6 +48,13 @@ func TestParseThemeManifest(t *testing.T) {
 	if m.Name != "ocean" || m.DisplayName != "Ocean" || m.License != "MIT" || m.MinGoblogVersion != "0.5.0" || m.Homepage != "https://example.test" {
 		t.Errorf("manifest = %+v", m)
 	}
+	// Themes goblog used to ship and has since published to the directory
+	// are ordinary directory names.
+	for _, name := range []string{"forest", "minimal"} {
+		if _, err := ParseThemeManifest([]byte(strings.Replace(goodThemeManifest, `"ocean"`, `"`+name+`"`, 1))); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
 	cases := map[string]string{
 		`{"name":"Ocean"}`: "name must match",
 		strings.Replace(goodThemeManifest, `"ocean"`, `"default"`, 1):   "reserved",

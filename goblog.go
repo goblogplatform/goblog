@@ -11,10 +11,8 @@ import (
 	gplugin "goblog/plugin"
 	"goblog/plugin/installer"
 	"goblog/plugin/wasm"
-	"goblog/plugins/analytics"
 	"goblog/plugins/directory"
 	"goblog/plugins/docs"
-	"goblog/plugins/socialicons"
 	"goblog/theme"
 	tinstaller "goblog/theme/installer"
 	"goblog/tools"
@@ -304,8 +302,6 @@ func main() {
 
 	// Initialize plugin system
 	registry := gplugin.NewRegistry(db)
-	registry.Register(analytics.New())
-	registry.Register(socialicons.New())
 	dir := directory.New()
 	dir.SetUserAgent("goblog-directory/" + Version)
 	registry.Register(dir)
@@ -546,6 +542,7 @@ func (g *goblog) addRoutesInner() {
 	g.router.GET("/admin/plugins", g._admin.AdminPlugins)
 	g.router.GET("/admin/plugins/:name", g._admin.AdminPluginSettings)
 	g.router.GET("/admin/themes", g._admin.AdminThemes)
+	g.router.GET("/admin/themes/:name/screenshot", g._admin.ThemeScreenshot)
 	g.router.GET("/admin/pages/:id", g._admin.AdminEditPage)
 	g.router.GET("/admin/post-types", g._admin.AdminPostTypes)
 	g.router.GET("/admin/post-types/:id", g._admin.AdminEditPostType)

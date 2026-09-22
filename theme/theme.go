@@ -59,6 +59,23 @@ func Dir(name string) (string, bool) {
 	return "", false
 }
 
+// Screenshot returns the path of a theme's preview image — screenshot.png
+// or screenshot.jpg beside its templates/, the same file the directory
+// requires of a published theme — and whether it has one.
+func Screenshot(name string) (string, bool) {
+	dir, ok := Dir(name)
+	if !ok {
+		return "", false
+	}
+	for _, file := range []string{"screenshot.png", "screenshot.jpg"} {
+		p := filepath.Join(dir, file)
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // IsBuiltin reports whether name resolves to the built-in root. Dir looks
 // there first, so a theme is built-in exactly when Dir lands there — even
 // if an installed copy of the same name exists underneath.

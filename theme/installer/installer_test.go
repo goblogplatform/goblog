@@ -162,6 +162,31 @@ func TestStatus(t *testing.T) {
 	}
 }
 
+// TestStatus_Screenshots: a theme with a screenshot on disk is previewed
+// from that file, so built-ins (which are in no directory index) get a
+// card image too; a directory theme without a local file keeps the
+// directory's URL.
+func TestStatus_Screenshots(t *testing.T) {
+	h := newHarness(t)
+	os.WriteFile(filepath.Join(theme.BuiltinRoot, "default", "screenshot.png"), []byte("png"), 0o644)
+	if _, err := h.inst.Install(context.Background(), "ocean"); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]Installed{}
+	for _, i := range h.inst.Status().Installed {
+		names[i.Name] = i
+	}
+	if got := names["default"].ScreenshotURL; got != "/admin/themes/default/screenshot" {
+		t.Errorf("default screenshot_url = %q", got)
+	}
+	if got := names["minimal"].ScreenshotURL; got != "" {
+		t.Errorf("minimal has no screenshot, got %q", got)
+	}
+	if got := names["ocean"].ScreenshotURL; got == "" || strings.HasPrefix(got, "/admin/") {
+		t.Errorf("ocean should keep the directory's screenshot, got %q", got)
+	}
+}
+
 func TestInstallActivateUpdateUninstall(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

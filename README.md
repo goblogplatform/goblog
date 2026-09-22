@@ -27,7 +27,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 ### Theming
 - WordPress-style theme system (`themes/{name}/`)
 - Switch themes from admin settings without restart (hot-reload)
-- Two built-in themes: `default` (monospace, gray) and `minimal` (sans-serif, blue accent)
+- One built-in theme, `default` (monospace, gray); [Minimal](https://github.com/goblogplatform/goblog-theme-minimal) and [Forest](https://github.com/goblogplatform/goblog-theme-forest) install from the theme directory
 - Theme-specific CSS served at `/theme/`
 - Custom header/footer code injection via settings (for analytics, etc.)
 
@@ -41,7 +41,7 @@ A self-hosted blogging platform built with Go. Running at https://www.jasonernst
 
 ### Plugins
 - Plugin system for injecting template data / HTML, scheduled jobs, settings, and whole pages
-- Built-in plugins: `analytics`, `socialicons`, `directory` (the plugin directory that runs [goblog.live/plugins](https://goblog.live/plugins); off by default)
+- Built-in plugins: `directory` (the plugin and theme directory that runs [goblog.live/plugins](https://goblog.live/plugins) and [goblog.live/themes](https://goblog.live/themes); off by default) and `docs` (the builder docs at [goblog.live/docs](https://goblog.live/docs); off by default). Google Analytics, Social Icons and Scholar Publications are directory plugins.
 - Dynamic plugins: drop a `.go` file in `plugins/dynamic/` — no rebuild (see [Plugins](#plugins))
 - WebAssembly plugins (sandboxed, any language/dependencies) installable from the directory
 - Install plugins from the [directory](https://www.goblog.live/plugins) with one click under **Admin → Plugins**
@@ -141,6 +141,8 @@ Full guide: [goblog.live/docs/writing-a-theme](https://www.goblog.live/docs/writ
 
 **Admin → Themes** browses the [theme directory](https://www.goblog.live/themes), installs a theme into `themes/installed/` (bind-mount it in Docker, set with `THEMES_INSTALLED_DIR`, or installs vanish on restart), activates it, updates it when the directory has a newer release, and removes it. The directory URL is the `theme_directory_url` setting; see [Publishing a theme](https://www.goblog.live/docs/publishing-a-theme) to publish one.
 
+**Upgrading to 0.7.0:** the `minimal` theme is no longer built in; it is [Minimal](https://github.com/goblogplatform/goblog-theme-minimal) in the theme directory. A site whose `theme` setting is `minimal` renders `default` after the upgrade until you install Minimal from **Admin → Themes** — the setting is left alone, so the site switches back the moment the theme is installed.
+
 A theme is code: once activated its templates render every page, including the admin, with the same template functions and data goblog's own templates get. The directory's validation checks that a theme is well-formed, not that it is benign, and a listing on goblog.live is a maintainer's approval, not a code audit — install only themes you trust, as with plugins.
 
 ## Plugins
@@ -157,7 +159,10 @@ A plugin implements the `plugin.Plugin` interface (`plugin/plugin.go`). Embed `p
 | `Pages()` / `RenderPage(ctx, pageType)` | Own a page type: it gets a slug, an optional nav entry, and you choose the template and data when it is visited. The plugin also owns everything under its slug: `ctx.SubPath` is `""` for `/research`, `"2024"` for `/research/2024`. Return a template name to render it inside the theme, or write the response yourself (e.g. `ctx.GinContext.JSON(...)`) and return `""`; returning `""` without writing anything gives a 404. `plugins/directory` is the example: it serves `/plugins`, `/plugins/<name>` and `/plugins/index.json`. |
 | `OnInit(db)` | Runs once at startup, after settings are seeded. |
 
-`ctx` is a `*plugin.HookContext` carrying the Gin context, the DB, the plugin's own settings, the template being rendered, and the existing template data. `plugins/socialicons` is the smallest complete example.
+`ctx` is a `*plugin.HookContext` carrying the Gin context, the DB, the plugin's own settings, the template being rendered, and the existing template data. [goblog-plugin-hello](https://github.com/goblogplatform/goblog-plugin-hello) is the smallest complete example (as a WebAssembly plugin; the exports map one-to-one onto these hooks).
+
+#### Upgrading to 0.7.0
+The `analytics` and `socialicons` plugins are no longer compiled in; they are **Google Analytics** ([goblogplatform/goblog-plugin-analytics](https://github.com/goblogplatform/goblog-plugin-analytics)) and **Social Icons** ([goblogplatform/goblog-plugin-socialicons](https://github.com/goblogplatform/goblog-plugin-socialicons)) in the plugin directory. After upgrading, install the ones you use from **Admin → Plugins**. Their settings carry over (same plugin names and setting keys), so your measurement ID and profile URLs are back as soon as each plugin is installed; until then the snippet and the icon row are simply absent. Docker users: bind-mount `plugins/wasm/` first (see [Installing from the directory](#installing-from-the-directory)).
 
 #### Upgrading to 0.3.0
 The `scholar` plugin is no longer compiled in; it is now **Scholar Publications** in the plugin directory ([goblogplatform/goblog-plugin-scholar](https://github.com/goblogplatform/goblog-plugin-scholar)). After upgrading, install it from **Admin → Plugins**. Your Research page and the plugin's settings carry over (same plugin name and page type), so the page reappears in the nav as soon as the plugin is installed **and enabled** — its `enabled` setting defaults to `false` on a fresh install, while a site that already had `scholar.enabled=true` keeps it. Until then the page is hidden and `/research` answers "Page Not Available". The new plugin reads from the Semantic Scholar API only — if you were using Google Scholar, set `semantic_scholar_id` (the number at the end of your semanticscholar.org author URL) under **Admin → Settings → Scholar Publications**. Docker users: bind-mount `plugins/wasm/` first (see [Installing from the directory](#installing-from-the-directory)), or the installed plugin vanishes when the container restarts.
