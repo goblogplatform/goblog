@@ -3,6 +3,7 @@ package directory
 import (
 	"sort"
 	"strings"
+	"time"
 
 	gplugin "goblog/plugin"
 )
@@ -68,4 +69,25 @@ func (p *Plugin) Search(ctx *gplugin.HookContext, query string) []gplugin.Search
 		}
 	}
 	return results
+}
+
+// Sitemap lists every approved plugin and theme page (plugin.Sitemapper),
+// under whatever slug the admin gave each directory page, with the
+// entry's release date as its last change.
+func (p *Plugin) Sitemap(ctx *gplugin.HookContext) []gplugin.SitemapURL {
+	if p.svc == nil {
+		return nil
+	}
+	var urls []gplugin.SitemapURL
+	for _, def := range p.Pages() {
+		base := "/" + gplugin.PageSlug(ctx.DB, def.PageType, def.Slug)
+		for _, e := range p.listing(kindOf(def.PageType), "") {
+			u := gplugin.SitemapURL{Loc: base + "/" + e.Name}
+			if t, err := time.Parse(time.RFC3339, e.ReleasedAt); err == nil {
+				u.LastMod = t
+			}
+			urls = append(urls, u)
+		}
+	}
+	return urls
 }

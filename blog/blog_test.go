@@ -1541,3 +1541,100 @@ func TestSearchResultsPartial(t *testing.T) {
 		t.Errorf("no query, no count line:\n%s", body)
 	}
 }
+
+// sitemapPlugin owns "dir" and lists one URL under it.
+type sitemapPlugin struct{ subPathPlugin }
+
+func (p *sitemapPlugin) Sitemap(_ *plugin.HookContext) []plugin.SitemapURL {
+	return []plugin.SitemapURL{{Loc: "/dir/hello", LastMod: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)}}
+}
+
+// TestSitemap: every URL is under the site_url setting (not a host baked
+// into goblog); posts carry lastmod; every enabled page is listed, nav or
+// not; pages that do not exist are not invented; enabled plugins that
+// implement plugin.Sitemapper add their URLs.
+func TestSitemap(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Setting{Key: "site_url", Value: "https://www.example.test/"})
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	updated := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	db.Create(&blog.Post{Title: "Hello", Slug: "hello", Content: "hi", PostTypeID: pt.ID, CreatedAt: updated, UpdatedAt: updated, Tags: []blog.Tag{{Name: "go"}}})
+	db.Create(&blog.Post{Title: "Draft", Slug: "draft", Content: "hi", PostTypeID: pt.ID, Draft: true})
+	db.Create(&blog.Page{Title: "About", Slug: "about", PageType: blog.PageTypeAbout, ShowInNav: true, Enabled: true})
+	db.Create(&blog.Page{Title: "Hidden", Slug: "hidden", PageType: blog.PageTypeAbout, ShowInNav: false, Enabled: true})
+	db.Create(&blog.Page{Title: "Off", Slug: "off", PageType: blog.PageTypeAbout, ShowInNav: true, Enabled: false})
+	db.Create(&blog.Page{Title: "Dir", Slug: "dir", PageType: "dir", ShowInNav: true, Enabled: true})
+	a := &Auth{}
+	b := blog.New(db, a, "test")
+	reg := plugin.NewRegistry(db)
+	reg.Register(&sitemapPlugin{})
+	reg.Init()
+	b.PageFilter = blog.PluginPageFilter(reg)
+
+	router := gin.New()
+	router.Use(plugin.Middleware(reg))
+	router.GET("/sitemap.xml", b.Sitemap)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/sitemap.xml", nil)
+	router.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/xml") {
+		t.Fatalf("code=%d type=%q", w.Code, w.Header().Get("Content-Type"))
+	}
+	for _, want := range []string{
+		"<loc>https://www.example.test/</loc>",
+		"<loc>https://www.example.test/about</loc>",
+		"<loc>https://www.example.test/hidden</loc>",
+		"<loc>https://www.example.test/posts</loc>",
+		"<loc>https://www.example.test/posts/2026/08/15/hello</loc>",
+		"<lastmod>2026-08-15",
+		"<loc>https://www.example.test/tag/go</loc>",
+		"<loc>https://www.example.test/dir</loc>",
+		"<loc>https://www.example.test/dir/hello</loc>",
+		"<lastmod>2026-09-01",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sitemap missing %q in:\n%s", want, body)
+		}
+	}
+	for _, gone := range []string{"jasonernst.com", "/off<", "/draft<", "/archives<", "/tags<"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("sitemap must not contain %q:\n%s", gone, body)
+		}
+	}
+
+	// Without site_url the request's own host is used.
+	db.Where("key = ?", "site_url").Delete(&blog.Setting{})
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/sitemap.xml", nil)
+	req.Host = "blog.example.test"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	router.ServeHTTP(w, req)
+	if body := w.Body.String(); !strings.Contains(body, "<loc>https://blog.example.test/about</loc>") {
+		t.Errorf("no site_url: %s", body)
+	}
+}
+
+// TestRobotsTxt: crawlers are told what not to index and where the sitemap is.
+func TestRobotsTxt(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Setting{})
+	db.Create(&blog.Setting{Key: "site_url", Value: "https://www.example.test"})
+	b := blog.New(db, &Auth{}, "test")
+	router := gin.New()
+	router.GET("/robots.txt", b.RobotsTxt)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/robots.txt", nil)
+	router.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("code=%d type=%q", w.Code, w.Header().Get("Content-Type"))
+	}
+	for _, want := range []string{"User-agent: *", "Disallow: /admin", "Disallow: /search", "Disallow: /api/", "Disallow: /login", "Sitemap: https://www.example.test/sitemap.xml"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("robots.txt missing %q in:\n%s", want, body)
+		}
+	}
+}

@@ -64,6 +64,15 @@ type pluginRegistry interface {
 	HasPageType(pageType string) bool
 	IsPageTypeEnabled(pageType string) bool
 	Search(c *gin.Context, query string) []SearchHit
+	SitemapURLs(c *gin.Context) []SitemapURL
+}
+
+// SitemapURL is one entry a plugin adds to the sitemap (see
+// plugin.Sitemapper): a site-relative path and, when known, its last
+// change.
+type SitemapURL struct {
+	Loc     string
+	LastMod time.Time
 }
 
 // SearchHit is one hit a plugin contributes to the search page (see
@@ -1176,41 +1185,71 @@ func (b *Blog) Archives(c *gin.Context) {
 	})
 }
 
+// SiteURL is the site's public origin without a trailing slash: the
+// site_url setting, or — when it is unset — the requesting scheme and
+// host, honouring X-Forwarded-Proto from a reverse proxy.
+func (b *Blog) SiteURL(c *gin.Context) string {
+	if u := strings.TrimRight(b.SettingValue("site_url", ""), "/"); u != "" {
+		return u
+	}
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return scheme + "://" + c.Request.Host
+}
+
+// Sitemap serves /sitemap.xml: the home page, every enabled page (nav or
+// not), post type listings, published posts (with lastmod), tags in use,
+// and whatever URLs enabled plugins list for the pages under their slugs.
+// Every loc is under SiteURL.
 func (b *Blog) Sitemap(c *gin.Context) {
+	host := b.SiteURL(c)
 	sm := stm.NewSitemap(1)
-	sm.SetDefaultHost("https://www.jasonernst.com")
+	sm.SetDefaultHost(host)
 	sm.Create()
 
 	sm.Add(stm.URL{{"loc", "/"}, {"changefreq", "weekly"}, {"priority", 1.0}})
-	sm.Add(stm.URL{{"loc", "/archives"}, {"changefreq", "weekly"}, {"priority", 0.8}})
-	sm.Add(stm.URL{{"loc", "/tags"}, {"changefreq", "weekly"}, {"priority", 0.8}})
 
-	// Add enabled pages to sitemap
-	navPages := b.GetNavPages()
-	for _, page := range navPages {
+	var pages []Page
+	(*b.db).Where("enabled = ?", true).Order("nav_order asc").Find(&pages)
+	for _, page := range pages {
+		if b.PageFilter != nil && !b.PageFilter(page) {
+			continue
+		}
 		sm.Add(stm.URL{{"loc", page.PagePermalink()}, {"changefreq", "weekly"}, {"priority", 0.7}})
 	}
 
-	// Add post type listing URLs
-	postTypes := b.GetPostTypes()
-	for _, pt := range postTypes {
+	for _, pt := range b.GetPostTypes() {
 		sm.Add(stm.URL{{"loc", pt.Permalink()}, {"changefreq", "weekly"}, {"priority", 0.7}})
 	}
 
-	posts := b.GetPosts(false)
-	for _, post := range posts {
-		if !post.Draft {
-			sm.Add(stm.URL{{"loc", post.Permalink()}, {"changefreq", "yearly"}, {"priority", 0.55}})
-		}
+	for _, post := range b.GetPosts(false) {
+		sm.Add(stm.URL{{"loc", post.Permalink()}, {"lastmod", post.UpdatedAt}, {"changefreq", "yearly"}, {"priority", 0.55}})
 	}
-	tags := b.getTags()
-	for _, tag := range tags {
+	for _, tag := range b.getTags() {
 		if len(tag.Posts) > 0 {
 			sm.Add(stm.URL{{"loc", tag.Permalink()}, {"changefreq", "weekly"}, {"priority", 0.55}})
 		}
 	}
+	if r := pluginRegistryFrom(c); r != nil {
+		for _, u := range r.SitemapURLs(c) {
+			entry := stm.URL{{"loc", u.Loc}, {"changefreq", "weekly"}, {"priority", 0.6}}
+			if !u.LastMod.IsZero() {
+				entry = append(entry, []interface{}{"lastmod", u.LastMod})
+			}
+			sm.Add(entry)
+		}
+	}
 
-	c.Data(http.StatusOK, "text/xml", sm.XMLContent())
+	c.Data(http.StatusOK, "application/xml; charset=utf-8", sm.XMLContent())
+}
+
+// RobotsTxt serves /robots.txt: crawlers may index everything but the
+// admin, the wizard, the JSON API, sign-in and search result pages, and
+// are pointed at the sitemap.
+func (b *Blog) RobotsTxt(c *gin.Context) {
+	c.String(http.StatusOK, "User-agent: *\nDisallow: /admin\nDisallow: /wizard\nDisallow: /api/\nDisallow: /login\nDisallow: /logout\nDisallow: /search\n\nSitemap: %s/sitemap.xml\n", b.SiteURL(c))
 }
 
 // Login to the blog
