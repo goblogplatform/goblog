@@ -1459,6 +1459,17 @@ func TestAdminPages_RenderInPanel(t *testing.T) {
 				if regexp.MustCompile(`class="[^"]*\bh[1-6]\b[^"]*"`).MatchString(body) {
 					t.Errorf("%s: Tachyons .h1-.h6 class in use (it sets height, not type size)", path)
 				}
+				// A page that sets no title gets the site title alone — never
+				// a formatting artefact such as "%!s(<nil>)".
+				title := regexp.MustCompile(`<title>([^<]*)</title>`).FindStringSubmatch(body)
+				if title == nil {
+					t.Errorf("%s: no <title>", path)
+				} else if got := strings.TrimSpace(title[1]); strings.Contains(got, "%!") || strings.HasSuffix(got, ":") || strings.HasPrefix(got, ":") {
+					// "%!" catches printf artefacts such as %!s(&lt;nil&gt;)
+					// (the title is HTML-escaped, so "<nil>" never appears
+					// literally); a dangling colon means one half was empty.
+					t.Errorf("%s: <title> = %q", path, got)
+				}
 			}
 		})
 	}

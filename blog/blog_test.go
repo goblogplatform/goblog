@@ -1782,6 +1782,17 @@ func TestHeadMetadata(t *testing.T) {
 	// Search results are not for indexing.
 	check(t, "/search?q=x", `<meta name="robots" content="noindex, follow"`, `<link rel="canonical" href="https://www.example.test/search">`)
 
+	// Neither half of the title may leave a dangling colon: with no
+	// site_title the page's own title stands alone, and vice versa.
+	db.Where("key = ?", "site_title").Delete(&blog.Setting{})
+	for _, page := range []string{"/", "/posts/2026/08/15/hello", "/dir/hello"} {
+		got := regexp.MustCompile(`<title>([^<]*)</title>`).FindStringSubmatch(get(page))
+		if got == nil || strings.HasPrefix(got[1], ":") || strings.HasSuffix(got[1], ":") || strings.Contains(got[1], "%!") {
+			t.Errorf("%s without a site title: <title> = %q", page, got)
+		}
+	}
+	db.Create(&blog.Setting{Key: "site_title", Value: "GoBlog"})
+
 	// With a site image, it is the Open Graph image and the fallback
 	// structured-data image.
 	db.Create(&blog.Setting{Key: "site_image", Value: "/img/card.png"})
