@@ -80,9 +80,10 @@ type Plugin interface {
 	RenderPage(ctx *HookContext, pageType string) (templateName string, data gin.H)
 }
 
-// SearchResult is one hit a plugin contributes to the site search page.
-// It is blog's type so blog can render it without importing plugin.
-type SearchResult = blog.SearchResult
+// SearchResult is one hit a plugin contributes to the site search page:
+// plain-text title, summary and kind label plus the URL to link to. It is
+// blog's type so blog can render it without importing plugin.
+type SearchResult = blog.SearchHit
 
 // Searcher is an optional interface: a plugin that implements it is asked
 // for results when a visitor uses the site search, and they are listed

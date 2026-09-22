@@ -475,6 +475,7 @@ func TestSearch(t *testing.T) {
 	// Every fake repo is by "Jason": plugins first (most-starred first),
 	// then themes.
 	ctx, _ := newRenderCtx(t, http.MethodGet, "/search?q=jason", "", nil)
+	ctx.DB = f.db
 	got := f.p.Search(ctx, "jason")
 	if len(got) != 3 {
 		t.Fatalf("results = %+v", got)

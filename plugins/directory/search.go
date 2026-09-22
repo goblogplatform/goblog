@@ -4,10 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"goblog/blog"
 	gplugin "goblog/plugin"
-
-	"gorm.io/gorm"
 )
 
 // matches reports whether e is a hit for query: a case-insensitive
@@ -49,14 +46,14 @@ func (p *Plugin) listing(kind, query string) []Entry {
 // Search answers the site search (plugin.Searcher) with matching plugins,
 // then matching themes, linking to their pages under whatever slug the
 // admin gave each page.
-func (p *Plugin) Search(_ *gplugin.HookContext, query string) []gplugin.SearchResult {
+func (p *Plugin) Search(ctx *gplugin.HookContext, query string) []gplugin.SearchResult {
 	if p.svc == nil || strings.TrimSpace(query) == "" {
 		return nil
 	}
 	var results []gplugin.SearchResult
 	for _, def := range p.Pages() {
 		kind := kindOf(def.PageType)
-		base := "/" + pageSlug(p.db, def.PageType, def.Slug)
+		base := "/" + gplugin.PageSlug(ctx.DB, def.PageType, def.Slug)
 		label := "Plugin"
 		if kind == KindTheme {
 			label = "Theme"
@@ -71,14 +68,4 @@ func (p *Plugin) Search(_ *gplugin.HookContext, query string) []gplugin.SearchRe
 		}
 	}
 	return results
-}
-
-// pageSlug is the slug of the page with pageType, or def when there is
-// no such page.
-func pageSlug(db *gorm.DB, pageType, def string) string {
-	var page blog.Page
-	if db == nil || db.Where("page_type = ?", pageType).First(&page).Error != nil || page.Slug == "" {
-		return def
-	}
-	return page.Slug
 }

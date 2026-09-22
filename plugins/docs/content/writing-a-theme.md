@@ -8,11 +8,11 @@ This page is about the templates: how they are loaded, what data they get, how t
 
 At startup, and again whenever the `theme` setting changes, goblog builds one Go [`html/template`](https://pkg.go.dev/html/template) set in three layers, each parsed on top of the last:
 
-1. **Shared:** `templates/shared/*.html`. Today that is `_head.html`, which defines the `_head` template — the `<head>` every page starts with (meta tags, the CDN stylesheets, `/theme/css/goblog.css`, the `custom_header_code` setting and the plugins' head HTML).
+1. **Shared:** `templates/shared/*.html` — partials goblog owns because they carry behaviour rather than look. `_head.html` defines `_head`, the `<head>` every page starts with (meta tags, the CDN stylesheets, `/theme/css/goblog.css`, the `custom_header_code` setting and the plugins' head HTML). `_search_results.html` defines `_search_results`, the search page's result list: the count, the no-results message, and one entry per result — posts and whatever installed plugins contribute (the plugin and theme directories, the docs). A theme includes it from `search.html` and never needs to know which kinds of result exist; a release that adds a new kind shows up on every theme.
 2. **Default:** `themes/default/templates/*.html`.
 3. **Yours:** `<theme>/templates/*.html`.
 
-Templates are named by file name, so your `header.html` replaces default's `header.html` and nothing else. Only files directly under `templates/` are parsed; a subdirectory is installed but never loaded. A template that fails to parse takes the whole theme down: goblog logs `failed to load theme`, falls back to default, and serves default's static files too, so check the log when a theme "does nothing".
+Templates are named by file name, so your `header.html` replaces default's `header.html` and nothing else. The same goes for a shared partial: a theme that must lay out search results differently can define its own `_search_results` in any of its files and it wins — but then it is that theme's job to keep up with what a result can be. Only files directly under `templates/` are parsed; a subdirectory is installed but never loaded. A template that fails to parse takes the whole theme down: goblog logs `failed to load theme`, falls back to default, and serves default's static files too, so check the log when a theme "does nothing".
 
 Inside a template you have everything `html/template` offers plus one function, `rawHTML`, which inserts a string unescaped — default uses it for `custom_header_code`, `custom_footer_code` and the plugin HTML. Cross-file calls work as usual: `{{ template "header.html" . }}` at the top of a page and `{{ template "footer.html" . }}` at the bottom is how every default page is built, and `header.html` itself begins with `{{ template "_head" . }}`.
 
@@ -82,7 +82,7 @@ Beyond those, each template gets its own data. This is the contract of the runni
 | `page_tags.html` | a page of type tags | `page`, `tags` |
 | `page_archives.html` | a page of type archives | `page`, `yearKeys`, `byYear`, `yearMonthKeys`, `byYearMonth` |
 | `page_content.html` | a custom page, and every plugin page (`/docs`, `/plugins`, …) | `page`; a plugin page adds what the plugin returns, normally `has_plugin_content` and `plugin_content`, and may replace `title` |
-| `search.html` | `/search` | `posts`, `query` |
+| `search.html` | `/search` | `query`, `results` (posts first, then plugin hits; each has `.Title`, `.URL`, `.Summary`, and `.Kind` — `""` for a post — plus `.Date` and `.Tags` for posts), `result_count`; render them with `{{ template "_search_results" . }}`. `posts` and `plugin_results` remain for a theme that renders the list itself. |
 | `tag.html` | `/tag/<name>` | `posts`, `tag` |
 | `login.html` | `/login` | `client_id`, `next`, `email_login_enabled` |
 | `error.html` | 404s, a disabled or uninstalled plugin's page, unauthorized | `error`, `description` |

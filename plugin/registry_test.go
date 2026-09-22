@@ -703,3 +703,20 @@ func TestRegistrySearch(t *testing.T) {
 		t.Errorf("query passed = %q", sp.gotQuery)
 	}
 }
+
+// TestPageSlug: the slug of a plugin page as the admin has it, or the
+// default when the page row is missing or there is no database.
+func TestPageSlug(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&blog.Page{})
+	if got := plugin.PageSlug(db, "dir", "plugins"); got != "plugins" {
+		t.Errorf("missing row: %q", got)
+	}
+	db.Create(&blog.Page{Title: "Dir", Slug: "extensions", PageType: "dir", Enabled: true})
+	if got := plugin.PageSlug(db, "dir", "plugins"); got != "extensions" {
+		t.Errorf("renamed: %q", got)
+	}
+	if got := plugin.PageSlug(nil, "dir", "plugins"); got != "plugins" {
+		t.Errorf("nil db: %q", got)
+	}
+}
