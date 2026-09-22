@@ -308,8 +308,10 @@ func pluginPageHarness(t *testing.T) *pluginsHarness {
 func TestAdminPluginSettingsPage_NonAdmin(t *testing.T) {
 	h := pluginPageHarness(t)
 	h.auth.On("IsAdmin", mock.Anything).Return(false)
-	if w := h.do("GET", "/admin/plugins/hello-world", ""); w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
+	h.auth.On("IsLoggedIn", mock.Anything).Return(false)
+	// Not signed in: the page sends the visitor to log in (#620).
+	if w := h.do("GET", "/admin/plugins/hello-world", ""); w.Code != http.StatusFound || w.Header().Get("Location") != "/login?next=%2Fadmin%2Fplugins%2Fhello-world" {
+		t.Fatalf("anonymous: %d %q", w.Code, w.Header().Get("Location"))
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -473,13 +474,14 @@ func TestCreatePost(t *testing.T) {
 		t.Fatalf("Expected a %d redirect to /admin/dashboard but got %d %q\n", http.StatusFound, w.Code, w.Header().Get("Location"))
 	}
 
-	//get admin: not admin -> same 401 as every other admin page, no redirect
+	//get admin: not signed in -> the login page, like every other admin page (#620)
 	a.On("IsAdmin", mock.Anything).Return(false).Once()
+	a.On("IsLoggedIn", mock.Anything).Return(false).Once()
 	req, _ = http.NewRequest("GET", "/admin", nil)
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("Expected to get status %d for non-admin /admin but instead got %d\n", http.StatusUnauthorized, w.Code)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login?next=%2Fadmin" {
+		t.Fatalf("anonymous /admin: %d %q", w.Code, w.Header().Get("Location"))
 	}
 
 	// Create a comment to test deletion
@@ -758,13 +760,14 @@ func TestAdminComments(t *testing.T) {
 		db.Create(&blog.Comment{PostID: post.ID, Name: "Commenter" + strconv.Itoa(i), Email: "c@example.com", Content: "Comment number " + strconv.Itoa(i)})
 	}
 
-	// Non-admin -> 401
+	// Not signed in -> off to the login page (#620)
 	a.On("IsAdmin", mock.Anything).Return(false).Once()
+	a.On("IsLoggedIn", mock.Anything).Return(false).Once()
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/admin/comments", nil)
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected %d for non-admin, got %d", http.StatusUnauthorized, w.Code)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login?next=%2Fadmin%2Fcomments" {
+		t.Fatalf("anonymous: %d %q", w.Code, w.Header().Get("Location"))
 	}
 
 	get := func(path string) string {
@@ -898,10 +901,11 @@ func newSettingsPage(t *testing.T, isAdmin bool, rows ...blog.Setting) (int, str
 }
 
 // TestAdminSettings_NonAdmin_Unauthorized checks the Settings page is gated
-// like every other admin page.
+// like every other admin page: a visitor who is not signed in is sent to
+// the login page rather than shown a bare error (#620).
 func TestAdminSettings_NonAdmin_Unauthorized(t *testing.T) {
-	if code, _ := newSettingsPage(t, false); code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", code)
+	if code, _ := newSettingsPage(t, false); code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", code)
 	}
 }
 
@@ -1030,12 +1034,14 @@ func adminsJSON(router *gin.Engine, method string, id int) *httptest.ResponseRec
 func TestAdminUsers_NonAdmin_Unauthorized(t *testing.T) {
 	router, a, _ := newUsersHarness(t, "default")
 	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/admin/users", nil)
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("GET /admin/users: expected 401, got %d", w.Code)
+	// The page redirects to login; the JSON API below still answers 401.
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login?next=%2Fadmin%2Fusers" {
+		t.Fatalf("GET /admin/users: %d %q", w.Code, w.Header().Get("Location"))
 	}
 	if w := adminsJSON(router, "POST", 1); w.Code != http.StatusUnauthorized {
 		t.Fatalf("POST /api/v1/admins: expected 401, got %d", w.Code)
@@ -1472,5 +1478,122 @@ func TestAdminPages_RenderInPanel(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// adminPagePaths are the admin pages a browser can navigate to; each must
+// send an anonymous visitor to the login page and tell a signed-in
+// non-admin why they cannot see it (#620).
+func adminPagePaths(pageID, postTypeID uint, postLink string) []string {
+	return []string{
+		"/admin", "/admin/dashboard", "/admin/posts", "/admin/newpost", "/admin/pages",
+		"/admin/pages/" + strconv.Itoa(int(pageID)), "/admin/comments", "/admin/users",
+		"/admin/post-types", "/admin/post-types/" + strconv.Itoa(int(postTypeID)),
+		"/admin/plugins", "/admin/themes", postLink,
+	}
+}
+
+// TestAdminPages_Anonymous: a visitor who is not signed in is redirected to
+// the login page, which is told where to come back to.
+func TestAdminPages_Anonymous(t *testing.T) {
+	router, a, db, _ := newAdminHarness(t, "default")
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	post := blog.Post{Title: "P", Slug: "p", Content: "x", PostTypeID: pt.ID}
+	db.Create(&post)
+	db.Preload("PostType").First(&post, post.ID)
+	page := blog.Page{Title: "P", Slug: "p"}
+	db.Create(&page)
+
+	for _, path := range adminPagePaths(page.ID, pt.ID, post.Adminlink()) {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, path, nil)
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusFound {
+			t.Errorf("%s: code = %d, want 302", path, w.Code)
+			continue
+		}
+		want := "/login?next=" + url.QueryEscape(path)
+		if got := w.Header().Get("Location"); got != want {
+			t.Errorf("%s: Location = %q, want %q", path, got, want)
+		}
+	}
+
+	// The query string is part of where to come back to.
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/posts?page=2&q=a+b", nil)
+	router.ServeHTTP(w, req)
+	if got, want := w.Header().Get("Location"), "/login?next="+url.QueryEscape("/admin/posts?page=2&q=a+b"); got != want {
+		t.Errorf("with a query: Location = %q, want %q", got, want)
+	}
+}
+
+// TestAdminPages_SignedInNonAdmin: someone who is signed in but is not an
+// admin gets a page explaining that, not a redirect back to a login they
+// have already completed.
+func TestAdminPages_SignedInNonAdmin(t *testing.T) {
+	router, a, db, _ := newAdminHarness(t, "default")
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(true)
+	a.user = &auth.BlogUser{Name: "Visitor"}
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	post := blog.Post{Title: "P", Slug: "p", Content: "x", PostTypeID: pt.ID}
+	db.Create(&post)
+	db.Preload("PostType").First(&post, post.ID)
+	page := blog.Page{Title: "P", Slug: "p"}
+	db.Create(&page)
+
+	for _, path := range adminPagePaths(page.ID, pt.ID, post.Adminlink()) {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, path, nil)
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s: code = %d, want 403", path, w.Code)
+			continue
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "admin") || !strings.Contains(body, `href="/logout"`) {
+			t.Errorf("%s: page should say an admin account is needed and offer to sign out:\n%s", path, body)
+		}
+		if strings.Contains(body, `href="/css/admin.css"`) {
+			t.Errorf("%s: a non-admin must not get the admin chrome", path)
+		}
+	}
+}
+
+// TestAdminAPI_StillAnswersJSON: the JSON API must keep answering 401 with
+// a body the admin scripts can show — a redirect would be followed by
+// jQuery and land HTML in an $.ajax success handler (#620).
+func TestAdminAPI_StillAnswersJSON(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Setting{}, &blog.Page{})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	a.On("IsWizardMode", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+	ad := admin.New(db, a, &b, "test")
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(sessions.Sessions("s", cookie.NewStore([]byte("test"))))
+	router.PATCH("/api/v1/settings", ad.UpdateSettings)
+	router.GET("/api/v1/settings", ad.GetSettings)
+	router.POST("/api/v1/posts", ad.CreatePost)
+	router.GET("/api/v1/pages", ad.ListPages)
+
+	for _, r := range []struct{ method, path string }{
+		{"PATCH", "/api/v1/settings"}, {"GET", "/api/v1/settings"},
+		{"POST", "/api/v1/posts"}, {"GET", "/api/v1/pages"},
+	} {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(r.method, r.path, strings.NewReader("[]"))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "Not Authorized") {
+			t.Errorf("%s %s: %d %q", r.method, r.path, w.Code, w.Body.String())
+		}
 	}
 }

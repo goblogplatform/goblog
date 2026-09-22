@@ -210,8 +210,7 @@ func (a *Admin) ThemeScreenshot(c *gin.Context) {
 
 // AdminThemes renders the Themes admin page; the data is loaded by the page over the API.
 func (a *Admin) AdminThemes(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 	c.HTML(http.StatusOK, "admin_themes.html", gin.H{

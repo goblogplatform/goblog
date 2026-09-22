@@ -180,8 +180,7 @@ func (a *Admin) RefreshPluginDirectory(c *gin.Context) {
 // GET /admin/plugins/:name. The name must follow the plugin name rule and
 // be registered; anything else is the admin 404 page.
 func (a *Admin) AdminPluginSettings(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 	name := c.Param("name")
@@ -215,8 +214,7 @@ func (a *Admin) AdminPluginSettings(c *gin.Context) {
 
 // AdminPlugins renders the Plugins admin page; the data is loaded by the page over the API.
 func (a *Admin) AdminPlugins(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 	c.HTML(http.StatusOK, "admin_plugins.html", gin.H{

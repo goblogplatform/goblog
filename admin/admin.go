@@ -592,8 +592,7 @@ func (a *Admin) GetSettings(c *gin.Context) {
 // Admin sends /admin to the dashboard. It used to render admin.html, an
 // "all posts + create post" mashup that duplicated two other pages.
 func (a *Admin) Admin(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 	c.Redirect(http.StatusFound, "/admin/dashboard")
@@ -639,8 +638,7 @@ const dashboardRecentPosts = 5
 // AdminDashboard renders the admin landing page: content counts, the newest
 // posts and comments, and what the site is running (theme, plugins, version).
 func (a *Admin) AdminDashboard(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 	recentComments := a.b.GetRecentComments(10)
@@ -677,8 +675,7 @@ func (a *Admin) AdminDashboard(c *gin.Context) {
 }
 
 func (a *Admin) AdminPosts(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 	c.HTML(http.StatusOK, "admin_all_posts.html", gin.H{
@@ -695,8 +692,7 @@ func (a *Admin) AdminPosts(c *gin.Context) {
 }
 
 func (a *Admin) AdminNewPost(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 	c.HTML(http.StatusOK, "admin_new_post.html", gin.H{
@@ -713,8 +709,7 @@ func (a *Admin) AdminNewPost(c *gin.Context) {
 }
 
 func (a *Admin) AdminSettings(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 	settings := a.b.GetSettings()
@@ -937,8 +932,7 @@ func (a *Admin) DeletePage(c *gin.Context) {
 
 // AdminPages renders the admin page listing
 func (a *Admin) AdminPages(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 
@@ -961,8 +955,7 @@ const adminCommentsPerPage = 50
 
 // AdminComments renders a paginated list of all comments, newest first
 func (a *Admin) AdminComments(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 
@@ -1002,8 +995,7 @@ const adminUsersPerPage = 50
 
 // AdminUsers renders the user list with promote/demote controls (#548).
 func (a *Admin) AdminUsers(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 
@@ -1102,8 +1094,7 @@ func (a *Admin) DemoteAdmin(c *gin.Context) {
 
 // AdminEditPage renders the form to edit a single page
 func (a *Admin) AdminEditPage(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 
@@ -1322,8 +1313,7 @@ func (a *Admin) DeletePostType(c *gin.Context) {
 
 // AdminPostTypes renders the admin post types listing
 func (a *Admin) AdminPostTypes(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 	c.HTML(http.StatusOK, "admin_post_types.html", gin.H{
@@ -1340,8 +1330,7 @@ func (a *Admin) AdminPostTypes(c *gin.Context) {
 
 // AdminEditPostType renders the form to edit a single post type
 func (a *Admin) AdminEditPostType(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 
@@ -1385,9 +1374,7 @@ func (a *Admin) AdminEditPostType(c *gin.Context) {
 }
 
 func (a *Admin) Post(c *gin.Context) {
-	if !a.auth.IsAdmin(c) {
-		log.Println("IS ADMIN RETURNED FALSE")
-		c.JSON(http.StatusUnauthorized, "Not Authorized")
+	if !a.b.RequireAdminPage(c) {
 		return
 	}
 
