@@ -1,5 +1,5 @@
 {{ template "header.html" .}}
-<script src="/js/admin-script.js"></script>
+<script defer src="/js/admin-script.js"></script>
 <div class="container">
     {{ template "admin_nav.html" . }}
     <div class="admin-panel">
@@ -64,8 +64,9 @@
 
 <script>
 // Keep the open tab in location.hash (#appearance) so a save that reloads
-// the page, or a link from elsewhere, lands on the same tab.
-(function () {
+// the page, or a link from elsewhere, lands on the same tab. Bootstrap's JS is
+// deferred, so this waits for DOMContentLoaded.
+document.addEventListener("DOMContentLoaded", function () {
     var tabs = document.querySelectorAll('#settings-tabs [data-bs-toggle="tab"]');
     var wanted = location.hash.replace(/^#/, '');
     tabs.forEach(function (btn) {
@@ -77,7 +78,7 @@
             history.replaceState(null, '', '#' + id);
         });
     });
-})();
+});
 </script>
 
 {{ template "footer.html" .}}

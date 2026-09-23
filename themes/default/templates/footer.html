@@ -18,7 +18,10 @@
     </div>
   </div>
 {{ if or .admin_page .post }}
-  <script>hljs.highlightAll();</script>
+  <script>
+    // highlight.js is deferred, so it is only defined once parsing is done.
+    document.addEventListener("DOMContentLoaded", function () { hljs.highlightAll(); });
+  </script>
 {{ end }}
 {{ with index .settings "custom_footer_code" }}{{ if .Value }}
   {{ .Value | rawHTML }}
