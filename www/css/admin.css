@@ -81,3 +81,18 @@
     background: #fff;
 }
 .editor-tabs { margin-bottom: 0; }
+
+/* The editor is a markdown source view, not a second preview. #617 moved
+   rendering to the server, so SimpleMDE's live heading sizes only claimed to
+   show the result while disagreeing with it — and made the line height lurch
+   while typing. Headings keep their bold weight, so they are still easy to
+   pick out while scanning; only the size scaling goes. */
+.CodeMirror .CodeMirror-code .cm-header-1,
+.CodeMirror .CodeMirror-code .cm-header-2,
+.CodeMirror .CodeMirror-code .cm-header-3,
+.CodeMirror .CodeMirror-code .cm-header-4,
+.CodeMirror .CodeMirror-code .cm-header-5,
+.CodeMirror .CodeMirror-code .cm-header-6 {
+    font-size: 100%;
+    line-height: inherit;
+}
