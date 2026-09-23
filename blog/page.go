@@ -1,6 +1,9 @@
 package blog
 
-import "time"
+import (
+	"html/template"
+	"time"
+)
 
 // Page types
 const (
@@ -29,6 +32,10 @@ type Page struct {
 	ScholarID  string `json:"scholar_id,omitempty"` // deprecated: use scholar plugin settings instead
 	PostTypeID *uint  `json:"post_type_id,omitempty"`
 }
+
+// HTML is the page's content rendered to HTML on the server, with the same
+// policy as a post: its author is an admin.
+func (p Page) HTML() template.HTML { return renderMarkdown(p.Content) }
 
 // PagePermalink returns the URL path for this page
 func (p Page) PagePermalink() string {

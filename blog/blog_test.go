@@ -1922,3 +1922,122 @@ func TestPostHTML(t *testing.T) {
 		}
 	}
 }
+
+// divContents returns the text between the first tag in body that starts
+// with openTag and that tag's next closing </div>, so a test can assert
+// against the content of a specific element rather than the whole page.
+// The post body under test never nests a <div> inside itself, so the first
+// </div> after the opening tag is the matching close.
+func divContents(t *testing.T, body, openTag string) string {
+	t.Helper()
+	start := strings.Index(body, openTag)
+	if start < 0 {
+		t.Fatalf("did not find %q in page", openTag)
+	}
+	contentStart := strings.Index(body[start:], ">")
+	if contentStart < 0 {
+		t.Fatalf("unterminated tag %q", openTag)
+	}
+	contentStart += start + 1
+	end := strings.Index(body[contentStart:], "</div>")
+	if end < 0 {
+		t.Fatalf("no closing </div> for %q", openTag)
+	}
+	return body[contentStart : contentStart+end]
+}
+
+// TestPostPage_ServerRendered: the post body and its comments are HTML in
+// the response, so a crawler or link-preview bot that runs no JavaScript
+// sees the content; showdown and DOMPurify are gone from the page (#617).
+func TestPostPage_ServerRendered(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	pt := blog.PostType{Name: "Post", Slug: "posts"}
+	db.Create(&pt)
+	when := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	post := blog.Post{Title: "Rendered", Slug: "rendered", PostTypeID: pt.ID, CreatedAt: when, UpdatedAt: when,
+		Content: "Some **bold** text.\n\n<iframe src=\"https://www.youtube.com/embed/x\"></iframe>\n"}
+	db.Create(&post)
+	db.Create(&blog.Comment{PostID: post.ID, Name: "Visitor", Content: "Nice **post**!\n\n<script>alert(1)</script>"})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+
+	router := gin.New()
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.GET("/posts/:yyyy/:mm/:dd/:slug", b.Post)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/posts/2026/08/15/rendered", nil)
+	router.ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d", w.Code)
+	}
+	for _, want := range []string{"<strong>bold</strong>", "<strong>post</strong>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	// The iframe must be inside the post body itself, not merely somewhere
+	// on the page: footer.html also renders an HTMLPreview of this same
+	// post, which would contain the same raw iframe even if the body were
+	// never rendered on the server.
+	postBody := divContents(t, body, `<div id="html"`)
+	if !strings.Contains(postBody, `<iframe src="https://www.youtube.com/embed/x">`) {
+		t.Errorf("post body missing iframe: %q", postBody)
+	}
+	for _, gone := range []string{"showdown", "purify", "DOMPurify", "<noscript>"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("page still references %q", gone)
+		}
+	}
+	// The security property is that no executable construct from a comment
+	// reaches the page — not that a particular payload string is absent;
+	// a commenter may write the words alert(1) as prose.
+	commentBody := divContents(t, body, `<div class="comment-content">`)
+	for _, gone := range []string{"<script", "onerror", "javascript:"} {
+		if strings.Contains(commentBody, gone) {
+			t.Errorf("a comment must not carry %q: %q", gone, commentBody)
+		}
+	}
+}
+
+// TestCustomPage_ServerRendered: a custom page's markdown is rendered on the
+// server too; plugin pages, which pass their own HTML, are unaffected.
+func TestCustomPage_ServerRendered(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(":memory:"))
+	db.AutoMigrate(&auth.BlogUser{}, &blog.PostType{}, &blog.Post{}, &blog.Tag{}, &blog.Comment{}, &blog.Page{}, &blog.Setting{}, &plugin.PluginSetting{})
+	db.Create(&blog.Page{Title: "About", Slug: "about", PageType: blog.PageTypeAbout, Enabled: true,
+		Content: "I write **software**.\n\n<iframe src=\"https://maps.example/embed\"></iframe>\n"})
+	a := &Auth{}
+	a.On("IsAdmin", mock.Anything).Return(false)
+	a.On("IsLoggedIn", mock.Anything).Return(false)
+	b := blog.New(db, a, "test")
+
+	router := gin.New()
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"rawHTML": func(s string) template.HTML { return template.HTML(s) },
+	}).ParseGlob("../templates/shared/*.html"))
+	template.Must(tmpl.ParseGlob("../themes/default/templates/*.html"))
+	router.SetHTMLTemplate(tmpl)
+	router.NoRoute(b.NoRoute)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/about", nil)
+	router.ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "<strong>software</strong>") || !strings.Contains(body, "<iframe") {
+		t.Errorf("page body not rendered:\n%s", body)
+	}
+	for _, gone := range []string{"showdown", "purify"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("page still references %q", gone)
+		}
+	}
+}

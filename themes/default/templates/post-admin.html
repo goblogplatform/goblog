@@ -48,13 +48,18 @@
         </select>
         {{ end }}
         {{ end }}
-        <div class="text-left">
+        <ul class="nav nav-tabs editor-tabs" data-editor="content">
+            <li class="nav-item"><a class="nav-link active" href="#" data-tab="write">Write</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-tab="preview">Preview</a></li>
+        </ul>
+        <div class="text-left" id="content-write">
           {{ if .post.Draft }}
           <textarea id="content" onfocusout="updatePost({{ .post.ID }}, false)" style="width: 100%; height: 50%;">{{ .post.Content }}</textarea>
           {{ else }}
           <textarea id="content" onfocusout="updatePost({{ .post.ID }}, true)" style="width: 100%; height: 50%;">{{ .post.Content }}</textarea>
           {{ end }}
         </div>
+        <div class="editor-preview-pane" id="content-preview" style="display: none;"></div>
         <div class="spacer">&nbsp;</div>
 
         <div class="form-group">
@@ -93,7 +98,7 @@
       <div class="spacer">&nbsp;</div>
       <div class="container left">
         <h1>Preview</h1>
-        <div id="html" class="text-left"></div>
+        <div id="html" class="text-left">{{ .post.HTML }}</div>
       </div>
     </div>
 
@@ -189,14 +194,17 @@
     </div> <!-- / admin-panel -->
   </div> <!-- /container -->
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js" integrity="sha512-LhccdVNGe2QMEfI3x4DVV3ckMRe36TfydKss6mJpdHjNFiV07dFpS2xzeZedptKZrwxfICJpez09iNioiSZ3hA==" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js" integrity="sha512-78KH17QLT5e55GJqP76vutp1D2iAoy06WcYBXB6iBCsmO6wWzx0Qdg8EDpm8mKXv68BcvHOyeeP4wxAL0twJGQ==" crossorigin="anonymous"></script>
   <script type="text/javascript">
-    var converter = new showdown.Converter({tables: true});
-    var md = "{{ .post.Content }}";
-    var html = DOMPurify.sanitize(converter.makeHtml(md));
-    $("#html").html(html)
-    var simplemde = new SimpleMDE({ element: $("#content")[0] });
+    var simplemde = new SimpleMDE({
+        element: $("#content")[0],
+        // One preview mechanism: the Write/Preview tabs, which render
+        // through the server. SimpleMDE's own preview uses a different
+        // markdown implementation and would disagree.
+        toolbar: ["bold", "italic", "heading", "|", "quote", "unordered-list", "ordered-list", "|", "link", "image", "|", "guide"],
+        spellChecker: false,
+        shortcuts: { togglePreview: null, toggleSideBySide: null, toggleFullScreen: null }
+    });
 
     //https://github.com/sparksuite/simplemde-markdown-editor/issues/328
     inlineAttachment.editors.codemirror4.attach(simplemde.codemirror, {
@@ -221,6 +229,8 @@
             return false;
         }
     });
+
+    setupEditorTabs("content");
 
     $(function () {
       $('#datetimepicker1').datetimepicker({timeZone: "UTC"});

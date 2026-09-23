@@ -438,6 +438,7 @@ func main() {
 	router.POST("/wizard_db", updateDB)
 	router.POST("/test_db", testDB)
 	router.POST("/api/v1/upload", goblog._admin.UploadFile)
+	router.POST("/api/v1/preview", goblog._admin.Preview)
 	router.PATCH("/api/v1/settings", goblog._admin.UpdateSettings)
 	router.PATCH("/api/v1/plugin-settings", goblog._admin.UpdatePluginSettings)
 	router.GET("/api/v1/plugins/status", goblog._admin.PluginStatus)

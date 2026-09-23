@@ -77,13 +77,13 @@ Beyond those, each template gets its own data. This is the contract of the runni
 | Template | Rendered for | Its own keys |
 |---|---|---|
 | `home.html` | `/` | `recent_posts` (every published post), `tags` (the 20 most used) |
-| `post.html` | one post: `/posts/yyyy/mm/dd/<slug>` and `/yyyy/mm/dd/<slug>` for every reader, `/<type>/yyyy/mm/dd/<slug>` for readers who are not admins | `post`, `comments`, `comment_error`, `comment_token`, `comment_user`, `comments_require_login`; on the first two URLs an admin also gets `backlinks`, `outbound_links`, `external_backlinks`, `post_types` |
+| `post.html` | one post: `/posts/yyyy/mm/dd/<slug>` and `/yyyy/mm/dd/<slug>` for every reader, `/<type>/yyyy/mm/dd/<slug>` for readers who are not admins | `post` (`.HTML` is the rendered body; `.Content` is raw markdown), `comments` (each comment's `.HTML` is sanitised and rendered), `comment_error`, `comment_token`, `comment_user`, `comments_require_login`; on the first two URLs an admin also gets `backlinks`, `outbound_links`, `external_backlinks`, `post_types` |
 | `post-admin.html` | `/<type>/yyyy/mm/dd/<slug>` when the reader is an admin, and `/admin/posts/yyyy/mm/dd/<slug>` | `post`, `post_types`, `backlinks`, `outbound_links`, `external_backlinks`; on the public URL also the comment keys |
 | `post_type_listing.html` | `/<post type slug>` | `post_type`, `posts` |
 | `page_writing.html` | a page of type writing | `page`, `posts` (of the page's post type, or all) |
 | `page_tags.html` | a page of type tags | `page`, `tags` |
 | `page_archives.html` | a page of type archives | `page`, `yearKeys`, `byYear`, `yearMonthKeys`, `byYearMonth` |
-| `page_content.html` | a custom page, and every plugin page (`/docs`, `/plugins`, …) | `page`; a plugin page adds what the plugin returns, normally `has_plugin_content` and `plugin_content`, and may replace `title` |
+| `page_content.html` | a custom page, and every plugin page (`/docs`, `/plugins`, …) | `page` (`.HTML` is the rendered body; `.Content` is raw markdown); a plugin page adds what the plugin returns, normally `has_plugin_content` and `plugin_content`, and may replace `title` |
 | `search.html` | `/search` | `query`, `results` (posts first, then plugin hits; each has `.Title`, `.URL`, `.Summary`, and `.Kind` — `""` for a post — plus `.Date` and `.Tags` for posts), `result_count`; render them with `{{ template "_search_results" . }}`. `posts` and `plugin_results` remain for a theme that renders the list itself. |
 | `tag.html` | `/tag/<name>` | `posts`, `tag` |
 | `login.html` | `/login` | `client_id`, `next`, `email_login_enabled` |
@@ -92,6 +92,18 @@ Beyond those, each template gets its own data. This is the contract of the runni
 | `wizard_*.html` | the install wizard, before there is a database | only `version` and `title` (and `errors`) — none of the common keys exist yet |
 
 Six templates in default — `about.html`, `archives.html`, `posts.html`, `presentations.html`, `projects.html`, `tags.html` — are left over from before pages were configurable; no route renders them today, so there is nothing to override. Post, page, tag and setting objects are goblog's own types: `.post.Title`, `.post.Permalink`, `.post.Tags`, `.post.CreatedAt.Format "Jan 02, 2006"`, `.page.HasHero`, `.page.HeroURL`. Default's templates show what each has; the Go types are in `blog/`.
+
+Post, page and comment bodies are rendered to HTML by goblog: use
+`{{ .post.HTML }}`, `{{ .page.HTML }}` and, for each comment, `{{ .HTML }}`.
+A theme that still renders `.Content` with a markdown library in the browser
+keeps working, but its pages are markdown to anything that does not run
+JavaScript — crawlers, link previews, reader modes.
+
+A post or page is rendered **without sanitising**: its author is an admin, and
+their embeds (a YouTube iframe, an Instagram script) have to survive. Comments
+are sanitised, because commenters are not. A theme must therefore treat post
+and page HTML as trusted and comment HTML as already-filtered; neither needs
+`rawHTML`.
 
 ## Try it locally
 

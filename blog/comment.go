@@ -1,6 +1,9 @@
 package blog
 
-import "time"
+import (
+	"html/template"
+	"time"
+)
 
 // Comment represents a user comment on a blog post
 type Comment struct {
@@ -16,3 +19,8 @@ type Comment struct {
 	// comments_require_login setting off).
 	UserID *int `json:"user_id" gorm:"index"`
 }
+
+// HTML is the comment rendered to HTML on the server. Commenters are
+// anonymous, so the result is sanitised: ordinary formatting survives, raw
+// HTML, scripts and javascript: URLs do not.
+func (c Comment) HTML() template.HTML { return renderComment(c.Content) }

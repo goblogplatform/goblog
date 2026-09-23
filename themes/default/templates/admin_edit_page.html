@@ -1,4 +1,5 @@
 {{ template "header.html" .}}
+<script src="/js/admin-script.js"></script>
 <div class="container">
     {{ template "admin_nav.html" . }}
     <div class="admin-panel">
@@ -67,7 +68,14 @@
 
         <div class="mb-3" id="content-section" style="{{ if or (eq .page.PageType "writing") (eq .page.PageType "research") (eq .page.PageType "tags") (eq .page.PageType "archives") }}display:none;{{ end }}">
             <label for="content" class="form-label">Content (Markdown)</label>
-            <textarea rows="15" class="form-control" id="content">{{ .page.Content }}</textarea>
+            <ul class="nav nav-tabs editor-tabs" data-editor="content">
+                <li class="nav-item"><a class="nav-link active" href="#" data-tab="write">Write</a></li>
+                <li class="nav-item"><a class="nav-link" href="#" data-tab="preview">Preview</a></li>
+            </ul>
+            <div id="content-write">
+                <textarea rows="15" class="form-control" id="content">{{ .page.Content }}</textarea>
+            </div>
+            <div class="editor-preview-pane" id="content-preview" style="display: none;"></div>
         </div>
 
         <div class="row mb-3">
@@ -108,6 +116,8 @@ document.getElementById('page_type').addEventListener('change', function() {
     document.getElementById('content-section').style.display = (type === 'writing' || type === 'research' || type === 'tags' || type === 'archives') ? 'none' : '';
     document.getElementById('post-type-filter-section').style.display = (type === 'writing') ? '' : 'none';
 });
+
+setupEditorTabs("content");
 
 function savePage() {
     var postTypeVal = document.getElementById('post_type_id').value;

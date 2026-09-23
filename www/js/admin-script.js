@@ -305,3 +305,58 @@ function updatePluginSettings(btn) {
         data: JSON.stringify(settings)
     });
 }
+
+// setupEditorTabs turns the markup an editor template ships — a .editor-tabs
+// bar and a .editor-preview pane beside the textarea — into Write/Preview
+// tabs. Preview asks the server to render the unsaved markdown, so it shows
+// exactly what the published page will, rather than a second markdown
+// dialect running in the browser. simplemde may be undefined (the page
+// editor uses a plain textarea).
+function setupEditorTabs(textareaID) {
+    var tabs = document.querySelector('.editor-tabs[data-editor="' + textareaID + '"]');
+    if (!tabs) { return; }
+    var writeTab = tabs.querySelector('[data-tab="write"]');
+    var previewTab = tabs.querySelector('[data-tab="preview"]');
+    var preview = document.getElementById(textareaID + '-preview');
+    var editorWrap = document.getElementById(textareaID + '-write');
+
+    function value() {
+        if (typeof simplemde !== 'undefined' && simplemde && simplemde.value) {
+            return simplemde.value();
+        }
+        var el = document.getElementById(textareaID);
+        return el ? el.value : '';
+    }
+
+    function show(which) {
+        var previewing = which === 'preview';
+        editorWrap.style.display = previewing ? 'none' : '';
+        preview.style.display = previewing ? '' : 'none';
+        writeTab.classList.toggle('active', !previewing);
+        previewTab.classList.toggle('active', previewing);
+        // CodeMirror (which simplemde wraps) can render blank or mis-sized
+        // after being un-hidden; refresh it when switching back to Write.
+        if (!previewing && typeof simplemde !== 'undefined' && simplemde && simplemde.codemirror) {
+            simplemde.codemirror.refresh();
+        }
+    }
+
+    writeTab.addEventListener('click', function (e) { e.preventDefault(); show('write'); });
+    previewTab.addEventListener('click', function (e) {
+        e.preventDefault();
+        show('preview');
+        preview.textContent = 'Rendering…';
+        $.ajax({
+            url: '/api/v1/preview',
+            type: 'post',
+            contentType: 'application/json',
+            dataType: 'json',
+            data: JSON.stringify({ content: value() }),
+            success: function (json) { preview.innerHTML = json.html; },
+            error: function (jqXHR, textStatus, errorThrown) {
+                var reason = typeof jqXHR.responseJSON === 'string' ? jqXHR.responseJSON : (textStatus + ' ' + errorThrown);
+                preview.textContent = 'Could not render the preview: ' + reason;
+            }
+        });
+    });
+}

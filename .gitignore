@@ -40,3 +40,6 @@ themes/installed/*
 !themes/installed/.gitkeep
 
 .idea
+
+# subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/

@@ -6,10 +6,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/renderer/html"
 )
 
 // Post defines blog posts
@@ -193,23 +189,9 @@ func (p Post) ExtractImages() []string {
 	return result
 }
 
-// postMarkdown renders a post's markdown the way the editor previews it:
-// GitHub-flavoured, raw HTML kept (only admins write posts, and embeds
-// depend on it).
-var postMarkdown = goldmark.New(
-	goldmark.WithExtensions(extension.GFM),
-	goldmark.WithRendererOptions(html.WithUnsafe()),
-)
-
-// HTML is the post's content rendered to HTML on the server (the feed,
-// and any theme that prefers server-side rendering to showdown).
-func (p Post) HTML() template.HTML {
-	var buf bytes.Buffer
-	if err := postMarkdown.Convert([]byte(p.Content), &buf); err != nil {
-		return template.HTML(template.HTMLEscapeString(p.Content))
-	}
-	return template.HTML(buf.String())
-}
+// HTML is the post's content rendered to HTML on the server: what the page,
+// the feed and the editor preview all show.
+func (p Post) HTML() template.HTML { return renderMarkdown(p.Content) }
 
 // ImageURLs is ExtractImages with every relative URL made absolute under
 // site (the resolved site_url), for Open Graph and structured data.
