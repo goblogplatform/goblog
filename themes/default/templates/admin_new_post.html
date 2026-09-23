@@ -92,7 +92,7 @@
               onFileUploadResponse: function(xhr) {
                   var result = JSON.parse(xhr.responseText);
                   console.log(result);
-                  filename = result[this.settings.jsonFieldName];
+                  var filename = result[this.settings.jsonFieldName];
                   console.log(filename);
                   console.log(this.filenameTag);
                   if (result && filename) {

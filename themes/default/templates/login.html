@@ -69,10 +69,9 @@
       </a>
 
       <script>
-        // jQuery is deferred; wait for it rather than running during parse.
-        document.addEventListener("DOMContentLoaded", function () {
-          $("#github-button").prop("href", "https://github.com/login/oauth/authorize?client_id={{ .client_id }}&redirect_uri=" + window.location);
-        });
+        // The anchor above has already been parsed when this runs, so the link is
+        // never briefly inert, and setting .href needs no library at all.
+        document.getElementById("github-button").href = "https://github.com/login/oauth/authorize?client_id={{ .client_id }}&redirect_uri=" + window.location;
       </script>
 
       {{ if .email_login_enabled }}

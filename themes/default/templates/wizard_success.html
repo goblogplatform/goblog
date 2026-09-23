@@ -22,12 +22,10 @@
     </div>
 </body>
 <script>
-    // jQuery is deferred, so this cannot call $ during parse; DOMContentLoaded
-    // fires after every deferred script has run and serves the same purpose.
-    document.addEventListener("DOMContentLoaded", function () {
-        window.setTimeout(function () {
-            location.href = "/";
-        }, 5000);
-    });
+    // The redirect timer needs neither jQuery nor a ready DOM, so it runs
+    // straight away; it only used $(document).ready() before jQuery was deferred.
+    window.setTimeout(function () {
+        location.href = "/";
+    }, 5000);
 </script>
 </html>

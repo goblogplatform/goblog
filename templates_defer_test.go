@@ -61,6 +61,9 @@ func TestExternalScriptsAreDeferred(t *testing.T) {
 
 var (
 	inlineScript = regexp.MustCompile(`(?s)<script\b([^>]*)>(.*?)</script>`)
+	// A statement that opens a DOMContentLoaded handler. Either target works and
+	// either quote style does, so the lint does not also police style.
+	readyGuard = regexp.MustCompile(`^(?:document|window)\.addEventListener\(\s*["']DOMContentLoaded["']`)
 	// Globals that only exist once the deferred scripts have run. admin-script.js
 	// is deferred too, so setupEditorTabs belongs here as much as jQuery does.
 	deferredGlobals = []string{
@@ -85,7 +88,7 @@ func TestInlineScriptsWaitForDeferredLibraries(t *testing.T) {
 				continue
 			}
 			for _, stmt := range topLevelStatements(script) {
-				if strings.HasPrefix(stmt, `document.addEventListener("DOMContentLoaded"`) {
+				if readyGuard.MatchString(stmt) {
 					continue
 				}
 				for _, global := range deferredGlobals {
@@ -181,6 +184,37 @@ func TestEditorTemplatesKeepSimplemdeGlobal(t *testing.T) {
 			t.Errorf("%s builds a SimpleMDE editor but does not declare `simplemde` at "+
 				"the top level of an inline script. admin-script.js reads it as a global; "+
 				"scoped to a handler, saving silently sends stale content.", path)
+		}
+	}
+}
+
+// TestReadyGuardAcceptsCommonForms pins which statements count as "this waits
+// for DOMContentLoaded", so the lint does not quietly become a style rule. Both
+// targets and both quote styles are equivalent; jQuery's own ready helpers are
+// not, because they need jQuery to already be defined.
+func TestReadyGuardAcceptsCommonForms(t *testing.T) {
+	accepted := []string{
+		`document.addEventListener("DOMContentLoaded", function () {`,
+		`document.addEventListener('DOMContentLoaded', function () {`,
+		`window.addEventListener("DOMContentLoaded", () => {`,
+		`document.addEventListener( "DOMContentLoaded", init);`,
+	}
+	rejected := []string{
+		`$(function () {`,
+		`$(document).ready(function () {`,
+		`jQuery(document).ready(function () {`,
+		`hljs.highlightAll();`,
+		`el.addEventListener("DOMContentLoaded", fn);`, // not document/window
+		`init(); document.addEventListener("DOMContentLoaded", fn);`,
+	}
+	for _, stmt := range accepted {
+		if !readyGuard.MatchString(stmt) {
+			t.Errorf("should be accepted as a DOMContentLoaded guard: %s", stmt)
+		}
+	}
+	for _, stmt := range rejected {
+		if readyGuard.MatchString(stmt) {
+			t.Errorf("should not count as a DOMContentLoaded guard: %s", stmt)
 		}
 	}
 }
