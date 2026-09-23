@@ -6,8 +6,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-social/5.1.1/bootstrap-social.min.css" integrity="sha512-f8mUMCRNrJxPBDzPJx3n+Y5TC5xp6SmStstEfgsDXZJTcxBakoB5hvPLhAfJKa9rCvH+n3xpJ2vQByxLk4WP2g==" crossorigin="anonymous" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" integrity="sha512-2SwdPD6INVrV/lHTZbO2nodKhrnDdJK9/kg2XD1r9uGqPo1cUbujc+IYdlYdEErWNu69gVcYgdxlmVmzTWnetw==" crossorigin="anonymous" />
     <link rel="stylesheet" href="/css/wizard.css"/>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.8/js/bootstrap.min.js" integrity="sha512-nKXmKvJyiGQy343jatQlzDprflyB5c+tKCzGP3Uq67v+lmzfnZUi/ZT+fc6ITZfSC5HhaBKUIvr/nTLCV+7F+Q==" crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" integrity="sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g==" crossorigin="anonymous"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.8/js/bootstrap.min.js" integrity="sha512-nKXmKvJyiGQy343jatQlzDprflyB5c+tKCzGP3Uq67v+lmzfnZUi/ZT+fc6ITZfSC5HhaBKUIvr/nTLCV+7F+Q==" crossorigin="anonymous"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" integrity="sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g==" crossorigin="anonymous"></script>
 </head>
 <body>
 <div class="container">
@@ -113,7 +113,10 @@
     </div>
 </div>
 <script type="text/javascript">
-    $(document).ready(function() {
+    // jQuery is deferred, so $ only exists once parsing is done. Every deferred
+    // script has run by the time DOMContentLoaded fires, so this replaces both
+    // the old $(document).ready() and the bare top-level handler wiring.
+    document.addEventListener("DOMContentLoaded", function() {
         $('[data-toggle-value]').on('change', function() {
             var value = $(this).data('toggle-value');
             $('[data-toggle-group]').hide();
@@ -123,32 +126,32 @@
             $('#database-test').html('<i class="bi bi-database-gear"></i> Test Database');
             $('#ajax-error').hide();
         });
-    });
 
-    // submit the form when the test database button is clicked
-    $('#database-test').on('click', function() {
-        // use ajax to submit the form and capture the result
-        $.ajax({
-            type: 'POST',
-            url: 'test_db',
-            data: $('form').serialize(),
-            success: function(data) {
-                // make database test button green
-                $('#database-test').removeClass('btn-secondary').addClass('btn-success');
-                // change the icon within the button
-                $('#database-test').html('<i class="bi bi-check"></i> Database Test Passed');
-                // enable the save button
-                $('#database-save').prop('disabled', false);
-            },
-            error: function(data) {
-                // make database test button red
-                $('#database-test').removeClass('btn-secondary').addClass('btn-danger');
-                // change the icon within the button
-                $('#database-test').html('<i class="bi bi-x"></i> Database Test Failed');
-                // get the error message and show it at top of page
-                var error = data.responseJSON.error;
-                $('#ajax-error').html(error).show();
-            }
+        // submit the form when the test database button is clicked
+        $('#database-test').on('click', function() {
+            // use ajax to submit the form and capture the result
+            $.ajax({
+                type: 'POST',
+                url: 'test_db',
+                data: $('form').serialize(),
+                success: function(data) {
+                    // make database test button green
+                    $('#database-test').removeClass('btn-secondary').addClass('btn-success');
+                    // change the icon within the button
+                    $('#database-test').html('<i class="bi bi-check"></i> Database Test Passed');
+                    // enable the save button
+                    $('#database-save').prop('disabled', false);
+                },
+                error: function(data) {
+                    // make database test button red
+                    $('#database-test').removeClass('btn-secondary').addClass('btn-danger');
+                    // change the icon within the button
+                    $('#database-test').html('<i class="bi bi-x"></i> Database Test Failed');
+                    // get the error message and show it at top of page
+                    var error = data.responseJSON.error;
+                    $('#ajax-error').html(error).show();
+                }
+            });
         });
     });
 </script>

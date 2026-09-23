@@ -1,5 +1,5 @@
 {{ template "header.html" .}}
-<script src="/js/admin-script.js"></script>
+<script defer src="/js/admin-script.js"></script>
 <div class="container">
     {{ template "admin_nav.html" . }}
     <div class="admin-panel">
@@ -67,44 +67,54 @@
     </div> <!-- / container -->
 
     <script>
-        var simplemde = new SimpleMDE({
-            element: $("#content")[0],
-            // One preview mechanism: the Write/Preview tabs, which render
-            // through the server. SimpleMDE's own preview uses a different
-            // markdown implementation and would disagree.
-            toolbar: ["bold", "italic", "heading", "|", "quote", "unordered-list", "ordered-list", "|", "link", "image", "|", "guide"],
-            spellChecker: false,
-            shortcuts: { togglePreview: null, toggleSideBySide: null, toggleFullScreen: null }
-        });
+        // SimpleMDE, inline-attachment and jQuery are all deferred, so the editor
+        // can only be built once every deferred script has run.
+        //
+        // simplemde is declared out here on purpose: admin-script.js reads it as a
+        // global, both to send the editor's text on save and to drive the
+        // Write/Preview tabs. Declaring it inside the handler would scope it to the
+        // handler, and a save would quietly send the textarea's stale value.
+        var simplemde;
+        document.addEventListener("DOMContentLoaded", function () {
+          simplemde = new SimpleMDE({
+              element: $("#content")[0],
+              // One preview mechanism: the Write/Preview tabs, which render
+              // through the server. SimpleMDE's own preview uses a different
+              // markdown implementation and would disagree.
+              toolbar: ["bold", "italic", "heading", "|", "quote", "unordered-list", "ordered-list", "|", "link", "image", "|", "guide"],
+              spellChecker: false,
+              shortcuts: { togglePreview: null, toggleSideBySide: null, toggleFullScreen: null }
+          });
 
-        //https://github.com/sparksuite/simplemde-markdown-editor/issues/328
-        inlineAttachment.editors.codemirror4.attach(simplemde.codemirror, {
-            uploadUrl: "/api/v1/upload",
-            onFileUploadResponse: function(xhr) {
-                var result = JSON.parse(xhr.responseText);
-                console.log(result);
-                filename = result[this.settings.jsonFieldName];
-                console.log(filename);
-                console.log(this.filenameTag);
-                if (result && filename) {
-                    var newValue;
-                    if (typeof this.settings.urlText === 'function') {
-                        newValue = this.settings.urlText.call(this, filename, result);
-                    } else {
-                        newValue = this.settings.urlText.replace(this.filenameTag, filename);
-                    }
-                    var text = this.editor.getValue().replace(this.lastValue, newValue);
-                    this.editor.setValue(text);
-                    this.settings.onFileUploaded.call(this, filename);
-                }
-                return false;
-            }
-        });
+          //https://github.com/sparksuite/simplemde-markdown-editor/issues/328
+          inlineAttachment.editors.codemirror4.attach(simplemde.codemirror, {
+              uploadUrl: "/api/v1/upload",
+              onFileUploadResponse: function(xhr) {
+                  var result = JSON.parse(xhr.responseText);
+                  console.log(result);
+                  filename = result[this.settings.jsonFieldName];
+                  console.log(filename);
+                  console.log(this.filenameTag);
+                  if (result && filename) {
+                      var newValue;
+                      if (typeof this.settings.urlText === 'function') {
+                          newValue = this.settings.urlText.call(this, filename, result);
+                      } else {
+                          newValue = this.settings.urlText.replace(this.filenameTag, filename);
+                      }
+                      var text = this.editor.getValue().replace(this.lastValue, newValue);
+                      this.editor.setValue(text);
+                      this.settings.onFileUploaded.call(this, filename);
+                  }
+                  return false;
+              }
+          });
 
-        setupEditorTabs("content");
+          setupEditorTabs("content");
 
-        $(function () {
-            $('#datetimepicker1').datetimepicker({timezone: "UTC"});
+          $(function () {
+              $('#datetimepicker1').datetimepicker({timezone: "UTC"});
+          });
         });
     </script>
 

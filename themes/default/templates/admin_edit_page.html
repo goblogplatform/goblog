@@ -1,5 +1,5 @@
 {{ template "header.html" .}}
-<script src="/js/admin-script.js"></script>
+<script defer src="/js/admin-script.js"></script>
 <div class="container">
     {{ template "admin_nav.html" . }}
     <div class="admin-panel">
@@ -105,19 +105,23 @@
 </div>
 
 <script>
-// Set the current post type filter value
-var currentPostTypeID = {{ if .page.PostTypeID }}"{{ .page.PostTypeID }}"{{ else }}""{{ end }};
-if (currentPostTypeID) {
-    document.getElementById('post_type_id').value = currentPostTypeID;
-}
+// setupEditorTabs comes from the deferred admin-script.js, so the wiring waits
+// for DOMContentLoaded. savePage() below stays a global for its onclick.
+document.addEventListener("DOMContentLoaded", function () {
+    // Set the current post type filter value
+    var currentPostTypeID = {{ if .page.PostTypeID }}"{{ .page.PostTypeID }}"{{ else }}""{{ end }};
+    if (currentPostTypeID) {
+        document.getElementById('post_type_id').value = currentPostTypeID;
+    }
 
-document.getElementById('page_type').addEventListener('change', function() {
-    var type = this.value;
-    document.getElementById('content-section').style.display = (type === 'writing' || type === 'research' || type === 'tags' || type === 'archives') ? 'none' : '';
-    document.getElementById('post-type-filter-section').style.display = (type === 'writing') ? '' : 'none';
+    document.getElementById('page_type').addEventListener('change', function() {
+        var type = this.value;
+        document.getElementById('content-section').style.display = (type === 'writing' || type === 'research' || type === 'tags' || type === 'archives') ? 'none' : '';
+        document.getElementById('post-type-filter-section').style.display = (type === 'writing') ? '' : 'none';
+    });
+
+    setupEditorTabs("content");
 });
-
-setupEditorTabs("content");
 
 function savePage() {
     var postTypeVal = document.getElementById('post_type_id').value;
