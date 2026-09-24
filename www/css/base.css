@@ -6,8 +6,32 @@
  * serves itself, rather than in a theme's goblog.css, so that every theme —
  * including ones goblog does not ship — keeps working without a release.
  *
- * Copied from Tachyons 4.11.1, MIT licensed, so the classes behave exactly as
+ * The rules are copied from Tachyons 4.11.1 so the classes behave exactly as
  * they did before. `-l` is Tachyons' large breakpoint, screen and min-width 60em.
+ *
+ * ---------------------------------------------------------------------------
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2020 Adam Morse & John Otander
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * ---------------------------------------------------------------------------
  */
 
 /* Hero images: .cover bg-left bg-center-l on the about, writing, tags and

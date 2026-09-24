@@ -59,20 +59,28 @@ func TestFontAwesomeDoesNotBlockRendering(t *testing.T) {
 	if len(found) != 2 {
 		t.Fatalf("expected two font-awesome links (the async one and its <noscript> fallback), got %d", len(found))
 	}
-	var async, fallback int
+
+	// The async one must carry both attributes, or it blocks like any other
+	// stylesheet.
+	var async string
 	for _, tag := range found {
-		switch {
-		case strings.Contains(tag, `media="print"`) && strings.Contains(tag, `onload="this.media='all'"`):
-			async++
-		default:
-			fallback++
+		if strings.Contains(tag, `media="print"`) && strings.Contains(tag, `onload="this.media='all'"`) {
+			async = tag
 		}
 	}
-	if async != 1 {
+	if async == "" {
 		t.Error(`font-awesome should be loaded with media="print" onload="this.media='all'" so it does not block the first paint (#630)`)
 	}
-	if fallback != 1 || !strings.Contains(head, "<noscript>") {
-		t.Error("font-awesome needs a plain <noscript> fallback for browsers with JS disabled")
+
+	// The fallback must be inside a <noscript>, not merely present somewhere
+	// on the page alongside one: a plain second <link> would block rendering
+	// for everyone, which is the thing this arrangement avoids.
+	var fallbacks int
+	for _, block := range noscriptBlocks(head) {
+		fallbacks += len(link.FindAllString(block, -1))
+	}
+	if fallbacks != 1 {
+		t.Errorf("expected exactly one font-awesome <link> inside a <noscript> (the JS-disabled fallback), found %d", fallbacks)
 	}
 }
 
@@ -89,5 +97,23 @@ func TestBootstrapSocialIsLoginOnly(t *testing.T) {
 	before := head[:idx]
 	if open := strings.LastIndex(before, "{{ if "); open < 0 || !strings.Contains(before[open:], ".login_page") {
 		t.Error("bootstrap-social is not gated on .login_page, so every page pays for a sheet only the login page uses (#630)")
+	}
+}
+
+// noscriptBlocks returns the contents of every <noscript> element in a template.
+func noscriptBlocks(body string) []string {
+	var out []string
+	for rest := body; ; {
+		start := strings.Index(rest, "<noscript>")
+		if start < 0 {
+			return out
+		}
+		rest = rest[start+len("<noscript>"):]
+		end := strings.Index(rest, "</noscript>")
+		if end < 0 {
+			return append(out, rest)
+		}
+		out = append(out, rest[:end])
+		rest = rest[end:]
 	}
 }
