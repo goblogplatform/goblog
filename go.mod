@@ -1,11 +1,11 @@
 module goblog
 
-go 1.25.0
+go 1.26.0
 
 toolchain go1.26.1
 
 require (
-	github.com/gin-contrib/sessions v1.1.1 // https://github.com/gin-contrib/sessions/issues/287
+	github.com/gin-contrib/sessions v1.1.2 // https://github.com/gin-contrib/sessions/issues/287
 	github.com/gin-contrib/static v1.1.7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
@@ -74,7 +74,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.29.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
