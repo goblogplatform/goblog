@@ -566,6 +566,7 @@ func (b *Blog) TrackReferer(c *gin.Context, postID uint) {
 		})
 	}
 }
+
 // GetNavPages returns enabled pages that should show in the navigation, ordered by nav_order.
 // Pages owned by disabled plugins are filtered out.
 func (b *Blog) GetNavPages() []Page {
@@ -694,19 +695,19 @@ func (b *Blog) DynamicPage(c *gin.Context, page *Page, subPath string) {
 		yearKeys, byYear := b.getArchivesByYear()
 		monthKeys, byYearMonth := b.getArchivesByYearMonth()
 		b.Render(c, http.StatusOK, "page_archives.html", gin.H{
-			"logged_in":      b.auth.IsLoggedIn(c),
-			"is_admin":       b.auth.IsAdmin(c),
-			"yearKeys":       yearKeys,
-			"byYear":         byYear,
-			"yearMonthKeys":  monthKeys,
-			"byYearMonth":    byYearMonth,
-			"page":        page,
-			"version":     b.Version,
-			"title":       page.Title,
-			"recent":      b.GetLatest(),
-			"admin_page":  false,
-			"settings":    b.GetSettings(),
-			"nav_pages":   navPages,
+			"logged_in":     b.auth.IsLoggedIn(c),
+			"is_admin":      b.auth.IsAdmin(c),
+			"yearKeys":      yearKeys,
+			"byYear":        byYear,
+			"yearMonthKeys": monthKeys,
+			"byYearMonth":   byYearMonth,
+			"page":          page,
+			"version":       b.Version,
+			"title":         page.Title,
+			"recent":        b.GetLatest(),
+			"admin_page":    false,
+			"settings":      b.GetSettings(),
+			"nav_pages":     navPages,
 		})
 	default:
 		// Check if a plugin handles this page type
@@ -1379,8 +1380,11 @@ func (b *Blog) Login(c *gin.Context) {
 
 	clientID := os.Getenv("client_id")
 	b.Render(c, http.StatusOK, "login.html", gin.H{
-		"logged_in":           b.auth.IsLoggedIn(c),
-		"is_admin":            b.auth.IsAdmin(c),
+		"logged_in": b.auth.IsLoggedIn(c),
+		"is_admin":  b.auth.IsAdmin(c),
+		// The only page whose markup uses .btn-social, so the only one that
+		// loads bootstrap-social (#630).
+		"login_page":          true,
 		"client_id":           clientID,
 		"next":                SafeNext(c.Query("next")),
 		"version":             b.Version,

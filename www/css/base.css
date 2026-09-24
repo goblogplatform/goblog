@@ -1,0 +1,34 @@
+/* Utility classes goblog's templates and its themes rely on.
+ *
+ * These four rules are everything goblog ever used from Tachyons, which was
+ * loaded from cdnjs on every page: 73 KB (13 KB gzipped) of render-blocking
+ * CSS for 0.9% of its rules (#630). They live here, in a stylesheet goblog
+ * serves itself, rather than in a theme's goblog.css, so that every theme —
+ * including ones goblog does not ship — keeps working without a release.
+ *
+ * Copied from Tachyons 4.11.1, MIT licensed, so the classes behave exactly as
+ * they did before. `-l` is Tachyons' large breakpoint, screen and min-width 60em.
+ */
+
+/* Hero images: .cover bg-left bg-center-l on the about, writing, tags and
+   archives pages, and in the site and forest themes. */
+.cover {
+    background-size: cover !important;
+}
+
+.bg-left {
+    background-repeat: no-repeat;
+    background-position: 0;
+}
+
+@media screen and (min-width: 60em) {
+    .bg-center-l {
+        background-repeat: no-repeat;
+        background-position: 50%;
+    }
+}
+
+/* Zebra striping on the admin post table. */
+.striped--light-gray:nth-child(odd) {
+    background-color: #eee;
+}

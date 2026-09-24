@@ -1946,6 +1946,24 @@ func divContents(t *testing.T, body, openTag string) string {
 	return body[contentStart : contentStart+end]
 }
 
+// noscriptBlocks returns the contents of every <noscript> element in a page.
+func noscriptBlocks(body string) []string {
+	var out []string
+	for rest := body; ; {
+		start := strings.Index(rest, "<noscript>")
+		if start < 0 {
+			return out
+		}
+		rest = rest[start+len("<noscript>"):]
+		end := strings.Index(rest, "</noscript>")
+		if end < 0 {
+			return append(out, rest)
+		}
+		out = append(out, rest[:end])
+		rest = rest[end:]
+	}
+}
+
 // TestPostPage_ServerRendered: the post body and its comments are HTML in
 // the response, so a crawler or link-preview bot that runs no JavaScript
 // sees the content; showdown and DOMPurify are gone from the page (#617).
@@ -1992,9 +2010,18 @@ func TestPostPage_ServerRendered(t *testing.T) {
 	if !strings.Contains(postBody, `<iframe src="https://www.youtube.com/embed/x">`) {
 		t.Errorf("post body missing iframe: %q", postBody)
 	}
-	for _, gone := range []string{"showdown", "purify", "DOMPurify", "<noscript>"} {
+	for _, gone := range []string{"showdown", "purify", "DOMPurify"} {
 		if strings.Contains(body, gone) {
 			t.Errorf("page still references %q", gone)
+		}
+	}
+	// No <noscript> may carry the post's raw markdown. The body used to be
+	// rendered in the browser, with the unrendered source in a <noscript> for
+	// anyone without JS; that fallback is what must be gone, not the element
+	// itself — #630 uses a <noscript> for the Font Awesome stylesheet.
+	for _, block := range noscriptBlocks(body) {
+		if strings.Contains(block, "**bold**") {
+			t.Errorf("a <noscript> still carries the raw markdown: %q", block)
 		}
 	}
 	// The security property is that no executable construct from a comment
