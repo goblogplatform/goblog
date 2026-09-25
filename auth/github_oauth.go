@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
+	"net/url"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -66,9 +67,39 @@ func (a *Auth) GithubCallback(c *gin.Context) {
 	}
 
 	got := c.Query("state")
+
+	// No state came back at all. /login/github always sends one, so this is
+	// not our flow: it is a login page from before goblog took the flow over,
+	// which built the authorize URL itself and asked for no state. Rejecting
+	// it would strand the one person who can fix that — an admin cannot
+	// update a theme without signing in, and signing in is what is broken.
+	//
+	// So discard the code, unexchanged, and start a proper flow instead. The
+	// visitor ends up signed in as themselves, which is also why handing this
+	// endpoint someone else's code achieves nothing.
+	//
+	// This cannot loop: the flow it starts does send a state, so a second
+	// failure arrives with one and falls through to the check below. A
+	// browser that keeps no cookies therefore gets an error, not a cycle.
+	if got == "" {
+		if err := session.Save(); err != nil {
+			log.Println("OAuth callback: couldn't clear the login state: " + err.Error())
+		}
+		log.Println("OAuth callback: no state on the callback; restarting the login (a theme older than goblog 0.12.0 does this)")
+		restart := "/login/github"
+		// GithubLogin puts this through SafeNext, so a hostile value is
+		// reduced to "/" there rather than trusted here.
+		if raw := c.Query("next"); raw != "" {
+			restart += "?next=" + url.QueryEscape(raw)
+		}
+		c.Redirect(http.StatusFound, restart)
+		return
+	}
+
 	if want == "" || subtle.ConstantTimeCompare([]byte(want), []byte(got)) != 1 {
-		// Either this browser never started a login, or somebody else's code
-		// is being handed to it. Send them back to start their own.
+		// A state came back but it is not the one this browser was issued:
+		// either somebody else's code is being handed to it, or its cookies
+		// are not surviving the round trip.
 		reject("state did not match the session; ignoring the code")
 		return
 	}
