@@ -6,7 +6,7 @@ toolchain go1.26.1
 
 require (
 	github.com/gin-contrib/sessions v1.1.2 // https://github.com/gin-contrib/sessions/issues/287
-	github.com/gin-contrib/static v1.1.7
+	github.com/gin-contrib/static v1.1.8
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/ikeikeikeike/go-sitemap-generator/v2 v2.0.2

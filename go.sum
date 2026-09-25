@@ -29,8 +29,8 @@ github.com/gin-contrib/sessions v1.1.2 h1:utWRqOHT/kbqxxqF/mtutV9wfGLi1+uu5YuvWU
 github.com/gin-contrib/sessions v1.1.2/go.mod h1:qRxYwA/TYJw0wv28oFzs4gY/8G8z69id862SNgX9Gmw=
 github.com/gin-contrib/sse v1.1.1 h1:uGYpNwTacv5R68bSGMapo62iLTRa9l5zxGCps4hK6ko=
 github.com/gin-contrib/sse v1.1.1/go.mod h1:QXzuVkA0YO7o/gun03UI1Q+FTI8ZV/n5t03kIQAI89s=
-github.com/gin-contrib/static v1.1.7 h1:NO2TB52rpAiYsGNJKoJV0BGcdLDdjHyCmHyRFOGFqgQ=
-github.com/gin-contrib/static v1.1.7/go.mod h1:q4wJTVkZkyhlttOg35G79bFJtjsYQ9v6F1VeD+xqn8c=
+github.com/gin-contrib/static v1.1.8 h1:5heoI9Bya1A4GrX/qWXAYfrQj5ejJe1dbyOWc2UBx00=
+github.com/gin-contrib/static v1.1.8/go.mod h1:iLFZejDjIpTtkLnWshlLsuR8L+K3xFoc7vpZmOrNRWI=
 github.com/gin-gonic/gin v1.12.0 h1:b3YAbrZtnf8N//yjKeU2+MQsh2mY5htkZidOM7O0wG8=
 github.com/gin-gonic/gin v1.12.0/go.mod h1:VxccKfsSllpKshkBWgVgRniFFAzFb9csfngsqANjnLc=
 github.com/go-playground/assert/v2 v2.2.0 h1:JvknZsQTYeFEAhQwI4qEt9cyV5ONwRHC+lYKSsYSR8s=
