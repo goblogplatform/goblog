@@ -5,20 +5,8 @@
   // script has run by the time DOMContentLoaded fires, which also makes the
   // old $(function () { ... }) wrapper redundant.
   document.addEventListener("DOMContentLoaded", function () {
-    var host = location.protocol + '//' + window.location.host
-    var urlParams = new URLSearchParams(window.location.search);
-    var code = urlParams.get('code');
     // Where to go after logging in; validated server-side to a same-site path.
     var next = {{ .next }};
-
-    if (code) {
-      //todo: get the post to be tied to the uri of the page (so it works on localhost, dev and prod)
-      var post = $.post(host + "/api/login", {"code": code});
-      post.done(function(data) {
-        window.location.href = next;
-      });
-    }
-
     var emailForm = $("#email-form"), codeForm = $("#code-form"),
         status = $("#email-login-status"), change = $("#email-change");
     if (!emailForm.length) { return; }
@@ -28,7 +16,7 @@
     emailForm.on("submit", function (e) {
       e.preventDefault();
       status.text("");
-      $.post(host + "/api/login/email", {email: $("#email-input").val()})
+      $.post("/api/login/email", {email: $("#email-input").val()})
         .done(function () {
           emailForm.hide(); codeForm.css("display", "flex"); change.show();
           status.text("Check your inbox for a 6-digit code.");
@@ -39,7 +27,7 @@
     codeForm.on("submit", function (e) {
       e.preventDefault();
       status.text("");
-      $.post(host + "/api/login/email/verify", {email: $("#email-input").val(), code: $("#code-input").val()})
+      $.post("/api/login/email/verify", {email: $("#email-input").val(), code: $("#code-input").val()})
         .done(function () { window.location.href = next; })
         .fail(function (xhr) { showError(xhr, "Could not verify the code."); });
     });

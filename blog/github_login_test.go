@@ -7,65 +7,128 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"goblog/auth"
 	"goblog/blog"
 )
 
 // The login page used to build GitHub's authorize URL in an inline script,
-// concatenating window.location straight into redirect_uri. #631 moved it into
-// Go so the escaping is done once and can be tested.
+// concatenating window.location into redirect_uri (#631). It is built in Go
+// now, and carries a state that ties the request to this browser (#637).
 
-// redirectURI pulls redirect_uri back out of an authorize URL, decoded.
-func redirectURI(t *testing.T, authorize string) string {
-	t.Helper()
-	u, err := url.Parse(authorize)
-	if err != nil {
-		t.Fatalf("authorize URL does not parse: %v", err)
-	}
-	return u.Query().Get("redirect_uri")
-}
-
-func TestGithubAuthorizeURL_KeepsNextThroughTheRoundTrip(t *testing.T) {
-	got := blog.GithubAuthorizeURL("https://example.com", "abc123", "/admin/settings")
-	if want := "https://example.com/login?next=%2Fadmin%2Fsettings"; redirectURI(t, got) != want {
-		t.Errorf("redirect_uri = %q, want %q", redirectURI(t, got), want)
-	}
-	// GitHub returns the visitor to redirect_uri with &code= appended, and
-	// Login reads next from that query. Dropping it would send everyone to /.
-	if !strings.Contains(redirectURI(t, got), "next=") {
-		t.Error("redirect_uri must keep ?next=, it is how next survives the round trip")
-	}
-}
-
-// TestGithubAuthorizeURL_EscapesAmpersandInNext is the bug in #631: unescaped,
-// everything after the & in next reaches GitHub as further authorize
-// parameters and redirect_uri is truncated.
-func TestGithubAuthorizeURL_EscapesAmpersandInNext(t *testing.T) {
-	got := blog.GithubAuthorizeURL("https://example.com", "abc123", "/search?q=a&b=c")
+func TestGithubAuthorizeURL_HasAConstantRedirectAndAState(t *testing.T) {
+	got := blog.GithubAuthorizeURL("https://example.com", "abc123", "st4te")
 
 	u, err := url.Parse(got)
 	if err != nil {
 		t.Fatalf("authorize URL does not parse: %v", err)
 	}
 	q := u.Query()
-	if len(q) != 2 {
-		t.Errorf("authorize URL has %d parameters, want exactly client_id and redirect_uri: %v", len(q), q)
+	if len(q) != 3 {
+		t.Errorf("authorize URL has %d parameters, want client_id, redirect_uri and state: %v", len(q), q)
 	}
-	if want := "https://example.com/login?next=%2Fsearch%3Fq%3Da%26b%3Dc"; q.Get("redirect_uri") != want {
-		t.Errorf("redirect_uri = %q, want %q", q.Get("redirect_uri"), want)
+	// GitHub matches redirect_uri against the callback registered for the
+	// app, so it must not vary with where the visitor was heading.
+	if want := "https://example.com/login"; q.Get("redirect_uri") != want {
+		t.Errorf("redirect_uri = %q, want the constant %q", q.Get("redirect_uri"), want)
 	}
-	// The raw string must not carry a bare & or ? from next.
-	raw := got[strings.Index(got, "redirect_uri="):]
-	if strings.Contains(raw, "&b=c") || strings.Contains(raw, "?q=") {
-		t.Errorf("next is not escaped inside redirect_uri: %s", raw)
+	if q.Get("state") != "st4te" {
+		t.Errorf("state = %q, want it passed through", q.Get("state"))
 	}
 }
 
-func TestGithubAuthorizeURL_OmitsEmptyNext(t *testing.T) {
-	for _, next := range []string{"", "/"} {
-		got := redirectURI(t, blog.GithubAuthorizeURL("https://example.com", "abc", next))
-		if got != "https://example.com/login" {
-			t.Errorf("next %q: redirect_uri = %q, want no query string", next, got)
+// TestGithubAuthorizeURL_EscapesItsParameters is the bug in #631: unescaped, a
+// value containing & would end its parameter early and the rest would reach
+// GitHub as further authorize parameters.
+func TestGithubAuthorizeURL_EscapesItsParameters(t *testing.T) {
+	got := blog.GithubAuthorizeURL("https://example.com", "id&injected=1", "st&ate")
+
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("authorize URL does not parse: %v", err)
+	}
+	q := u.Query()
+	if len(q) != 3 {
+		t.Errorf("a value smuggled in an extra parameter: %v", q)
+	}
+	if q.Get("client_id") != "id&injected=1" || q.Get("state") != "st&ate" {
+		t.Errorf("values did not survive escaping: client_id=%q state=%q", q.Get("client_id"), q.Get("state"))
+	}
+}
+
+// newSessionRouter wires the cookie session store the real server uses, so
+// these tests exercise the same Set/Save path as production.
+func newSessionRouter(t *testing.T) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(sessions.Sessions("goblog", cookie.NewStore([]byte("test-session-key"))))
+	return r
+}
+
+// startLogin runs GET /login/github and returns the redirect target and the
+// cookies it set.
+func startLogin(t *testing.T, target string) (string, []*http.Cookie) {
+	t.Helper()
+	t.Setenv("client_id", "abc123")
+	b := blog.New(nil, nil, "test")
+	r := newSessionRouter(t)
+	r.GET("/login/github", b.GithubLogin)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+	if w.Code != http.StatusFound {
+		t.Fatalf("code = %d, want 302", w.Code)
+	}
+	return w.Header().Get("Location"), w.Result().Cookies()
+}
+
+func TestGithubLogin_SendsAStateAndKeepsItInTheSession(t *testing.T) {
+	loc, cookies := startLogin(t, "/login/github?next=/admin/settings")
+
+	u, _ := url.Parse(loc)
+	if !strings.HasPrefix(loc, "https://github.com/login/oauth/authorize") {
+		t.Fatalf("did not redirect to GitHub: %s", loc)
+	}
+	if u.Query().Get("state") == "" {
+		t.Error("authorize URL carries no state, so the callback cannot tie the code to this browser")
+	}
+	// next is no longer in redirect_uri; it rides in the session.
+	if strings.Contains(u.Query().Get("redirect_uri"), "next") {
+		t.Errorf("redirect_uri should be constant, got %q", u.Query().Get("redirect_uri"))
+	}
+	if len(cookies) == 0 {
+		t.Error("no session cookie set, so the state was never stored")
+	}
+}
+
+// TestGithubLogin_StateDiffersEveryTime: a predictable state would defeat the
+// point of having one.
+func TestGithubLogin_StateDiffersEveryTime(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 8; i++ {
+		loc, _ := startLogin(t, "/login/github")
+		u, _ := url.Parse(loc)
+		state := u.Query().Get("state")
+		if len(state) < 20 {
+			t.Fatalf("state %q is too short to be unguessable", state)
+		}
+		if seen[state] {
+			t.Fatalf("state %q was issued twice", state)
+		}
+		seen[state] = true
+	}
+}
+
+// TestGithubLogin_RejectsOffsiteNext: next becomes the post-login redirect, so
+// an unchecked value here is an open redirect.
+func TestGithubLogin_RejectsOffsiteNext(t *testing.T) {
+	for _, next := range []string{"https://evil.example", "//evil.example", "/\\evil.example"} {
+		loc, _ := startLogin(t, "/login/github?next="+url.QueryEscape(next))
+		if strings.Contains(loc, "evil.example") {
+			t.Errorf("next %q reached the authorize URL: %s", next, loc)
 		}
 	}
 }
@@ -96,25 +159,10 @@ func TestRequestOrigin(t *testing.T) {
 	}
 }
 
-// TestGithubLogin_RejectsOffsiteNext: next reaches redirect_uri, so an open
-// redirect here would be handed to GitHub. SafeNext already guards Login; it
-// has to guard this entry point too.
-func TestGithubLogin_RejectsOffsiteNext(t *testing.T) {
-	t.Setenv("client_id", "abc123")
-	b := blog.New(nil, nil, "test")
-
-	for _, next := range []string{"https://evil.example", "//evil.example", "/\\evil.example"} {
-		router := gin.New()
-		router.GET("/login/github", b.GithubLogin)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/login/github?next="+url.QueryEscape(next), nil))
-
-		if w.Code != http.StatusFound {
-			t.Fatalf("next %q: code = %d, want 302", next, w.Code)
-		}
-		got := redirectURI(t, w.Header().Get("Location"))
-		if strings.Contains(got, "evil.example") {
-			t.Errorf("next %q leaked into redirect_uri: %s", next, got)
-		}
+// TestOAuthSessionKeys guards the contract between the two packages: blog
+// writes these, auth reads them.
+func TestOAuthSessionKeys(t *testing.T) {
+	if auth.OAuthStateKey == "" || auth.OAuthNextKey == "" || auth.OAuthStateKey == auth.OAuthNextKey {
+		t.Errorf("session keys are not distinct and non-empty: %q %q", auth.OAuthStateKey, auth.OAuthNextKey)
 	}
 }

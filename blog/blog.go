@@ -1474,26 +1474,25 @@ func RequestOrigin(c *gin.Context) string {
 
 // GithubAuthorizeURL builds the URL that starts GitHub's OAuth flow.
 //
-// redirect_uri keeps the ?next= the visitor arrived with, because that is how
-// next survives the round trip: GitHub sends them back to this exact URL with
-// &code= appended, and Login reads next from that query. Stripping the query
-// would quietly land everyone on / after signing in.
+// redirect_uri carries no query of its own. GitHub matches it against the
+// callback registered for the app, so a constant value is the one most likely
+// to match; where the visitor was heading rides in the session instead, which
+// also keeps it out of a URL that gets logged and passed to a third party.
 //
-// Both the redirect and the next inside it are escaped. Unescaped, a next
-// containing & would end the redirect_uri value early and the rest would
-// reach GitHub as further authorize parameters (#631).
-func GithubAuthorizeURL(origin, clientID, next string) string {
-	redirect := origin + "/login"
-	if next != "" && next != "/" {
-		redirect += "?next=" + url.QueryEscape(next)
-	}
+// state ties the authorize request to the browser that made it: GithubCallback
+// will not exchange a code unless it comes back unchanged (#637).
+func GithubAuthorizeURL(origin, clientID, state string) string {
 	return "https://github.com/login/oauth/authorize?client_id=" + url.QueryEscape(clientID) +
-		"&redirect_uri=" + url.QueryEscape(redirect)
+		"&redirect_uri=" + url.QueryEscape(origin+"/login") +
+		"&state=" + url.QueryEscape(state)
 }
 
-// GithubLogin serves /login/github: it sends the visitor to GitHub rather than
+// GithubLogin serves /login/github: it starts the OAuth flow rather than
 // having each theme assemble the authorize URL in an inline script, where the
 // escaping was wrong and had to be fixed in every theme separately (#631).
+//
+// The state it mints, and where the visitor was heading, are kept in the
+// session for GithubCallback to check when GitHub returns (#637).
 func (b *Blog) GithubLogin(c *gin.Context) {
 	if err := godotenv.Load(".env"); err != nil {
 		_ = godotenv.Load("local.env")
@@ -1504,8 +1503,26 @@ func (b *Blog) GithubLogin(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/login")
 		return
 	}
-	next := SafeNext(c.Query("next"))
-	c.Redirect(http.StatusFound, GithubAuthorizeURL(RequestOrigin(c), clientID, next))
+
+	state, err := auth.NewOAuthState()
+	if err != nil {
+		log.Println("Couldn't generate an OAuth state: " + err.Error())
+		c.Redirect(http.StatusFound, "/login?error=github")
+		return
+	}
+
+	session := sessions.Default(c)
+	session.Set(auth.OAuthStateKey, state)
+	session.Set(auth.OAuthNextKey, SafeNext(c.Query("next")))
+	if err := session.Save(); err != nil {
+		// Without a stored state the callback would reject the login, so
+		// there is no point sending them to GitHub.
+		log.Println("Couldn't save the OAuth state: " + err.Error())
+		c.Redirect(http.StatusFound, "/login?error=github")
+		return
+	}
+
+	c.Redirect(http.StatusFound, GithubAuthorizeURL(RequestOrigin(c), clientID, state))
 }
 
 func (b *Blog) Logout(c *gin.Context) {
