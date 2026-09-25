@@ -1379,14 +1379,18 @@ func (b *Blog) Login(c *gin.Context) {
 	}
 
 	clientID := os.Getenv("client_id")
+	next := SafeNext(c.Query("next"))
 	b.Render(c, http.StatusOK, "login.html", gin.H{
 		"logged_in": b.auth.IsLoggedIn(c),
 		"is_admin":  b.auth.IsAdmin(c),
 		// The only page whose markup uses .btn-social, so the only one that
 		// loads bootstrap-social (#630).
-		"login_page":          true,
-		"client_id":           clientID,
-		"next":                SafeNext(c.Query("next")),
+		"login_page": true,
+		"client_id":  clientID,
+		// next is still handed over for the email login, which redirects to it
+		// in the browser once its AJAX call succeeds.
+		"next":                next,
+		"github_login_url":    GithubLoginURL(next),
 		"version":             b.Version,
 		"title":               "Login",
 		"email_login_enabled": b.auth.EmailLoginEnabled(),
@@ -1470,6 +1474,21 @@ func RequestOrigin(c *gin.Context) string {
 		scheme = "https"
 	}
 	return scheme + "://" + c.Request.Host
+}
+
+// GithubLoginURL is where the login page's GitHub button points: /login/github,
+// carrying where the visitor was heading so GithubLogin can put it in the
+// session.
+//
+// The themes each assembled this with a nested template conditional, which is
+// the sort of thing moving the authorize URL into Go was meant to stop. A
+// template prints this value instead, so the URL's shape stays the server's
+// business and adding to it later touches no theme.
+func GithubLoginURL(next string) string {
+	if next == "" || next == "/" {
+		return "/login/github"
+	}
+	return "/login/github?next=" + url.QueryEscape(next)
 }
 
 // GithubAuthorizeURL builds the URL that starts GitHub's OAuth flow.
