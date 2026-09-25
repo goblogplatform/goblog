@@ -147,9 +147,14 @@
                     $('#database-test').removeClass('btn-secondary').addClass('btn-danger');
                     // change the icon within the button
                     $('#database-test').html('<i class="bi bi-x"></i> Database Test Failed');
-                    // get the error message and show it at top of page
-                    var error = data.responseJSON.error;
-                    $('#ajax-error').html(error).show();
+                    // responseJSON is only set when the body parsed as JSON. A 502
+                    // from a proxy, an HTML error page or a dropped connection left
+                    // it undefined, and reading .error threw here — so the button
+                    // went red and the reason never appeared, which is the one
+                    // thing someone stuck on this step needs (#632).
+                    var error = (data.responseJSON && data.responseJSON.error) ||
+                        data.statusText || 'Database test failed.';
+                    $('#ajax-error').text(error).show();
                 }
             });
         });

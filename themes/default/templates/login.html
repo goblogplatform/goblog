@@ -64,15 +64,9 @@
     </div>
 
     <div class="container">
-      <a id="github-button" class="btn btn-social btn-github" href="">
-        <i class="fab fa-github fa-1x"></i> Sign in with Github
+      <a id="github-button" class="btn btn-social btn-github" href="/login/github{{ if .next }}{{ if ne .next "/" }}?next={{ .next | urlquery }}{{ end }}{{ end }}">
+        <i class="fab fa-github fa-1x"></i> Sign in with GitHub
       </a>
-
-      <script>
-        // The anchor above has already been parsed when this runs, so the link is
-        // never briefly inert, and setting .href needs no library at all.
-        document.getElementById("github-button").href = "https://github.com/login/oauth/authorize?client_id={{ .client_id }}&redirect_uri=" + window.location;
-      </script>
 
       {{ if .email_login_enabled }}
       <div class="clear">&nbsp;</div>

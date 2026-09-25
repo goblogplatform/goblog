@@ -434,6 +434,9 @@ func main() {
 
 	getAndHead(router, "/", goblog.rootHandler)
 	getAndHead(router, "/login", goblog.loginHandler)
+	// Starting GitHub's OAuth flow belongs here rather than in each theme's
+	// inline script, where the redirect_uri escaping was wrong (#631).
+	router.GET("/login/github", goblog._blog.GithubLogin)
 	router.GET("/wizard", goblog._wizard.SaveToken)
 	router.POST("/wizard_db", updateDB)
 	router.POST("/test_db", testDB)
@@ -628,7 +631,10 @@ func updateDB(c *gin.Context) {
 		})
 	}
 	if err := c.Request.ParseForm(); err != nil {
+		// Returning nothing rendered a blank 200: the wizard appeared to do
+		// nothing at all. fail() puts the reason back on the page (#632).
 		log.Println("Couldn't parse the form: " + err.Error())
+		fail("Couldn't read the form: " + err.Error())
 		return
 	}
 	cfg := dbConfigFromForm(c)
@@ -647,7 +653,11 @@ func updateDB(c *gin.Context) {
 
 func testDB(c *gin.Context) {
 	if err := c.Request.ParseForm(); err != nil {
+		// Returning nothing meant gin sent a bare 200, which the wizard's
+		// jQuery call read as success: the Test Database button turned green
+		// on a request that was never looked at (#632).
 		log.Println("Couldn't parse the form: " + err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Couldn't read the form: " + err.Error()})
 		return
 	}
 	// Don't log the form: it carries the database password.

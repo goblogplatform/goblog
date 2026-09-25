@@ -1453,6 +1453,61 @@ func SafeNext(raw string) string {
 	return raw
 }
 
+// RequestOrigin is the scheme and host the client actually used, without a
+// trailing slash. Unlike SiteURL it ignores the site_url setting: GitHub
+// matches an OAuth redirect_uri against the callback registered for the app,
+// so the origin has to be the one the visitor is on — which is what the login
+// page used to send when it built the URL from window.location.
+func RequestOrigin(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	scheme := "http"
+	// Proxies may chain values ("https, http") and vary the case; the first
+	// is the one the client used.
+	forwarded, _, _ := strings.Cut(c.GetHeader("X-Forwarded-Proto"), ",")
+	if c.Request.TLS != nil || strings.EqualFold(strings.TrimSpace(forwarded), "https") {
+		scheme = "https"
+	}
+	return scheme + "://" + c.Request.Host
+}
+
+// GithubAuthorizeURL builds the URL that starts GitHub's OAuth flow.
+//
+// redirect_uri keeps the ?next= the visitor arrived with, because that is how
+// next survives the round trip: GitHub sends them back to this exact URL with
+// &code= appended, and Login reads next from that query. Stripping the query
+// would quietly land everyone on / after signing in.
+//
+// Both the redirect and the next inside it are escaped. Unescaped, a next
+// containing & would end the redirect_uri value early and the rest would
+// reach GitHub as further authorize parameters (#631).
+func GithubAuthorizeURL(origin, clientID, next string) string {
+	redirect := origin + "/login"
+	if next != "" && next != "/" {
+		redirect += "?next=" + url.QueryEscape(next)
+	}
+	return "https://github.com/login/oauth/authorize?client_id=" + url.QueryEscape(clientID) +
+		"&redirect_uri=" + url.QueryEscape(redirect)
+}
+
+// GithubLogin serves /login/github: it sends the visitor to GitHub rather than
+// having each theme assemble the authorize URL in an inline script, where the
+// escaping was wrong and had to be fixed in every theme separately (#631).
+func (b *Blog) GithubLogin(c *gin.Context) {
+	if err := godotenv.Load(".env"); err != nil {
+		_ = godotenv.Load("local.env")
+	}
+	clientID := os.Getenv("client_id")
+	if clientID == "" {
+		// Nothing to send them to; the login page explains the situation.
+		c.Redirect(http.StatusFound, "/login")
+		return
+	}
+	next := SafeNext(c.Query("next"))
+	c.Redirect(http.StatusFound, GithubAuthorizeURL(RequestOrigin(c), clientID, next))
+}
+
 func (b *Blog) Logout(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Delete("token")
