@@ -164,15 +164,21 @@ func TestGithubCallback_NoLoginStartedNeverReachesGithub(t *testing.T) {
 	}
 }
 
-// TestGithubCallback_EmptyStateBothSidesIsNotAMatch: no stored state and no
-// state in the callback must not compare equal.
-func TestGithubCallback_EmptyStateBothSidesIsNotAMatch(t *testing.T) {
+// TestGithubCallback_EmptyStateIsNeverTreatedAsAMatch: two empty strings
+// compare equal, so a browser that stored nothing receiving a callback with no
+// state must not be read as a match. That case restarts the flow rather than
+// being rejected (see the restart tests below), but either way the unvalidated
+// code must not be exchanged — which is what this pins.
+func TestGithubCallback_EmptyStateIsNeverTreatedAsAMatch(t *testing.T) {
 	r, fake := callbackRouter(t)
 
-	get(t, r, "/login?code=attacker-code", nil)
+	w := get(t, r, "/login?code=attacker-code", nil)
 
 	if fake.tokenCalls != 0 {
 		t.Errorf("empty state treated as a match (%d calls)", fake.tokenCalls)
+	}
+	if token := sessionToken(t, r, w.Result().Cookies()); token != "" {
+		t.Errorf("a session was created from it (token %q)", token)
 	}
 }
 
@@ -210,5 +216,64 @@ func TestNewOAuthState(t *testing.T) {
 			t.Fatalf("state %q was issued twice", s)
 		}
 		seen[s] = true
+	}
+}
+
+// A login page from before goblog took the OAuth flow over builds the
+// authorize URL itself and asks for no state, so GitHub returns without one.
+// Rejecting that would strand the admin: updating the theme needs a login, and
+// the login is what is broken. Those callbacks restart the flow instead (#637
+// follow-up).
+
+func TestGithubCallback_NoStateAtAllRestartsTheFlow(t *testing.T) {
+	r, fake := callbackRouter(t)
+
+	w := get(t, r, "/login?code=code-from-an-old-theme", nil)
+
+	if loc := w.Header().Get("Location"); loc != "/login/github" {
+		t.Errorf("Location = %q, want a restart at /login/github", loc)
+	}
+	// The code is discarded, not exchanged: it was never tied to this browser.
+	if fake.tokenCalls != 0 {
+		t.Errorf("the unvalidated code was exchanged (%d calls)", fake.tokenCalls)
+	}
+	if token := sessionToken(t, r, w.Result().Cookies()); token != "" {
+		t.Errorf("a session was created from an unvalidated code (token %q)", token)
+	}
+}
+
+// TestGithubCallback_RestartKeepsNext: the old flow put next in redirect_uri,
+// so it is on the callback URL. Carrying it over means the restart lands where
+// the visitor was originally going.
+func TestGithubCallback_RestartKeepsNext(t *testing.T) {
+	r, _ := callbackRouter(t)
+
+	w := get(t, r, "/login?code=c&next=%2Fadmin%2Fsettings", nil)
+
+	if loc := w.Header().Get("Location"); loc != "/login/github?next=%2Fadmin%2Fsettings" {
+		t.Errorf("Location = %q, want next carried into the restart", loc)
+	}
+}
+
+// TestGithubCallback_RestartCannotLoop is the property that makes restarting
+// safe: /login/github always sends a state, so a browser whose cookies do not
+// survive comes back *with* a state and gets an error rather than another
+// restart. Only a stateless callback restarts, and only our own flow is
+// stateful, so the two cannot alternate.
+func TestGithubCallback_RestartCannotLoop(t *testing.T) {
+	r, fake := callbackRouter(t)
+
+	// A callback carrying a state, but from a browser that stored nothing —
+	// what the restarted flow looks like when cookies are not kept.
+	w := get(t, r, "/login?code=c&state=issued-but-never-stored", nil)
+
+	if loc := w.Header().Get("Location"); loc == "/login/github" {
+		t.Error("a stateful callback restarted the flow, which is how a cycle would form")
+	}
+	if loc := w.Header().Get("Location"); loc != "/login?error=github" {
+		t.Errorf("Location = %q, want the error page", loc)
+	}
+	if fake.tokenCalls != 0 {
+		t.Errorf("exchanged anyway (%d calls)", fake.tokenCalls)
 	}
 }
