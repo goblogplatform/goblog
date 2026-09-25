@@ -82,7 +82,17 @@ func TestNoRawOAuthCodeEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read goblog.go: %v", err)
 	}
+	// The closing quote matters: "/api/login/email" does not contain
+	// `"/api/login"`, so the OTP routes below are not caught by this.
 	if strings.Contains(string(source), `"/api/login"`) {
 		t.Error(`/api/login is routed again: it accepts an OAuth code from anywhere, which is the login CSRF #637 closed`)
+	}
+	// Asserted positively so the check above is demonstrably about the OAuth
+	// route alone, and so removing it does not quietly take the OTP endpoints
+	// with it: those are a different flow and still wanted.
+	for _, keep := range []string{`"/api/login/email"`, `"/api/login/email/verify"`} {
+		if !strings.Contains(string(source), keep) {
+			t.Errorf("%s is no longer routed; email login needs it", keep)
+		}
 	}
 }
