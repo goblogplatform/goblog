@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -34,7 +35,6 @@ func TestRequireJSON(t *testing.T) {
 	r.POST("/api/v1/upload", ok)
 	r.POST("/api/v1/directory/repos/:id/approve", ok)
 	r.GET("/api/v1/posts", ok)
-	r.POST("/api/login", ok)
 	r.POST("/wizard_db", ok)
 
 	cases := []struct {
@@ -56,7 +56,6 @@ func TestRequireJSON(t *testing.T) {
 		{"multipart upload allowed", "POST", "/api/v1/upload", "multipart/form-data; boundary=x", "--x--", 200},
 		{"multipart elsewhere rejected", "POST", "/api/v1/posts", "multipart/form-data; boundary=x", "--x--", 415},
 		{"GET untouched", "GET", "/api/v1/posts", "", "", 200},
-		{"login form untouched", "POST", "/api/login", "application/x-www-form-urlencoded", "a=b", 200},
 		{"wizard untouched", "POST", "/wizard_db", "application/x-www-form-urlencoded", "a=b", 200},
 	}
 	for _, tc := range cases {
@@ -68,6 +67,32 @@ func TestRequireJSON(t *testing.T) {
 		r.ServeHTTP(w, req)
 		if w.Code != tc.want {
 			t.Errorf("%s: got %d, want %d", tc.name, w.Code, tc.want)
+		}
+	}
+}
+
+// TestNoRawOAuthCodeEndpoint: /api/login took an OAuth code as a form post and
+// set the session from it, and requireJSON deliberately let it through, so a
+// cross-site form could plant a session on a visitor. SameSite=Lax does not
+// help — it governs sending a cookie cross-site, not setting one. GitHub
+// returns to /login now and the server does the exchange itself, against a
+// state it minted (#637), so nothing accepts a bare code any more.
+func TestNoRawOAuthCodeEndpoint(t *testing.T) {
+	source, err := os.ReadFile("goblog.go")
+	if err != nil {
+		t.Fatalf("read goblog.go: %v", err)
+	}
+	// The closing quote matters: "/api/login/email" does not contain
+	// `"/api/login"`, so the OTP routes below are not caught by this.
+	if strings.Contains(string(source), `"/api/login"`) {
+		t.Error(`/api/login is routed again: it accepts an OAuth code from anywhere, which is the login CSRF #637 closed`)
+	}
+	// Asserted positively so the check above is demonstrably about the OAuth
+	// route alone, and so removing it does not quietly take the OTP endpoints
+	// with it: those are a different flow and still wanted.
+	for _, keep := range []string{`"/api/login/email"`, `"/api/login/email/verify"`} {
+		if !strings.Contains(string(source), keep) {
+			t.Errorf("%s is no longer routed; email login needs it", keep)
 		}
 	}
 }

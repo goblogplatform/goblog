@@ -74,12 +74,17 @@ func (a *Auth) UpdateDb(db *gorm.DB) {
 // use the Github app credentials + the code we received from javascript
 // client side to make the access token (bearer) request
 func (a *Auth) requestAccessToken(parsedCode string) (*AccessTokenResponse, error) {
-	err := godotenv.Load(".env")
-	if err != nil {
-		return nil, errors.New("Error loading .env file: " + err.Error())
+	// .env is the usual home for these, but a missing file is not itself an
+	// error: a deployment may set them in the real environment. What matters
+	// is ending up with both values, which is checked below.
+	if err := godotenv.Load(".env"); err != nil {
+		_ = godotenv.Load("local.env")
 	}
 	clientID := os.Getenv("client_id")
 	clientSecret := os.Getenv("client_secret")
+	if clientID == "" || clientSecret == "" {
+		return nil, errors.New("client_id and client_secret are not configured")
+	}
 
 	data := &AccessTokenResponse{}
 
@@ -89,7 +94,7 @@ func (a *Auth) requestAccessToken(parsedCode string) (*AccessTokenResponse, erro
 		"client_secret": {clientSecret},
 		"code":          {parsedCode},
 	}
-	req, err := http.NewRequest("POST", "https://github.com/login/oauth/access_token", strings.NewReader(formData.Encode()))
+	req, err := http.NewRequest("POST", githubTokenURL, strings.NewReader(formData.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +136,7 @@ type githubUser struct {
 // unstored BlogUser (ID is zero; the database assigns it on UpsertUser).
 func (a *Auth) RequestUser(accessToken string) (*BlogUser, error) {
 	//get the user info from Github
-	req, err := http.NewRequest("GET", "https://api.github.com/user", strings.NewReader(""))
+	req, err := http.NewRequest("GET", githubUserURL, strings.NewReader(""))
 	if err != nil {
 		return nil, err
 	}
@@ -223,30 +228,24 @@ func (a *Auth) UpsertUser(user *BlogUser) (*BlogUser, error) {
 	return &existing, nil
 }
 
-// LoginPostHandler should be called with the code provided by github. After
-// receiving the code, this will reach out to github to retrieve and auth token
-// which is stored in the db along with the user information from github.
-// this can then be used for authorization when the api user supplies the same
-// auth token later on for API access. Only one auth token per user can be used
-// at once. Logout should remove the auth token from the table.
-func (a *Auth) LoginPostHandler(c *gin.Context) {
-	parsedCode := c.PostForm("code")
-	data, err := a.requestAccessToken(parsedCode)
+// completeGithubLogin exchanges an authorization code for a token, stores the
+// user behind it and puts the token in the session. GithubCallback is its only
+// caller: the code used to arrive by POST from the login page, which meant
+// anyone could hand the server a code for any account (#637).
+func (a *Auth) completeGithubLogin(c *gin.Context, code string) error {
+	data, err := a.requestAccessToken(code)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, "Error requesting token access: "+err.Error())
-		return
+		return errors.New("error requesting token access: " + err.Error())
 	}
 
 	user, err := a.RequestUser(data.AccessToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, err.Error())
-		return
+		return err
 	}
 
 	stored, err := a.UpsertUser(user)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, "Error storing user: "+err.Error())
-		return
+		return errors.New("error storing user: " + err.Error())
 	}
 
 	// On a fresh install where the operator has pre-populated .env (e.g. via
@@ -261,13 +260,19 @@ func (a *Auth) LoginPostHandler(c *gin.Context) {
 		log.Println("Error ensuring admin user: " + err.Error())
 	}
 
-	//save the access token in the session
-	session := sessions.Default(c)
-	session.Set("token", data.AccessToken)
-	session.Save()
-
-	c.JSON(http.StatusOK, stored)
+	// Set but do not save: GithubCallback saves once, so the response carries
+	// a single Set-Cookie holding both this token and the cleared OAuth state.
+	sessions.Default(c).Set("token", data.AccessToken)
+	return nil
 }
+
+// GitHub's endpoints, as variables so a test can point them at a stand-in and
+// observe whether the exchange was attempted at all — the difference between
+// a callback that was rejected and one that merely failed to reach GitHub.
+var (
+	githubTokenURL = "https://github.com/login/oauth/access_token"
+	githubUserURL  = "https://api.github.com/user"
+)
 
 // ErrNotConfiguredAdmin is returned by EnsureAdmin when no admin exists yet
 // but the logging-in user is not the identity pinned by admin_login /

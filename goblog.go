@@ -200,6 +200,11 @@ func (g *goblog) loginHandler(c *gin.Context) {
 			g.addRoutes()
 			g._blog.Home(c)
 		}
+	} else if c.Query("code") != "" {
+		// GitHub's redirect_uri is /login, so its return lands here. The
+		// exchange happens server-side against the state minted by
+		// /login/github; the code never reaches the page (#637).
+		g._auth.GithubCallback(c)
 	} else {
 		g._blog.Login(c)
 	}
@@ -491,7 +496,10 @@ func (g *goblog) addRoutesInner() {
 	log.Println("Adding main blog routes")
 	//all of this is the json api
 	g.router.MaxMultipartMemory = 50 << 20
-	g.router.POST("/api/login", g._auth.LoginPostHandler)
+	// No /api/login: it took a raw OAuth code as a form post and set the
+	// session from it, so a cross-site form could plant a session on a
+	// visitor. GitHub returns to /login and the server does the exchange
+	// itself, against a state it minted (#637).
 	g.router.POST("/api/login/email", g._auth.SendLoginCodeHandler)
 	g.router.POST("/api/login/email/verify", g._auth.VerifyLoginCodeHandler)
 	g.router.POST("/api/v1/posts", g._admin.CreatePost)
