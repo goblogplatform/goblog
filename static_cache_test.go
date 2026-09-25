@@ -21,6 +21,7 @@ func TestRevalidateStatic(t *testing.T) {
 	for path, want := range map[string]string{
 		"/js/admin-script.js":     "no-cache",
 		"/css/admin.css":          "no-cache",
+		"/css/base.css":           "no-cache",
 		"/theme/css/goblog.css":   "no-cache",
 		"/uploads/photo.png":      "",
 		"/img/favicon.ico":        "",
