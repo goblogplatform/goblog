@@ -166,3 +166,36 @@ func TestOAuthSessionKeys(t *testing.T) {
 		t.Errorf("session keys are not distinct and non-empty: %q %q", auth.OAuthStateKey, auth.OAuthNextKey)
 	}
 }
+
+// TestGithubLoginURL: the themes each assembled this with a nested template
+// conditional. It is one value now, so the escaping and the empty-next case
+// are decided here rather than four times over in markup.
+func TestGithubLoginURL(t *testing.T) {
+	for _, tc := range []struct{ next, want string }{
+		{"", "/login/github"},
+		{"/", "/login/github"},
+		{"/admin/settings", "/login/github?next=%2Fadmin%2Fsettings"},
+		// An unescaped & would start a second parameter rather than staying
+		// part of next.
+		{"/search?q=a&b=c", "/login/github?next=%2Fsearch%3Fq%3Da%26b%3Dc"},
+	} {
+		if got := blog.GithubLoginURL(tc.next); got != tc.want {
+			t.Errorf("GithubLoginURL(%q) = %q, want %q", tc.next, got, tc.want)
+		}
+	}
+}
+
+// TestGithubLoginURL_SurvivesARoundTrip: what the button points at must parse
+// back to the next it was built from, since GithubLogin reads it as a query
+// parameter.
+func TestGithubLoginURL_SurvivesARoundTrip(t *testing.T) {
+	for _, next := range []string{"/admin/settings", "/search?q=a&b=c", "/posts/2026/01/01/a b"} {
+		u, err := url.Parse(blog.GithubLoginURL(next))
+		if err != nil {
+			t.Fatalf("next %q: does not parse: %v", next, err)
+		}
+		if got := u.Query().Get("next"); got != next {
+			t.Errorf("next %q came back as %q", next, got)
+		}
+	}
+}
